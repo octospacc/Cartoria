@@ -398,15 +398,24 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
           ? 'No results for "${_searchCtrl.text.trim()}"'
           : 'No posts yet. Write something.');
     }
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-      itemCount: roots.length,
-      itemBuilder: (context, i) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: _buildNode(roots[i], searchMode: searchMode),
-        );
-      },
+    return SelectionArea(
+      child: ListView.builder(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+        itemCount: roots.length,
+        addAutomaticKeepAlives: false,
+        itemBuilder: (context, i) {
+          // RepaintBoundary per item: when one card repaints (e.g. an
+          // image finishing its load, or an inline video entering play),
+          // its neighbours don't. This is the single biggest raster saving
+          // on a fast scroll through many image-bearing cards.
+          return RepaintBoundary(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _buildNode(roots[i], searchMode: searchMode),
+            ),
+          );
+        },
+      ),
     );
   }
 

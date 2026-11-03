@@ -12,7 +12,7 @@ class LinkPreviewCard extends StatelessWidget {
     final theme = Theme.of(context);
     final thumbnail = post.thumbnail;
     final hasThumb = thumbnail != null && thumbnail.isNotEmpty;
-    final domain = _domainOf(post.url!);
+    final domain = post.domain;
 
     return Container(
       decoration: BoxDecoration(
@@ -38,7 +38,8 @@ class LinkPreviewCard extends StatelessWidget {
                       SizedBox(
                         width: 112,
                         height: 112,
-                        child: _thumb(theme, thumbnail),
+                        // Wide layout: decode at the exact display size.
+                        child: _thumb(context, theme, thumbnail, 112),
                       ),
                     Expanded(
                       child: Padding(
@@ -55,7 +56,9 @@ class LinkPreviewCard extends StatelessWidget {
                   if (hasThumb)
                     AspectRatio(
                       aspectRatio: 16 / 9,
-                      child: _thumb(theme, thumbnail),
+                      // Narrow layout: thumb spans the card width.
+                      child: _thumb(
+                          context, theme, thumbnail, constraints.maxWidth),
                     ),
                   Padding(
                     padding: const EdgeInsets.all(10),
@@ -70,27 +73,34 @@ class LinkPreviewCard extends StatelessWidget {
     );
   }
 
-  Widget _thumb(ThemeData theme, String url) {
+  Widget _thumb(
+    BuildContext context,
+    ThemeData theme,
+    String url,
+    double logicalWidth,
+  ) {
+    // Cap the decode size at the *actual* display size × DPR. A 1280×720
+    // YouTube maxresdefault in the wide 112px slot decodes to 112×112×DPR²
+    // rather than the full 3.6MB RGBA.
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final cacheW = (logicalWidth * dpr).round();
+
     return Image.network(
       url,
       fit: BoxFit.cover,
+      cacheWidth: cacheW,
+      gaplessPlayback: true,
       errorBuilder: (_, __, ___) => Container(
         color: theme.colorScheme.surfaceContainerHighest,
         child: Icon(Icons.broken_image_outlined,
             color: theme.colorScheme.onSurfaceVariant),
       ),
+      // No spinner: during a fast scroll, 50 animating CircularProgress-
+      // Indicators per frame is measurable raster cost. A flat colour
+      // placeholder is visually acceptable and costs nothing to paint.
       loadingBuilder: (context, child, progress) {
         if (progress == null) return child;
-        return Container(
-          color: theme.colorScheme.surfaceContainerHighest,
-          child: const Center(
-            child: SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          ),
-        );
+        return Container(color: theme.colorScheme.surfaceContainerHighest);
       },
     );
   }
@@ -132,23 +142,15 @@ class LinkPreviewCard extends StatelessWidget {
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: theme.colorScheme.primary,
                 ),
-                overflow: TextOverflow.ellipsis,
                 maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
         ),
       ],
     );
-  }
-
-  String _domainOf(String url) {
-    try {
-      final uri = Uri.parse(url);
-      return uri.host.isNotEmpty ? uri.host : url;
-    } catch (_) {
-      return url;
-    }
   }
 
   Future<void> _openUrl(BuildContext context) async {

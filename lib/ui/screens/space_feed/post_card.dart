@@ -214,13 +214,17 @@ class _PostHeader extends StatelessWidget {
     return Row(
       children: [
         Text(
-          _fmt(post.createdAt),
+          post.formattedCreatedAt,
+          maxLines: 1,
+          softWrap: false,
           style: theme.textTheme.bodySmall?.copyWith(color: subtle),
         ),
         if (post.editedAt != null) ...[
           const SizedBox(width: 4),
           Text(
             '· edited',
+            maxLines: 1,
+            softWrap: false,
             style: theme.textTheme.bodySmall?.copyWith(color: subtle),
           ),
         ],
@@ -245,20 +249,6 @@ class _PostHeader extends StatelessWidget {
       ],
     );
   }
-
-  String _fmt(DateTime t) {
-    final now = DateTime.now();
-    final local = t.toLocal();
-    final sameDay = local.year == now.year &&
-        local.month == now.month &&
-        local.day == now.day;
-    final hh = local.hour.toString().padLeft(2, '0');
-    final mm = local.minute.toString().padLeft(2, '0');
-    if (sameDay) return '$hh:$mm';
-    final ymd = '${local.year}-${local.month.toString().padLeft(2, '0')}-'
-        '${local.day.toString().padLeft(2, '0')}';
-    return '$ymd $hh:$mm';
-  }
 }
 
 class _TagChip extends StatelessWidget {
@@ -276,6 +266,9 @@ class _TagChip extends StatelessWidget {
       ),
       child: Text(
         '#$tag',
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.ellipsis,
         style: theme.textTheme.labelSmall?.copyWith(
           color: theme.colorScheme.onSecondaryContainer,
         ),
