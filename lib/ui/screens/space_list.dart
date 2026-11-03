@@ -3,13 +3,14 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
-import '../widgets/space_stats_dialog.dart';
+import '../bookmark_import_helpers.dart';
+import '../../data/bookmarks.dart';
 import '../../data/models.dart';
 import '../../data/space_icons.dart';
 import '../../data/store.dart';
-import '../../data/bookmarks.dart';
 import '../../platform/file_read.dart';
-import '../bookmark_import_helpers.dart';
+import '../widgets/space_stats_dialog.dart';
+import 'hooks_list.dart';
 import 'space_feed.dart';
 
 class SpaceListScreen extends StatelessWidget {
@@ -22,6 +23,16 @@ class SpaceListScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Spaces'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.bolt_outlined),
+            tooltip: 'Hooks',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => HookListScreen(store: store),
+              ),
+            ),
+          ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.file_download_outlined),
             tooltip: 'Import',
@@ -62,8 +73,10 @@ class SpaceListScreen extends StatelessWidget {
                 if (v == 'delete') _confirmDelete(context, space);
               },
               itemBuilder: (_) => const [
-                PopupMenuItem(value: 'stats', child: Text('Statistics')),
-                PopupMenuItem(value: 'delete', child: Text('Delete space')),
+                PopupMenuItem(
+                    value: 'stats', child: Text('Statistics')),
+                PopupMenuItem(
+                    value: 'delete', child: Text('Delete space')),
               ],
             ),
             onTap: () => Navigator.push(
@@ -83,6 +96,8 @@ class SpaceListScreen extends StatelessWidget {
     );
   }
 
+  // ── Create / delete ────────────────────────────────────────────────────
+
   Future<void> _newSpace(BuildContext context) async {
     final result = await _showCreateSpaceDialog(
       context,
@@ -93,6 +108,67 @@ class SpaceListScreen extends StatelessWidget {
       await store.createSpace(name: result.name, icon: result.icon);
     }
   }
+
+  Future<void> _confirmDelete(BuildContext context, Space space) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete "${space.name}"?'),
+        content: const Text(
+            'This removes every post and file in this space. Cannot be undone.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok == true) await store.deleteSpace(space.id);
+  }
+
+  // ── Import: zip ────────────────────────────────────────────────────────
+
+  Future<void> _importZip(BuildContext context) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        withData: true,
+        type: FileType.custom,
+        allowedExtensions: ['zip'],
+      );
+      if (result == null) return; // user cancelled — silent is correct
+      final picked = result.files.single;
+      Uint8List? bytes = picked.bytes;
+      if (bytes == null && picked.path != null) {
+        bytes = await readFileFromPath(picked.path!);
+      }
+      if (bytes == null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not read the selected file'),
+            ),
+          );
+        }
+        return;
+      }
+      if (!context.mounted) return;
+      final id = await store.importSpaceZip(bytes);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Imported space ${id.substring(0, 8)}…')),
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Import failed: $e')));
+      }
+    }
+  }
+
+  // ── Import: bookmarks → new space ──────────────────────────────────────
 
   Future<void> _importBookmarksAsNewSpace(BuildContext context) async {
     final file = await pickAndParseBookmarkFile(context);
@@ -136,6 +212,8 @@ class SpaceListScreen extends StatelessWidget {
     }
   }
 
+  // ── Shared: new-space dialog ───────────────────────────────────────────
+
   Future<({String name, String icon})?> _showCreateSpaceDialog(
     BuildContext context, {
     required String initialName,
@@ -167,8 +245,8 @@ class SpaceListScreen extends StatelessWidget {
                   runSpacing: 6,
                   children: kSpaceIcons
                       .map((i) => ChoiceChip(
-                            label:
-                                Text(i, style: const TextStyle(fontSize: 20)),
+                            label: Text(i,
+                                style: const TextStyle(fontSize: 20)),
                             selected: icon == i,
                             onSelected: (_) => setS(() => icon = i),
                           ))
@@ -198,64 +276,7 @@ class SpaceListScreen extends StatelessWidget {
     return result;
   }
 
-  Future<void> _confirmDelete(BuildContext context, Space space) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Delete "${space.name}"?'),
-        content: const Text(
-            'This removes every post and file in this space. Cannot be undone.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Delete')),
-        ],
-      ),
-    );
-    if (ok == true) await store.deleteSpace(space.id);
-  }
-
-  Future<void> _importZip(BuildContext context) async {
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        withData: true,
-        type: FileType.custom,
-        allowedExtensions: ['zip'],
-      );
-      if (result == null) return; // user cancelled — silent is correct
-      final picked = result.files.single;
-      Uint8List? bytes = picked.bytes;
-      if (bytes == null && picked.path != null) {
-        // Some platforms (and some file_picker versions) return only
-        // the path when withData was not fully honoured.
-        bytes = await readFileFromPath(picked.path!);
-      }
-      if (bytes == null) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Could not read the selected file'),
-            ),
-          );
-        }
-        return;
-      }
-      if (!context.mounted) return;
-      final id = await store.importSpaceZip(bytes);
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Imported space ${id.substring(0, 8)}…')),
-      );
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Import failed: $e')));
-      }
-    }
-  }
+  // ── Subtitle ───────────────────────────────────────────────────────────
 
   String _subtitleFor(VaultStore store, Space space) {
     final posts = store.postsForSpace(space.id);

@@ -36,6 +36,20 @@ class PostRepository {
 
   Post _parse(String path, String content) {
     final meta = parseFrontmatterMeta(content);
+
+    final hookState = <String, PostHookState>{};
+    final rawHooks = meta['hooks'];
+    if (rawHooks is Map) {
+      for (final e in rawHooks.entries) {
+        try {
+          hookState[e.key as String] = PostHookState.fromJson(
+              (e.value as Map).cast<String, dynamic>());
+        } catch (err) {
+          debugPrint('Bad hook state ${e.key}: $err');
+        }
+      }
+    }
+
     return Post(
       id: (meta['id'] as String?) ?? p.basenameWithoutExtension(path),
       parentId: meta['parent'] as String?,
@@ -51,6 +65,7 @@ class PostRepository {
       editedAt: meta['edited'] != null
           ? DateTime.parse(meta['edited'] as String)
           : null,
+      hookState: hookState,
     );
   }
 
@@ -65,10 +80,11 @@ class PostRepository {
     String? parentId,
     List<String> tags = const [],
     List<String> fileIds = const [],
-    DateTime? createdAt,               // ← new
+    DateTime? createdAt,
+    Map<String, PostHookState> hookState = const {},
   }) async {
     final id = const Uuid().v7();
-    final now = createdAt ?? DateTime.now().toUtc();   // ← was: DateTime.now().toUtc()
+    final now = createdAt ?? DateTime.now().toUtc();
     final html = bodyToHtml(plaintextBody);
     final meta = <String, dynamic>{
       'id': id,
@@ -83,6 +99,8 @@ class PostRepository {
         'description': description,
       if (thumbnail != null && thumbnail.isNotEmpty)
         'thumbnail': thumbnail,
+      if (hookState.isNotEmpty)
+        'hooks': hookState.map((k, v) => MapEntry(k, v.toJson())),
     };
     await fs
         .directory(p.join(vaultPath, spaceId, 'posts'))
@@ -102,12 +120,13 @@ class PostRepository {
       tags: tags,
       fileIds: fileIds,
       createdAt: now,
+      hookState: hookState,
     );
   }
 
   /// Rewrites the HTML document for [existing] with new content, preserving
-  /// the original `id`, `created`, and `parent` fields. Returns the new
-  /// [Post] so the caller can swap its cache entry in place.
+  /// the original `id`, `created`, `parent`, and `hooks` state. Returns the
+  /// new [Post] so the caller can swap its cache entry in place.
   Future<Post> update({
     required String spaceId,
     required Post existing,
@@ -136,6 +155,9 @@ class PostRepository {
         'description': description,
       if (thumbnail != null && thumbnail.isNotEmpty)
         'thumbnail': thumbnail,
+      if (existing.hookState.isNotEmpty)
+        'hooks':
+            existing.hookState.map((k, v) => MapEntry(k, v.toJson())),
     };
     await fs
         .file(p.join(vaultPath, spaceId, 'posts', '${existing.id}.html'))
@@ -153,11 +175,43 @@ class PostRepository {
       fileIds: fileIds,
       createdAt: existing.createdAt,
       editedAt: now,
+      hookState: existing.hookState,
     );
   }
 
   Future<void> delete(String spaceId, String postId) async {
     final f = fs.file(p.join(vaultPath, spaceId, 'posts', '$postId.html'));
     if (await f.exists()) await f.delete();
+  }
+
+  /// Merges [updates] into the post's frontmatter `hooks` field and returns
+  /// the re-read post. Used by the hook executor to persist each hook's
+  /// response without touching the post body or edit timestamp.
+  ///
+  /// Callers must serialise access to a given post (the facade holds a
+  /// per-post lock) so a pending update can't clobber a hook patch.
+  Future<Post> patchHookState(
+    String spaceId,
+    String postId,
+    Map<String, PostHookState> updates,
+  ) async {
+    final f = fs.file(p.join(vaultPath, spaceId, 'posts', '$postId.html'));
+    if (!await f.exists()) {
+      throw StateError('Post $postId not found');
+    }
+    final content = await f.readAsString();
+    final meta = parseFrontmatterMeta(content);
+    final body = bodyAfterFrontmatter(content);
+
+    final current = <String, dynamic>{
+      for (final e in ((meta['hooks'] as Map?) ?? const {}).entries)
+        e.key as String: e.value,
+    };
+    for (final e in updates.entries) {
+      current[e.key] = e.value.toJson();
+    }
+    meta['hooks'] = current;
+    await f.writeAsString(makeDocument(meta, body));
+    return _parse(f.path, await f.readAsString());
   }
 }

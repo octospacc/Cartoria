@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../data/models.dart';
 import '../../../data/store.dart';
 import '../../../util/file_category.dart';
-import '../../../util/html_utils.dart';
+import '../../widgets/hook_status_dialog.dart';
 import 'inline_media.dart';
 import 'link_preview_card.dart';
 import 'media_widgets.dart';
@@ -41,7 +41,7 @@ class PostCard extends StatelessWidget {
         .map((id) => store.fileById(space.id, id))
         .whereType<DriveFile>()
         .toList();
-    final plaintext = bodyFromHtml(post.body);
+    final plaintext = post.plaintext;
     final isBookmark = post.kind == PostKind.bookmark;
 
     final visualFiles = <DriveFile>[];
@@ -82,10 +82,13 @@ class PostCard extends StatelessWidget {
                     post: post,
                     onEdit: onEdit,
                     onDelete: () => _confirmDelete(context),
+                    onHookStatus: post.hookState.isEmpty
+                        ? null
+                        : () => showHookStatusDialog(context, post, store),
                   ),
                   if (plaintext.isNotEmpty) ...[
                     const SizedBox(height: 4),
-                    SelectableText(
+                    Text(
                       plaintext,
                       style: theme.textTheme.bodyMedium?.copyWith(
                         height: 1.4,
@@ -201,10 +204,16 @@ class _PostHeader extends StatelessWidget {
   final Post post;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+
+  /// Null when the post has no hook state yet — the menu item is hidden
+  /// rather than shown disabled, so a fresh post stays uncluttered.
+  final VoidCallback? onHookStatus;
+
   const _PostHeader({
     required this.post,
     required this.onEdit,
     required this.onDelete,
+    this.onHookStatus,
   });
 
   @override
@@ -239,10 +248,16 @@ class _PostHeader extends StatelessWidget {
             onSelected: (v) {
               if (v == 'edit') onEdit();
               if (v == 'delete') onDelete();
+              if (v == 'hook-status') onHookStatus?.call();
             },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'edit', child: Text('Edit')),
-              PopupMenuItem(value: 'delete', child: Text('Delete')),
+            itemBuilder: (_) => [
+              const PopupMenuItem(value: 'edit', child: Text('Edit')),
+              const PopupMenuItem(value: 'delete', child: Text('Delete')),
+              if (onHookStatus != null)
+                const PopupMenuItem(
+                  value: 'hook-status',
+                  child: Text('Hook status…'),
+                ),
             ],
           ),
         ),

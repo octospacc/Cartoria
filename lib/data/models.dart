@@ -16,25 +16,69 @@ class Space {
   });
 }
 
+/// Per-hook result stored on the [Post] that fired it. Deliberately small:
+/// only what the executor can fill from a single HTTP round-trip. The full
+/// response body is kept so `{{previous.<key>.json.<path>}}` can address
+/// arbitrary fields (e.g. Telegram's `result.message_id`).
+class PostHookState {
+  final DateTime lastFiredAt;
+  final int? lastStatus;
+  final String? lastBody;
+  final Map<String, String> lastHeaders;
+  final String? lastError;
+
+  const PostHookState({
+    required this.lastFiredAt,
+    this.lastStatus,
+    this.lastBody,
+    this.lastHeaders = const {},
+    this.lastError,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'lastFiredAt': lastFiredAt.toIso8601String(),
+        if (lastStatus != null) 'lastStatus': lastStatus,
+        if (lastBody != null) 'lastBody': lastBody,
+        if (lastHeaders.isNotEmpty) 'lastHeaders': lastHeaders,
+        if (lastError != null) 'lastError': lastError,
+      };
+
+  factory PostHookState.fromJson(Map<String, dynamic> j) => PostHookState(
+        lastFiredAt: DateTime.parse(j['lastFiredAt'] as String),
+        lastStatus: j['lastStatus'] as int?,
+        lastBody: j['lastBody'] as String?,
+        lastHeaders: ((j['lastHeaders'] as Map?) ?? const {})
+            .cast<String, String>(),
+        lastError: j['lastError'] as String?,
+      );
+}
+
 class Post {
   final String id;
   final String? parentId;
   final PostKind kind;
-  final String body;
+  final String body; // HTML
   final String? url;
   final String? title;
   final String? description;
-  final String? thumbnail;
+  final String? thumbnail; // URL string
   final List<String> tags;
   final List<String> fileIds;
   final DateTime createdAt;
   final DateTime? editedAt;
+
+  /// `hookKey` → last result. Populated by the hook executor via
+  /// [VaultStore] / [PostRepository.patchHookState]. Empty until at least
+  /// one hook has fired on this post.
+  final Map<String, PostHookState> hookState;
 
   String? _plaintextCache;
   String? _domainCache;
   String? _formattedCache;
   DateTime? _formattedForDay;
 
+  // `const` removed: mutable cache fields can't exist in a const class.
+  // Nothing in the codebase constructs `const Post(...)`.
   Post({
     required this.id,
     this.parentId,
@@ -48,16 +92,13 @@ class Post {
     this.fileIds = const [],
     required this.createdAt,
     this.editedAt,
+    this.hookState = const {},
   });
 
   /// Plaintext rendering of [body]. Memoised.
   String get plaintext => _plaintextCache ??= bodyFromHtml(body);
 
   /// Host of [url] (or the raw URL if parsing fails). Memoised.
-  ///
-  /// Used by [PostCard] and [LinkPreviewCard] on every build; without the
-  /// cache, a 5,000-card fast scroll re-parses the same URL thousands of
-  /// times a second.
   String get domain {
     final u = url;
     if (u == null || u.isEmpty) return '';
@@ -74,7 +115,7 @@ class Post {
   }
 
   /// `HH:MM` for today, `YYYY-MM-DD HH:MM` otherwise. Memoised, and
-  /// invalidated once per day so the "today" check stays honest.
+  /// invalidated once per day so "today" stays honest across midnight.
   String get formattedCreatedAt {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -97,6 +138,24 @@ class Post {
         '${local.day.toString().padLeft(2, '0')}';
     return '$ymd $hh:$mm';
   }
+
+  /// Returns a copy with [newState] as the hook state. Used by the facade
+  /// after [PostRepository.patchHookState] re-reads the on-disk version.
+  Post withHookState(Map<String, PostHookState> newState) => Post(
+        id: id,
+        parentId: parentId,
+        kind: kind,
+        body: body,
+        url: url,
+        title: title,
+        description: description,
+        thumbnail: thumbnail,
+        tags: tags,
+        fileIds: fileIds,
+        createdAt: createdAt,
+        editedAt: editedAt,
+        hookState: newState,
+      );
 }
 
 class DriveFile {
