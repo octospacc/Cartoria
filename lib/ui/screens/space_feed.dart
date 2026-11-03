@@ -5,6 +5,7 @@ import '../../data/store.dart';
 import '../../platform/file_save.dart';
 import '../../util/html_utils.dart';
 import '../widgets/space_stats_dialog.dart';
+import '../bookmark_import_helpers.dart';
 import 'drive.dart';
 import 'space_feed/attachment_picker.dart';
 import 'space_feed/composer.dart';
@@ -202,6 +203,35 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     if (ok == true) {
       await widget.store.deleteSpace(widget.space.id);
       if (mounted) Navigator.pop(context);
+    }
+  }
+
+  Future<void> _importBookmarks() async {
+    final file = await pickAndParseBookmarkFile(context);
+    if (file == null) return;
+    if (file.bookmarks.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No bookmarks found in file')),
+        );
+      }
+      return;
+    }
+    try {
+      final r = await widget.store.importBookmarksIntoSpace(
+        spaceId: widget.space.id,
+        file: file,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(bookmarkImportSummary(r))),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import failed: $e')),
+        );
+      }
     }
   }
 
@@ -454,14 +484,16 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
               PopupMenuButton<String>(
                 onSelected: (v) {
                   if (v == 'stats') {
-                    SpaceStatsDialog.show(
-                        context, widget.store, widget.space);
+                    SpaceStatsDialog.show(context, widget.store, widget.space);
                   }
+                  if (v == 'import') _importBookmarks();
                   if (v == 'export') _exportSpace();
                   if (v == 'delete') _deleteSpace();
                 },
                 itemBuilder: (_) => const [
                   PopupMenuItem(value: 'stats', child: Text('Statistics')),
+                  PopupMenuItem(
+                      value: 'import', child: Text('Import bookmarks…')),
                   PopupMenuItem(
                       value: 'export', child: Text('Export this space…')),
                   PopupMenuItem(
@@ -539,8 +571,7 @@ class _ComposerFooter extends StatelessWidget {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 760),
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: child,
             ),
           ),

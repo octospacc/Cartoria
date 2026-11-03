@@ -65,9 +65,10 @@ class PostRepository {
     String? parentId,
     List<String> tags = const [],
     List<String> fileIds = const [],
+    DateTime? createdAt,               // ← new
   }) async {
     final id = const Uuid().v7();
-    final now = DateTime.now().toUtc();
+    final now = createdAt ?? DateTime.now().toUtc();   // ← was: DateTime.now().toUtc()
     final html = bodyToHtml(plaintextBody);
     final meta = <String, dynamic>{
       'id': id,

@@ -7,6 +7,8 @@ import 'package:path_provider/path_provider.dart';
 
 import '../platform/fs.dart';
 import 'models.dart';
+import 'bookmarks.dart';
+import 'repos/bookmarks_importer.dart';
 import 'repos/archive_service.dart';
 import 'repos/drive_repo.dart';
 import 'repos/post_repo.dart';
@@ -16,6 +18,7 @@ import 'services/space_stats.dart';
 
 export 'services/link_metadata.dart' show LinkMetadata;
 export 'services/space_stats.dart' show SpaceStats;
+export 'repos/bookmarks_importer.dart' show BookmarkImportResult;
 
 class VaultStore extends ChangeNotifier {
   late final FileSystem fs;
@@ -27,6 +30,7 @@ class VaultStore extends ChangeNotifier {
   late final ArchiveService _archive;
   late final LinkMetadataService _link;
   late final SpaceStatsCalculator _stats;
+  late final BookmarksImporter _bookmarksImporter;
 
   final List<Space> _spaceCache = [];
   final Map<String, List<Post>> _postCache = {};
@@ -65,6 +69,7 @@ class VaultStore extends ChangeNotifier {
 
     _spaces = SpaceRepository(fs: fs, vaultPath: vaultPath);
     _posts = PostRepository(fs: fs, vaultPath: vaultPath);
+    _bookmarksImporter = BookmarksImporter(posts: _posts);
     _drive = DriveRepository(fs: fs, vaultPath: vaultPath);
     _archive = ArchiveService(fs: fs, vaultPath: vaultPath);
     _stats = SpaceStatsCalculator(fs: fs, vaultPath: vaultPath);
@@ -111,6 +116,50 @@ class VaultStore extends ChangeNotifier {
     _fileCache.remove(spaceId);
     _imageCache.removeWhere((k, _) => k.startsWith('$spaceId:'));
     notifyListeners();
+  }
+
+  Future<BookmarkImportResult> importBookmarksIntoSpace({
+    required String spaceId,
+    required BookmarkFile file,
+  }) async {
+    final existing = _postCache[spaceId] ?? const <Post>[];
+    final existingUrls = {
+      for (final p in existing)
+        if (p.kind == PostKind.bookmark && p.url != null) p.url!,
+    };
+
+    final r = await _bookmarksImporter.importInto(
+      spaceId: spaceId,
+      bookmarks: file.bookmarks,
+      existingUrls: existingUrls,
+    );
+
+    if (r.created.isNotEmpty) {
+      final merged = [...existing, ...r.created]
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      _postCache[spaceId] = merged;
+      notifyListeners();
+    }
+    return r.result;
+  }
+
+  Future<Space> importBookmarksAsNewSpace({
+    required BookmarkFile file,
+    required String spaceName,
+    String icon = '📚',
+  }) async {
+    final space = await createSpace(name: spaceName, icon: icon);
+    final r = await _bookmarksImporter.importInto(
+      spaceId: space.id,
+      bookmarks: file.bookmarks,
+      existingUrls: const {},
+    );
+    if (r.created.isNotEmpty) {
+      _postCache[space.id] = List.of(r.created)
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      notifyListeners();
+    }
+    return space;
   }
 
   Future<Post> createPost({

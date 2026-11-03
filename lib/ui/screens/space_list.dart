@@ -7,7 +7,9 @@ import '../widgets/space_stats_dialog.dart';
 import '../../data/models.dart';
 import '../../data/space_icons.dart';
 import '../../data/store.dart';
+import '../../data/bookmarks.dart';
 import '../../platform/file_read.dart';
+import '../bookmark_import_helpers.dart';
 import 'space_feed.dart';
 
 class SpaceListScreen extends StatelessWidget {
@@ -20,10 +22,23 @@ class SpaceListScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Spaces'),
         actions: [
-          IconButton(
+          PopupMenuButton<String>(
             icon: const Icon(Icons.file_download_outlined),
-            tooltip: 'Import space',
-            onPressed: () => _import(context),
+            tooltip: 'Import',
+            onSelected: (v) {
+              if (v == 'zip') _importZip(context);
+              if (v == 'bookmarks') _importBookmarksAsNewSpace(context);
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'zip',
+                child: Text('Import space (.zip)…'),
+              ),
+              PopupMenuItem(
+                value: 'bookmarks',
+                child: Text('Import bookmarks (.html)…'),
+              ),
+            ],
           ),
         ],
       ),
@@ -47,10 +62,8 @@ class SpaceListScreen extends StatelessWidget {
                 if (v == 'delete') _confirmDelete(context, space);
               },
               itemBuilder: (_) => const [
-                PopupMenuItem(
-                    value: 'stats', child: Text('Statistics')),
-                PopupMenuItem(
-                    value: 'delete', child: Text('Delete space')),
+                PopupMenuItem(value: 'stats', child: Text('Statistics')),
+                PopupMenuItem(value: 'delete', child: Text('Delete space')),
               ],
             ),
             onTap: () => Navigator.push(
@@ -71,13 +84,72 @@ class SpaceListScreen extends StatelessWidget {
   }
 
   Future<void> _newSpace(BuildContext context) async {
-    final c = TextEditingController();
-    var icon = kSpaceIcons.first;
+    final result = await _showCreateSpaceDialog(
+      context,
+      initialName: '',
+      initialIcon: kSpaceIcons.first,
+    );
+    if (result != null) {
+      await store.createSpace(name: result.name, icon: result.icon);
+    }
+  }
+
+  Future<void> _importBookmarksAsNewSpace(BuildContext context) async {
+    final file = await pickAndParseBookmarkFile(context);
+    if (file == null) return;
+    if (file.bookmarks.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No bookmarks found in file')),
+        );
+      }
+      return;
+    }
+    if (!context.mounted) return;
+
+    final result = await _showCreateSpaceDialog(
+      context,
+      initialName: file.title ?? 'Imported Bookmarks',
+      initialIcon: '📚',
+      title: 'Import bookmarks',
+      confirmLabel: 'Import',
+    );
+    if (result == null) return;
+
+    try {
+      final space = await store.importBookmarksAsNewSpace(
+        file: file,
+        spaceName: result.name,
+        icon: result.icon,
+      );
+      if (!context.mounted) return;
+      final count = store.postsForSpace(space.id).length;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Imported $count into "${space.name}"')),
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import failed: $e')),
+        );
+      }
+    }
+  }
+
+  Future<({String name, String icon})?> _showCreateSpaceDialog(
+    BuildContext context, {
+    required String initialName,
+    required String initialIcon,
+    String title = 'New space',
+    String confirmLabel = 'Create',
+  }) async {
+    final c = TextEditingController(text: initialName);
+    var icon = initialIcon;
     final result = await showDialog<({String name, String icon})>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setS) => AlertDialog(
-          title: const Text('New space'),
+          title: Text(title),
           content: SizedBox(
             width: 340,
             child: Column(
@@ -95,8 +167,8 @@ class SpaceListScreen extends StatelessWidget {
                   runSpacing: 6,
                   children: kSpaceIcons
                       .map((i) => ChoiceChip(
-                            label: Text(i,
-                                style: const TextStyle(fontSize: 20)),
+                            label:
+                                Text(i, style: const TextStyle(fontSize: 20)),
                             selected: icon == i,
                             onSelected: (_) => setS(() => icon = i),
                           ))
@@ -116,15 +188,14 @@ class SpaceListScreen extends StatelessWidget {
                 if (name.isEmpty) return;
                 Navigator.pop(ctx, (name: name, icon: icon));
               },
-              child: const Text('Create'),
+              child: Text(confirmLabel),
             ),
           ],
         ),
       ),
     );
-    if (result != null) {
-      await store.createSpace(name: result.name, icon: result.icon);
-    }
+    c.dispose();
+    return result;
   }
 
   Future<void> _confirmDelete(BuildContext context, Space space) async {
@@ -147,7 +218,7 @@ class SpaceListScreen extends StatelessWidget {
     if (ok == true) await store.deleteSpace(space.id);
   }
 
-  Future<void> _import(BuildContext context) async {
+  Future<void> _importZip(BuildContext context) async {
     try {
       final result = await FilePicker.platform.pickFiles(
         withData: true,
