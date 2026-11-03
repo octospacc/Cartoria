@@ -2,20 +2,65 @@ import '../data/models.dart';
 
 enum HookTrigger { create, edit }
 
+/// One field in a multipart/form-data hook request.
+///
+/// Exactly one of [template] or [fileIndex] must be non-null:
+///   - text part: [template] is rendered with [TemplateEscape.raw] and sent
+///     as a form field of the given [name];
+///   - file part: bytes are read from `post.fileIds[fileIndex]` and sent
+///     under [name] as a file upload, with `Content-Type` inferred from
+///     the file's name and `filename` either the vault name or [filename].
+class HookMultipartPart {
+  final String name;
+  final String? template;
+  final int? fileIndex;
+  final String? filename;
+
+  const HookMultipartPart({
+    required this.name,
+    this.template,
+    this.fileIndex,
+    this.filename,
+  }) : assert(
+          (template == null) != (fileIndex == null),
+          'Exactly one of template or fileIndex must be set',
+        );
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        if (template != null) 'template': template,
+        if (fileIndex != null) 'fileIndex': fileIndex,
+        if (filename != null) 'filename': filename,
+      };
+
+  factory HookMultipartPart.fromJson(Map<String, dynamic> j) =>
+      HookMultipartPart(
+        name: j['name'] as String,
+        template: j['template'] as String?,
+        fileIndex: j['fileIndex'] as int?,
+        filename: j['filename'] as String?,
+      );
+}
+
 class Hook {
   final String id;
-  final String key;         // user-visible, [a-z][a-z0-9_]*, unique per vault
+  final String key;
   final String name;
   final bool enabled;
-  final Set<String> spaceIds;         // empty = every space
+  final Set<String> spaceIds;
   final Set<HookTrigger> triggers;
-  final Set<PostKind> postKinds;      // empty = every kind
-  final Set<String> tagFilters;       // empty = any tags; else at least one match
-  final String method;                // GET/POST/PUT/PATCH/DELETE
+  final Set<PostKind> postKinds;
+  final Set<String> tagFilters;
+  final String method;
   final String urlTemplate;
   final Map<String, String> headers;
   final String? bodyTemplate;
   final int timeoutSeconds;
+
+  /// When non-empty, the request is sent as multipart/form-data and
+  /// [bodyTemplate] is ignored. Each part is either a rendered text field
+  /// or a file uploaded from the post's drive attachments.
+  final List<HookMultipartPart> multipartParts;
 
   const Hook({
     required this.id,
@@ -31,14 +76,24 @@ class Hook {
     this.headers = const {},
     this.bodyTemplate,
     this.timeoutSeconds = 15,
+    this.multipartParts = const [],
   });
 
   Hook withEnabled(bool value) => Hook(
-        id: id, key: key, name: name, enabled: value,
-        spaceIds: spaceIds, triggers: triggers, postKinds: postKinds,
-        tagFilters: tagFilters, method: method, urlTemplate: urlTemplate,
-        headers: headers, bodyTemplate: bodyTemplate,
+        id: id,
+        key: key,
+        name: name,
+        enabled: value,
+        spaceIds: spaceIds,
+        triggers: triggers,
+        postKinds: postKinds,
+        tagFilters: tagFilters,
+        method: method,
+        urlTemplate: urlTemplate,
+        headers: headers,
+        bodyTemplate: bodyTemplate,
         timeoutSeconds: timeoutSeconds,
+        multipartParts: multipartParts,
       );
 
   bool matches({
@@ -72,6 +127,8 @@ class Hook {
         'headers': headers,
         'bodyTemplate': bodyTemplate,
         'timeoutSeconds': timeoutSeconds,
+        if (multipartParts.isNotEmpty)
+          'multipartParts': multipartParts.map((p) => p.toJson()).toList(),
       };
 
   factory Hook.fromJson(Map<String, dynamic> j) => Hook(
@@ -92,9 +149,13 @@ class Hook {
             ((j['tagFilters'] as List?) ?? const []).cast<String>().toSet(),
         method: (j['method'] as String?) ?? 'POST',
         urlTemplate: j['urlTemplate'] as String,
-        headers: ((j['headers'] as Map?) ?? const {})
-            .cast<String, String>(),
+        headers:
+            ((j['headers'] as Map?) ?? const {}).cast<String, String>(),
         bodyTemplate: j['bodyTemplate'] as String?,
         timeoutSeconds: (j['timeoutSeconds'] as int?) ?? 15,
+        multipartParts: ((j['multipartParts'] as List?) ?? const [])
+            .map((e) => HookMultipartPart.fromJson(
+                (e as Map).cast<String, dynamic>()))
+            .toList(),
       );
 }

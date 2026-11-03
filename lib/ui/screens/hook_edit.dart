@@ -28,6 +28,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
   late Set<PostKind> _postKinds;
   late String _method;
   late List<MapEntry<TextEditingController, TextEditingController>> _headers;
+  late List<_MultipartRow> _parts;
 
   String? _error;
   bool _saving = false;
@@ -55,6 +56,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
               TextEditingController(text: entry.value),
             ))
         .toList();
+    _parts = (e?.multipartParts ?? const []).map(_MultipartRow.fromPart).toList();
   }
 
   @override
@@ -68,6 +70,9 @@ class _HookEditScreenState extends State<HookEditScreen> {
     for (final h in _headers) {
       h.key.dispose();
       h.value.dispose();
+    }
+    for (final p in _parts) {
+      p.dispose();
     }
     super.dispose();
   }
@@ -99,7 +104,9 @@ class _HookEditScreenState extends State<HookEditScreen> {
       }
       final url = _url.text.trim();
       if (url.isEmpty) throw ArgumentError('URL is required');
-      if (_triggers.isEmpty) throw ArgumentError('Select at least one trigger');
+      if (_triggers.isEmpty) {
+        throw ArgumentError('Select at least one trigger');
+      }
 
       final headers = <String, String>{};
       for (final h in _headers) {
@@ -114,6 +121,31 @@ class _HookEditScreenState extends State<HookEditScreen> {
           .where((s) => s.isNotEmpty)
           .toSet();
 
+      final parts = <HookMultipartPart>[];
+      for (final p in _parts) {
+        final pname = p.name.text.trim();
+        if (pname.isEmpty) continue;
+        if (p.isFile) {
+          final idx = int.tryParse(p.value.text.trim());
+          if (idx == null || idx < 0) {
+            throw ArgumentError(
+                'Multipart part "$pname": file index must be 0 or greater');
+          }
+          parts.add(HookMultipartPart(
+            name: pname,
+            fileIndex: idx,
+            filename: p.filename.text.trim().isEmpty
+                ? null
+                : p.filename.text.trim(),
+          ));
+        } else {
+          parts.add(HookMultipartPart(
+            name: pname,
+            template: p.value.text,
+          ));
+        }
+      }
+
       final hook = Hook(
         id: widget.existing?.id ?? const Uuid().v7(),
         key: key,
@@ -126,9 +158,11 @@ class _HookEditScreenState extends State<HookEditScreen> {
         method: _method,
         urlTemplate: url,
         headers: headers,
-        bodyTemplate: _body.text.isEmpty ? null : _body.text,
+        bodyTemplate:
+            parts.isNotEmpty || _body.text.isEmpty ? null : _body.text,
         timeoutSeconds:
             int.tryParse(_timeout.text.trim())?.clamp(1, 120) ?? 15,
+        multipartParts: parts,
       );
       await widget.store.saveHook(hook);
       if (mounted) Navigator.pop(context);
@@ -144,6 +178,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
   Widget build(BuildContext context) {
     final spaces = widget.store.spaces;
     final isNew = widget.existing == null;
+    final hasMultipart = _parts.isNotEmpty;
 
     return Scaffold(
       appBar: AppBar(
@@ -161,7 +196,9 @@ class _HookEditScreenState extends State<HookEditScreen> {
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              child: Text(_error!,
+                  style:
+                      TextStyle(color: Theme.of(context).colorScheme.error)),
             ),
           TextField(
             controller: _name,
@@ -244,7 +281,8 @@ class _HookEditScreenState extends State<HookEditScreen> {
           if (_postKinds.isEmpty)
             const Padding(
               padding: EdgeInsets.only(top: 6),
-              child: Text('No kinds selected — matches both notes and bookmarks.',
+              child: Text(
+                  'No kinds selected — matches both notes and bookmarks.',
                   style: TextStyle(fontSize: 12)),
             ),
           const SizedBox(height: 20),
@@ -330,7 +368,39 @@ class _HookEditScreenState extends State<HookEditScreen> {
             label: const Text('Add header'),
           ),
           const SizedBox(height: 20),
-          if (_method != 'GET') ...[
+          _label('Multipart fields (optional)'),
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8),
+            child: Text(
+              'When present, replaces the JSON body. Each field is sent as '
+              'form-data. Text parts carry templated values (e.g. caption); '
+              'file parts upload a vault attachment by its 0-based index in '
+              'post.fileIds.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ),
+          ..._parts.asMap().entries.map((e) {
+            final i = e.key;
+            final p = e.value;
+            return _MultipartRowWidget(
+              key: ValueKey(p.id),
+              row: p,
+              onRemove: () => setState(() {
+                p.dispose();
+                _parts.removeAt(i);
+              }),
+              onChanged: () => setState(() {}),
+            );
+          }),
+          TextButton.icon(
+            onPressed: () => setState(() {
+              _parts.add(_MultipartRow.empty());
+            }),
+            icon: const Icon(Icons.add),
+            label: const Text('Add multipart field'),
+          ),
+          const SizedBox(height: 20),
+          if (_method != 'GET' && !hasMultipart) ...[
             TextField(
               controller: _body,
               decoration: const InputDecoration(
@@ -357,7 +427,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
             icon: Icon(_showPreview ? Icons.expand_less : Icons.expand_more),
             label: Text(_showPreview ? 'Hide preview' : 'Preview request'),
           ),
-          if (_showPreview) _buildPreview(),
+          if (_showPreview) _buildPreview(hasMultipart),
           const SizedBox(height: 40),
         ],
       ),
@@ -369,7 +439,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
         child: Text(text, style: Theme.of(context).textTheme.titleSmall),
       );
 
-  Widget _buildPreview() {
+  Widget _buildPreview(bool hasMultipart) {
     final samplePost = Post(
       id: 'preview-post',
       kind: PostKind.bookmark,
@@ -378,7 +448,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
       title: 'Example title',
       description: 'Example description',
       tags: const ['tag1'],
-      fileIds: const [],
+      fileIds: const ['<file-id-0>', '<file-id-1>'],
       createdAt: DateTime.now(),
     );
     final sampleSpace = Space(
@@ -392,8 +462,19 @@ class _HookEditScreenState extends State<HookEditScreen> {
       key: _key.text.isEmpty ? 'preview' : _key.text,
       name: _name.text.isEmpty ? 'preview' : _name.text,
       urlTemplate: _url.text,
-      headers: {},
-      bodyTemplate: _body.text.isEmpty ? null : _body.text,
+      headers: const {},
+      bodyTemplate: hasMultipart ? null : _body.text,
+      multipartParts: hasMultipart
+          ? _parts
+              .where((p) => p.name.text.isNotEmpty)
+              .map((p) => HookMultipartPart(
+                    name: p.name.text.trim(),
+                    template: p.isFile ? null : p.value.text,
+                    fileIndex:
+                        p.isFile ? int.tryParse(p.value.text) ?? 0 : null,
+                  ))
+              .toList()
+          : const [],
     );
     final ctx = TemplateContext(
       post: samplePost,
@@ -407,13 +488,9 @@ class _HookEditScreenState extends State<HookEditScreen> {
         : TemplateRenderer.render(_url.text, ctx, escape: TemplateEscape.url);
     final headers = _headers
         .where((h) => h.key.text.isNotEmpty)
-        .map((h) => '${h.key.text}: '
-            '${TemplateRenderer.render(h.value.text, ctx)}')
+        .map((h) =>
+            '${h.key.text}: ${TemplateRenderer.render(h.value.text, ctx)}')
         .join('\n');
-    final body = _body.text.isEmpty
-        ? ''
-        : TemplateRenderer.render(_body.text, ctx,
-            escape: TemplateEscape.json);
 
     final mono = Theme.of(context).textTheme.bodySmall?.copyWith(
           fontFamily: 'monospace',
@@ -437,13 +514,172 @@ class _HookEditScreenState extends State<HookEditScreen> {
                 style: TextStyle(fontWeight: FontWeight.w600)),
             SelectableText(headers, style: mono),
           ],
-          if (body.isNotEmpty) ...[
+          if (hasMultipart) ...[
+            const SizedBox(height: 8),
+            const Text('Multipart',
+                style: TextStyle(fontWeight: FontWeight.w600)),
+            ...previewHook.multipartParts.map((p) {
+              final value = p.template != null
+                  ? TemplateRenderer.render(p.template!, ctx)
+                  : '<file: post.fileIds[${p.fileIndex}]>';
+              return SelectableText('${p.name}: $value', style: mono);
+            }),
+          ] else if (_body.text.isNotEmpty) ...[
             const SizedBox(height: 8),
             const Text('Body',
                 style: TextStyle(fontWeight: FontWeight.w600)),
-            SelectableText(body, style: mono),
+            SelectableText(
+              TemplateRenderer.render(_body.text, ctx,
+                  escape: TemplateEscape.json),
+              style: mono,
+            ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+// ── Multipart row model + widget ───────────────────────────────────────────
+
+class _MultipartRow {
+  final String id;
+  final TextEditingController name;
+  final TextEditingController value;
+  final TextEditingController filename;
+  bool isFile;
+
+  _MultipartRow({
+    required this.id,
+    required this.name,
+    required this.value,
+    required this.filename,
+    required this.isFile,
+  });
+
+  factory _MultipartRow.empty() => _MultipartRow(
+        id: const Uuid().v4(),
+        name: TextEditingController(),
+        value: TextEditingController(),
+        filename: TextEditingController(),
+        isFile: false,
+      );
+
+  factory _MultipartRow.fromPart(HookMultipartPart p) => _MultipartRow(
+        id: const Uuid().v4(),
+        name: TextEditingController(text: p.name),
+        value: TextEditingController(
+          text: p.template ?? (p.fileIndex?.toString() ?? '0'),
+        ),
+        filename: TextEditingController(text: p.filename ?? ''),
+        isFile: p.fileIndex != null,
+      );
+
+  void dispose() {
+    name.dispose();
+    value.dispose();
+    filename.dispose();
+  }
+}
+
+class _MultipartRowWidget extends StatelessWidget {
+  final _MultipartRow row;
+  final VoidCallback onRemove;
+  final VoidCallback onChanged;
+
+  const _MultipartRowWidget({
+    super.key,
+    required this.row,
+    required this.onRemove,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: row.name,
+                    decoration: const InputDecoration(
+                      labelText: 'Field name',
+                      hintText: 'photo, caption, chat_id, …',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment(value: false, label: Text('Text')),
+                    ButtonSegment(value: true, label: Text('File')),
+                  ],
+                  selected: {row.isFile},
+                  onSelectionChanged: (s) {
+                    row.isFile = s.first;
+                    row.value.clear();
+                    onChanged();
+                  },
+                  showSelectedIcon: false,
+                  style: const ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (row.isFile) ...[
+              Row(
+                children: [
+                  SizedBox(
+                    width: 120,
+                    child: TextField(
+                      controller: row.value,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'File index',
+                        helperText: '0-based',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: row.filename,
+                      decoration: const InputDecoration(
+                        labelText: 'Filename override (optional)',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ] else
+              TextField(
+                controller: row.value,
+                decoration: const InputDecoration(
+                  labelText: 'Value template',
+                  hintText: '{{post.title}}',
+                ),
+                minLines: 1,
+                maxLines: 3,
+              ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: onRemove,
+                icon: const Icon(Icons.remove_circle_outline, size: 18),
+                label: const Text('Remove'),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

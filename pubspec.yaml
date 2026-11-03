@@ -24,6 +24,7 @@ dependencies:
   url_launcher: ^6.3.0
   html: ^0.15.4   # ← add
   http: ^1.2.0
+  http_parser: ^4.0.2
 
 dev_dependencies:
   flutter_lints: ^4.0.0

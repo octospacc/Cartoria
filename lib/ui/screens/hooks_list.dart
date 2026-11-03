@@ -73,7 +73,10 @@ class HookListScreen extends StatelessWidget {
     final spaces = h.spaceIds.isEmpty
         ? 'all spaces'
         : '${h.spaceIds.length} space${h.spaceIds.length == 1 ? "" : "s"}';
-    return '${h.method} · $triggers · $spaces · key: ${h.key}';
+    final body = h.multipartParts.isEmpty
+        ? ''
+        : ' · ${h.multipartParts.length} part${h.multipartParts.length == 1 ? "" : "s"}';
+    return '${h.method} · $triggers · $spaces · key: ${h.key}$body';
   }
 
   Future<void> _delete(BuildContext context, Hook hook) async {

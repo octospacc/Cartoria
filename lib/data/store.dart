@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../util/mime.dart';
 import '../platform/fs.dart';
 import 'bookmarks.dart';
 import 'hooks.dart';
@@ -420,8 +421,6 @@ class VaultStore extends ChangeNotifier {
     required Space space,
     required HookTrigger trigger,
   }) async {
-    // Read the freshest cached version: a previous batch in the chain may
-    // have patched the state since this batch was scheduled.
     Post? post;
     for (final p in _postCache[space.id] ?? const <Post>[]) {
       if (p.id == postId) {
@@ -439,6 +438,24 @@ class VaultStore extends ChangeNotifier {
     );
     if (active.isEmpty) return;
 
+    // Resolve each file at most once per batch — a hook with several file
+    // parts (photo + thumbnail, say) doesn't re-read the disk.
+    final resolved = <String, ResolvedFile>{};
+    Future<ResolvedFile?> resolveFile(String fileId) async {
+      final cached = resolved[fileId];
+      if (cached != null) return cached;
+      final df = _fileIndex[space.id]?[fileId];
+      if (df == null) return null;
+      final bytes = await _drive.readBytes(space.id, fileId);
+      final r = ResolvedFile(
+        bytes: bytes,
+        name: df.name,
+        mimeType: mimeTypeForName(df.name),
+      );
+      resolved[fileId] = r;
+      return r;
+    }
+
     final priorStates = post.hookState;
     final results = <String, PostHookState>{};
     for (final hook in active) {
@@ -449,14 +466,14 @@ class VaultStore extends ChangeNotifier {
         space: space,
         trigger: trigger,
         priorStates: priorStates,
+        resolveFile: resolveFile,
       );
     }
     if (results.isEmpty) return;
 
     await _withPostLock(postId, () async {
       final patched = await _posts.patchHookState(space.id, postId, results);
-      final idx =
-          _postCache[space.id]?.indexWhere((x) => x.id == postId) ?? -1;
+      final idx = _postCache[space.id]?.indexWhere((x) => x.id == postId) ?? -1;
       if (idx >= 0) _postCache[space.id]![idx] = patched;
       notifyListeners();
     });
