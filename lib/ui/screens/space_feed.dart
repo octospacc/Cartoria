@@ -3,23 +3,19 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../widgets/space_stats_dialog.dart';
-import '../widgets/recall_files_sheet.dart';
 import '../../data/models.dart';
 import '../../data/store.dart';
 import '../../platform/file_save.dart';
 import '../../platform/media.dart';
 import '../../util/file_category.dart';
 import '../../util/html_utils.dart';
+import '../widgets/recall_files_sheet.dart';
+import '../widgets/space_stats_dialog.dart';
 import 'drive.dart';
-
-bool _searchActive = false;
-final _searchCtrl = TextEditingController();
 
 class SpaceFeedScreen extends StatefulWidget {
   final VaultStore store;
@@ -33,10 +29,12 @@ class SpaceFeedScreen extends StatefulWidget {
 class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   final _bodyCtrl = TextEditingController();
   final _urlCtrl = TextEditingController();
+  final _searchCtrl = TextEditingController();
   PostKind _kind = PostKind.note;
   final List<String> _pendingFileIds = [];
   final Set<String> _expanded = {};
   bool _sending = false;
+  bool _searchActive = false;
 
   @override
   void dispose() {
@@ -63,7 +61,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     if (body.isEmpty && url == null && _pendingFileIds.isEmpty) return;
 
     setState(() => _sending = true);
-
     String? fetchedTitle;
     String? fetchedDescription;
     String? fetchedThumbnail;
@@ -119,7 +116,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     );
     if (result == null) return;
 
-    // Auto-fetch metadata for bookmarks if the user left the fields empty.
     String? title = result.title;
     String? description = result.description;
     String? thumbnail = result.thumbnail;
@@ -216,40 +212,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     }
   }
 
-  List<_FlatItem> _flatten({Set<String>? visible}) {
-    final all = widget.store.postsForSpace(widget.space.id);
-    final byParent = <String?, List<Post>>{};
-    final ids = <String>{};
-    for (final p in all) {
-      ids.add(p.id);
-    }
-    for (final p in all) {
-      final parentKey =
-          (p.parentId != null && ids.contains(p.parentId)) ? p.parentId : null;
-      byParent.putIfAbsent(parentKey, () => []).add(p);
-    }
-    for (final list in byParent.values) {
-      list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    }
-    final tops = (byParent[null] ?? const <Post>[]).reversed.toList();
-    final result = <_FlatItem>[];
-    void walk(Post p, int depth) {
-      if (visible != null && !visible.contains(p.id)) return;
-      final childCount = (byParent[p.id] ?? const <Post>[]).length;
-      result.add(_FlatItem(post: p, depth: depth, childCount: childCount));
-      final expand = visible != null ? true : _expanded.contains(p.id);
-      if (expand) {
-        for (final c in byParent[p.id] ?? const <Post>[]) {
-          walk(c, depth + 1);
-        }
-      }
-    }
-    for (final p in tops) {
-      walk(p, 0);
-    }
-    return result;
-  }
-
   Set<String> _computeMatches(String query) {
     final terms = query
         .toLowerCase()
@@ -321,57 +283,198 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     );
   }
 
-  Widget _buildPostList(List<_FlatItem> items, {required bool searchMode}) {
+  List<_PostNode> _buildTree({Set<String>? visible}) {
+    final allPosts = widget.store.postsForSpace(widget.space.id);
+    final posts = visible == null
+        ? allPosts
+        : allPosts.where((p) => visible.contains(p.id)).toList();
+    final ids = {for (final p in posts) p.id};
+    final childrenByParent = <String?, List<Post>>{};
+    for (final p in posts) {
+      final parentKey =
+          (p.parentId != null && ids.contains(p.parentId)) ? p.parentId : null;
+      childrenByParent.putIfAbsent(parentKey, () => []).add(p);
+    }
+    for (final list in childrenByParent.values) {
+      list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    }
+    _PostNode buildNode(Post post) {
+      final children =
+          (childrenByParent[post.id] ?? const []).map(buildNode).toList();
+      return _PostNode(post, children);
+    }
+
+    return (childrenByParent[null] ?? const [])
+        .reversed
+        .map(buildNode)
+        .toList();
+  }
+
+  Widget _buildNode(_PostNode node, {required bool searchMode}) {
+    final post = node.post;
+    final hasChildren = node.children.isNotEmpty;
+    final expanded = searchMode || _expanded.contains(post.id);
+
+    final card = _PostCard(
+      key: ValueKey(post.id),
+      store: widget.store,
+      space: widget.space,
+      post: post,
+      childCount: node.children.length,
+      expanded: expanded,
+      hideReplyToggle: searchMode,
+      onToggleReplies: () => setState(() {
+        if (_expanded.contains(post.id)) {
+          _expanded.remove(post.id);
+        } else {
+          _expanded.add(post.id);
+        }
+      }),
+      onReply: () => _reply(post),
+      onEdit: () => _edit(post),
+      onDelete: () => widget.store.deletePost(widget.space.id, post.id),
+    );
+
+    if (!hasChildren || !expanded) return card;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        card,
+        Padding(
+          padding: const EdgeInsets.only(left: 16),
+          child: Container(
+            decoration: BoxDecoration(
+              border: Border(
+                left: BorderSide(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                  width: 2,
+                ),
+              ),
+            ),
+            padding: const EdgeInsets.only(left: 8, top: 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: node.children
+                  .map((c) => Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: _buildNode(c, searchMode: searchMode),
+                      ))
+                  .toList(),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFeed(List<_PostNode> roots, {required bool searchMode}) {
+    if (roots.isEmpty) {
+      return _emptyState(searchMode
+          ? 'No results for "${_searchCtrl.text.trim()}"'
+          : 'No posts yet. Write something.');
+    }
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-      itemCount: items.length,
-      itemBuilder: (_, i) {
-        final item = items[i];
-        return _PostCard(
-          key: ValueKey(item.post.id),
-          store: widget.store,
-          space: widget.space,
-          post: item.post,
-          depth: item.depth,
-          childCount: item.childCount,
-          expanded: _expanded.contains(item.post.id),
-          hideReplyToggle: searchMode,
-          onToggleReplies: () => setState(() {
-            if (_expanded.contains(item.post.id)) {
-              _expanded.remove(item.post.id);
-            } else {
-              _expanded.add(item.post.id);
-            }
-          }),
-          onReply: () => _reply(item.post),
-          onEdit: () => _edit(item.post),
-          onDelete: () =>
-              widget.store.deletePost(widget.space.id, item.post.id),
+      itemCount: roots.length,
+      itemBuilder: (context, i) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: _buildNode(roots[i], searchMode: searchMode),
         );
       },
     );
   }
 
-  Widget _buildSearchBody() {
-    final query = _searchCtrl.text.trim();
+  Widget _buildContent() {
+    final query = _searchActive ? _searchCtrl.text.trim() : '';
     if (query.isEmpty) {
-      final items = _flatten();
-      if (items.isEmpty) {
-        return _emptyState('No posts yet. Write something.');
-      }
-      return _buildPostList(items, searchMode: false);
+      return _buildFeed(_buildTree(), searchMode: false);
     }
     final matches = _computeMatches(query);
     if (matches.isEmpty) {
       return _emptyState('No results for "$query"');
     }
     final visible = _withAncestors(matches);
-    final items = _flatten(visible: visible);
+    final roots = _buildTree(visible: visible);
     return Column(
       children: [
         _SearchBanner(count: matches.length),
-        Expanded(child: _buildPostList(items, searchMode: true)),
+        Expanded(child: _buildFeed(roots, searchMode: true)),
       ],
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      leading: _searchActive
+          ? IconButton(
+              icon: const Icon(Icons.arrow_back),
+              tooltip: 'Close search',
+              onPressed: () => setState(() {
+                _searchCtrl.clear();
+                _searchActive = false;
+              }),
+            )
+          : null,
+      title: _searchActive
+          ? TextField(
+              controller: _searchCtrl,
+              autofocus: true,
+              textInputAction: TextInputAction.search,
+              decoration: const InputDecoration(
+                hintText: 'Search this space…',
+                border: InputBorder.none,
+              ),
+              onChanged: (_) => setState(() {}),
+            )
+          : Text('${widget.space.icon} ${widget.space.name}'),
+      actions: _searchActive
+          ? [
+              if (_searchCtrl.text.isNotEmpty)
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  tooltip: 'Clear',
+                  onPressed: () => setState(_searchCtrl.clear),
+                ),
+            ]
+          : [
+              IconButton(
+                icon: const Icon(Icons.search),
+                tooltip: 'Search',
+                onPressed: () => setState(() => _searchActive = true),
+              ),
+              IconButton(
+                icon: const Icon(Icons.folder),
+                tooltip: 'Drive',
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => DriveScreen(
+                      store: widget.store,
+                      space: widget.space,
+                    ),
+                  ),
+                ),
+              ),
+              PopupMenuButton<String>(
+                onSelected: (v) {
+                  if (v == 'stats') {
+                    SpaceStatsDialog.show(
+                        context, widget.store, widget.space);
+                  }
+                  if (v == 'export') _exportSpace();
+                  if (v == 'delete') _deleteSpace();
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'stats', child: Text('Statistics')),
+                  PopupMenuItem(
+                      value: 'export', child: Text('Export this space…')),
+                  PopupMenuItem(
+                      value: 'delete', child: Text('Delete this space…')),
+                ],
+              ),
+            ],
     );
   }
 
@@ -381,105 +484,74 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       animation: widget.store,
       builder: (context, _) {
         return Scaffold(
-          appBar: AppBar(
-            leading: _searchActive
-                ? IconButton(
-                    icon: const Icon(Icons.arrow_back),
-                    tooltip: 'Close search',
-                    onPressed: () => setState(() {
-                      _searchCtrl.clear();
-                      _searchActive = false;
-                    }),
-                  )
-                : null,
-            title: _searchActive
-                ? TextField(
-                    controller: _searchCtrl,
-                    autofocus: true,
-                    textInputAction: TextInputAction.search,
-                    decoration: const InputDecoration(
-                      hintText: 'Search this space…',
-                      border: InputBorder.none,
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  )
-                : Text('${widget.space.icon} ${widget.space.name}'),
-            actions: _searchActive
-                ? [
-                    if (_searchCtrl.text.isNotEmpty)
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        tooltip: 'Clear',
-                        onPressed: () => setState(_searchCtrl.clear),
-                      ),
-                  ]
-                : [
-                    IconButton(
-                      icon: const Icon(Icons.search),
-                      tooltip: 'Search',
-                      onPressed: () =>
-                          setState(() => _searchActive = true),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.folder),
-                      tooltip: 'Drive',
-                      onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => DriveScreen(
-                            store: widget.store,
-                            space: widget.space,
-                          ),
-                        ),
-                      ),
-                    ),
-                    PopupMenuButton<String>(
-                      onSelected: (v) {
-                        if (v == 'stats') {
-                          SpaceStatsDialog.show(
-                              context, widget.store, widget.space);
-                        }
-                        if (v == 'export') _exportSpace();
-                        if (v == 'delete') _deleteSpace();
-                      },
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(
-                            value: 'stats', child: Text('Statistics')),
-                        PopupMenuItem(
-                            value: 'export',
-                            child: Text('Export this space…')),
-                        PopupMenuItem(
-                            value: 'delete',
-                            child: Text('Delete this space…')),
-                      ],
-                    ),
-                  ],
-          ),
+          appBar: _buildAppBar(),
           body: Column(
             children: [
               Expanded(
-                child: _searchActive
-                    ? _buildSearchBody()
-                    : _buildPostList(_flatten(), searchMode: false),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    child: _buildContent(),
+                  ),
+                ),
               ),
               if (!_searchActive)
-                _Composer(
-                  kind: _kind,
-                  onKindChanged: (k) => setState(() => _kind = k),
-                  bodyCtrl: _bodyCtrl,
-                  urlCtrl: _urlCtrl,
-                  pendingFileIds: _pendingFileIds,
-                  store: widget.store,
-                  space: widget.space,
-                  onAttach: _attach,
-                  onSend: _sending ? null : _send,
-                  onRemoveFile: (id) =>
-                      setState(() => _pendingFileIds.remove(id)),
+                _ComposerFooter(
+                  child: _Composer(
+                    kind: _kind,
+                    onKindChanged: (k) => setState(() => _kind = k),
+                    bodyCtrl: _bodyCtrl,
+                    urlCtrl: _urlCtrl,
+                    pendingFileIds: _pendingFileIds,
+                    store: widget.store,
+                    space: widget.space,
+                    onAttach: _attach,
+                    onSend: _sending ? null : _send,
+                    onRemoveFile: (id) =>
+                        setState(() => _pendingFileIds.remove(id)),
+                  ),
                 ),
             ],
           ),
         );
       },
+    );
+  }
+}
+
+class _PostNode {
+  final Post post;
+  final List<_PostNode> children;
+  _PostNode(this.post, this.children);
+}
+
+class _ComposerFooter extends StatelessWidget {
+  final Widget child;
+  const _ComposerFooter({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainer,
+        border: Border(
+          top: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: child,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -495,24 +567,637 @@ class _SearchBanner extends StatelessWidget {
       width: double.infinity,
       color: theme.colorScheme.surfaceContainerHighest,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Text(
-        '$count ${count == 1 ? "match" : "matches"}',
-        style: theme.textTheme.bodySmall,
+      child: Row(
+        children: [
+          Icon(Icons.search,
+              size: 14, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: 6),
+          Text(
+            '$count ${count == 1 ? "match" : "matches"}',
+            style: theme.textTheme.bodySmall,
+          ),
+        ],
       ),
     );
   }
 }
 
-class _FlatItem {
+// ── Post card ──────────────────────────────────────────────────────────────
+
+class _PostCard extends StatelessWidget {
+  final VaultStore store;
+  final Space space;
   final Post post;
-  final int depth;
   final int childCount;
-  const _FlatItem({
+  final bool expanded;
+  final bool hideReplyToggle;
+  final VoidCallback onToggleReplies;
+  final VoidCallback onReply;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  const _PostCard({
+    super.key,
+    required this.store,
+    required this.space,
     required this.post,
-    required this.depth,
     required this.childCount,
+    required this.expanded,
+    this.hideReplyToggle = false,
+    required this.onToggleReplies,
+    required this.onReply,
+    required this.onEdit,
+    required this.onDelete,
   });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final files = post.fileIds
+        .map((id) => store.fileById(space.id, id))
+        .whereType<DriveFile>()
+        .toList();
+    final plaintext = bodyFromHtml(post.body);
+    final isBookmark = post.kind == PostKind.bookmark;
+
+    final visualFiles = <DriveFile>[];
+    final attachmentFiles = <DriveFile>[];
+    for (final f in files) {
+      final cat = categoryFor(f.name);
+      if (cat == FileCategory.image ||
+          cat == FileCategory.video ||
+          cat == FileCategory.audio ||
+          cat == FileCategory.text) {
+        visualFiles.add(f);
+      } else {
+        attachmentFiles.add(f);
+      }
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
+          width: 1,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _PostAvatar(isBookmark: isBookmark, theme: theme),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _PostHeader(
+                    post: post,
+                    onEdit: onEdit,
+                    onDelete: () => _confirmDelete(context),
+                  ),
+                  if (plaintext.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    SelectableText(
+                      plaintext,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                  if (isBookmark && post.url != null) ...[
+                    const SizedBox(height: 8),
+                    _LinkPreviewCard(post: post),
+                  ],
+                  if (visualFiles.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: visualFiles
+                            .map((f) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 6),
+                                  child: _InlineMedia(
+                                    key: ValueKey('${post.id}-${f.id}'),
+                                    store: store,
+                                    spaceId: space.id,
+                                    file: f,
+                                  ),
+                                ))
+                            .toList(),
+                      ),
+                    ),
+                  if (attachmentFiles.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Column(
+                        children: attachmentFiles
+                            .map((f) =>
+                                _FileRow(store: store, space: space, file: f))
+                            .toList(),
+                      ),
+                    ),
+                  if (post.tags.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      children:
+                          post.tags.map((t) => _TagChip(tag: t)).toList(),
+                    ),
+                  ],
+                  const SizedBox(height: 2),
+                  _PostActions(
+                    childCount: childCount,
+                    expanded: expanded,
+                    hideReplyToggle: hideReplyToggle,
+                    onToggleReplies: onToggleReplies,
+                    onReply: onReply,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete post?'),
+        content: const Text(
+            'Attached files stay in the drive. Replies will become top-level. Cannot be undone.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok == true) onDelete();
+  }
 }
+
+class _PostAvatar extends StatelessWidget {
+  final bool isBookmark;
+  final ThemeData theme;
+  const _PostAvatar({required this.isBookmark, required this.theme});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        color: isBookmark
+            ? theme.colorScheme.primaryContainer
+            : theme.colorScheme.secondaryContainer,
+        shape: BoxShape.circle,
+      ),
+      child: Center(
+        child: Text(
+          isBookmark ? '🔖' : '📝',
+          style: const TextStyle(fontSize: 15),
+        ),
+      ),
+    );
+  }
+}
+
+class _PostHeader extends StatelessWidget {
+  final Post post;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+  const _PostHeader({
+    required this.post,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final subtle = theme.colorScheme.onSurfaceVariant;
+    return Row(
+      children: [
+        Text(
+          _fmt(post.createdAt),
+          style: theme.textTheme.bodySmall?.copyWith(color: subtle),
+        ),
+        if (post.editedAt != null) ...[
+          const SizedBox(width: 4),
+          Text(
+            '· edited',
+            style: theme.textTheme.bodySmall?.copyWith(color: subtle),
+          ),
+        ],
+        const Spacer(),
+        SizedBox(
+          height: 24,
+          width: 28,
+          child: PopupMenuButton<String>(
+            padding: EdgeInsets.zero,
+            iconSize: 18,
+            tooltip: 'More',
+            onSelected: (v) {
+              if (v == 'edit') onEdit();
+              if (v == 'delete') onDelete();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'edit', child: Text('Edit')),
+              PopupMenuItem(value: 'delete', child: Text('Delete')),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _fmt(DateTime t) {
+    final now = DateTime.now();
+    final local = t.toLocal();
+    final sameDay = local.year == now.year &&
+        local.month == now.month &&
+        local.day == now.day;
+    final hh = local.hour.toString().padLeft(2, '0');
+    final mm = local.minute.toString().padLeft(2, '0');
+    if (sameDay) return '$hh:$mm';
+    final ymd = '${local.year}-${local.month.toString().padLeft(2, '0')}-'
+        '${local.day.toString().padLeft(2, '0')}';
+    return '$ymd $hh:$mm';
+  }
+}
+
+class _TagChip extends StatelessWidget {
+  final String tag;
+  const _TagChip({required this.tag});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        '#$tag',
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onSecondaryContainer,
+        ),
+      ),
+    );
+  }
+}
+
+class _PostActions extends StatelessWidget {
+  final int childCount;
+  final bool expanded;
+  final bool hideReplyToggle;
+  final VoidCallback onToggleReplies;
+  final VoidCallback onReply;
+
+  const _PostActions({
+    required this.childCount,
+    required this.expanded,
+    required this.hideReplyToggle,
+    required this.onToggleReplies,
+    required this.onReply,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        TextButton.icon(
+          onPressed: onReply,
+          icon: const Icon(Icons.reply, size: 15),
+          label: const Text('Reply'),
+          style: TextButton.styleFrom(
+            foregroundColor: theme.colorScheme.onSurfaceVariant,
+            visualDensity: VisualDensity.compact,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+          ),
+        ),
+        if (childCount > 0 && !hideReplyToggle) ...[
+          const SizedBox(width: 2),
+          TextButton(
+            onPressed: onToggleReplies,
+            style: TextButton.styleFrom(
+              foregroundColor: theme.colorScheme.onSurfaceVariant,
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+            ),
+            child: Text(
+              expanded
+                  ? 'Hide $childCount ${childCount == 1 ? "reply" : "replies"}'
+                  : '$childCount ${childCount == 1 ? "reply" : "replies"}',
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+// ── Link preview card ──────────────────────────────────────────────────────
+
+class _LinkPreviewCard extends StatelessWidget {
+  final Post post;
+  const _LinkPreviewCard({required this.post});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final thumbnail = post.thumbnail;
+    final hasThumb = thumbnail != null && thumbnail.isNotEmpty;
+    final domain = _domainOf(post.url!);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _openUrl(context),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth > 400;
+              if (wide) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (hasThumb)
+                      SizedBox(
+                        width: 112,
+                        height: 112,
+                        child: _thumb(theme, thumbnail),
+                      ),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: _textContent(theme, domain),
+                      ),
+                    ),
+                  ],
+                );
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (hasThumb)
+                    AspectRatio(
+                      aspectRatio: 16 / 9,
+                      child: _thumb(theme, thumbnail),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: _textContent(theme, domain),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _thumb(ThemeData theme, String url) {
+    return Image.network(
+      url,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => Container(
+        color: theme.colorScheme.surfaceContainerHighest,
+        child: Icon(Icons.broken_image_outlined,
+            color: theme.colorScheme.onSurfaceVariant),
+      ),
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) return child;
+        return Container(
+          color: theme.colorScheme.surfaceContainerHighest,
+          child: const Center(
+            child: SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _textContent(ThemeData theme, String domain) {
+    final title = post.title;
+    final description = post.description;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (title != null && title.isNotEmpty)
+          Text(
+            title,
+            style: theme.textTheme.titleSmall,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        if (description != null && description.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            description,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              height: 1.35,
+            ),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Icon(Icons.link, size: 12, color: theme.colorScheme.primary),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                domain,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.primary,
+                ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  String _domainOf(String url) {
+    try {
+      final uri = Uri.parse(url);
+      return uri.host.isNotEmpty ? uri.host : url;
+    } catch (_) {
+      return url;
+    }
+  }
+
+  Future<void> _openUrl(BuildContext context) async {
+    final url = post.url;
+    if (url == null || url.isEmpty) return;
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open $url')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open link: $e')),
+        );
+      }
+    }
+  }
+}
+
+// ── Inline composer ────────────────────────────────────────────────────────
+
+class _Composer extends StatelessWidget {
+  final PostKind kind;
+  final ValueChanged<PostKind> onKindChanged;
+  final TextEditingController bodyCtrl;
+  final TextEditingController urlCtrl;
+  final List<String> pendingFileIds;
+  final VaultStore store;
+  final Space space;
+  final VoidCallback onAttach;
+  final VoidCallback? onSend;
+  final ValueChanged<String> onRemoveFile;
+
+  const _Composer({
+    required this.kind,
+    required this.onKindChanged,
+    required this.bodyCtrl,
+    required this.urlCtrl,
+    required this.pendingFileIds,
+    required this.store,
+    required this.space,
+    required this.onAttach,
+    required this.onSend,
+    required this.onRemoveFile,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (pendingFileIds.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: pendingFileIds.map((id) {
+                final f = store.fileById(space.id, id);
+                return Chip(
+                  label:
+                      Text(f?.name ?? id, overflow: TextOverflow.ellipsis),
+                  onDeleted: () => onRemoveFile(id),
+                );
+              }).toList(),
+            ),
+          ),
+        if (kind == PostKind.bookmark)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: TextField(
+              controller: urlCtrl,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                isDense: true,
+                hintText: 'https://…',
+                prefixIcon: Icon(Icons.link, size: 18),
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ),
+        TextField(
+          controller: bodyCtrl,
+          minLines: 1,
+          maxLines: 6,
+          decoration: InputDecoration(
+            isDense: true,
+            hintText:
+                kind == PostKind.note ? 'Write something…' : 'Why save this?',
+            border: InputBorder.none,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Row(
+          children: [
+            SegmentedButton<PostKind>(
+              segments: const [
+                ButtonSegment(
+                    value: PostKind.note,
+                    icon: Icon(Icons.notes, size: 16),
+                    label: Text('Note')),
+                ButtonSegment(
+                    value: PostKind.bookmark,
+                    icon: Icon(Icons.bookmark_outline, size: 16),
+                    label: Text('Link')),
+              ],
+              selected: {kind},
+              onSelectionChanged: (s) => onKindChanged(s.first),
+              showSelectedIcon: false,
+              style: const ButtonStyle(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+            const Spacer(),
+            IconButton(
+              icon: const Icon(Icons.attach_file),
+              tooltip: 'Attach',
+              onPressed: onAttach,
+            ),
+            IconButton.filled(
+              icon: const Icon(Icons.send, size: 18),
+              onPressed: onSend,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+// ── Composer sheet (edit + reply) ──────────────────────────────────────────
 
 class _ComposerResult {
   final PostKind kind;
@@ -536,13 +1221,7 @@ class _ComposerResult {
 class _ComposerSheet extends StatefulWidget {
   final VaultStore store;
   final Space space;
-
-  /// When set, the sheet edits this post and uses its fields as initial
-  /// values. When null and [replyTo] is set, the sheet starts blank.
   final Post? editing;
-
-  /// When set, the sheet shows a "Replying to:" preview and returns a
-  /// result the caller uses with `parentId: replyTo!.id`.
   final Post? replyTo;
 
   const _ComposerSheet({
@@ -753,7 +1432,8 @@ class _ComposerSheetState extends State<_ComposerSheet> {
                           ? const SizedBox(
                               width: 18,
                               height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.refresh),
                     ),
@@ -832,424 +1512,65 @@ class _ComposerSheetState extends State<_ComposerSheet> {
   }
 }
 
-class _Composer extends StatelessWidget {
-  final PostKind kind;
-  final ValueChanged<PostKind> onKindChanged;
-  final TextEditingController bodyCtrl;
-  final TextEditingController urlCtrl;
-  final List<String> pendingFileIds;
-  final VaultStore store;
-  final Space space;
-  final VoidCallback onAttach;
-  final VoidCallback? onSend;
-  final ValueChanged<String> onRemoveFile;
+// ── Shared attachment picker ───────────────────────────────────────────────
 
-  const _Composer({
-    required this.kind,
-    required this.onKindChanged,
-    required this.bodyCtrl,
-    required this.urlCtrl,
-    required this.pendingFileIds,
-    required this.store,
-    required this.space,
-    required this.onAttach,
-    required this.onSend,
-    required this.onRemoveFile,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return SafeArea(
-      top: false,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest,
-          border: Border(top: BorderSide(color: theme.dividerColor)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (pendingFileIds.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
-                  children: pendingFileIds.map((id) {
-                    final f = store.fileById(space.id, id);
-                    return Chip(
-                      label: Text(f?.name ?? id,
-                          overflow: TextOverflow.ellipsis),
-                      onDeleted: () => onRemoveFile(id),
-                    );
-                  }).toList(),
-                ),
-              ),
-            if (kind == PostKind.bookmark)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: TextField(
-                  controller: urlCtrl,
-                  keyboardType: TextInputType.url,
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    hintText: 'https://…',
-                    prefixIcon: Icon(Icons.link, size: 18),
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-            TextField(
-              controller: bodyCtrl,
-              minLines: 1,
-              maxLines: 6,
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: kind == PostKind.note
-                    ? 'Write something…'
-                    : 'Why save this?',
-                border: InputBorder.none,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                SegmentedButton<PostKind>(
-                  segments: const [
-                    ButtonSegment(
-                        value: PostKind.note,
-                        icon: Icon(Icons.notes, size: 16),
-                        label: Text('Note')),
-                    ButtonSegment(
-                        value: PostKind.bookmark,
-                        icon: Icon(Icons.bookmark_outline, size: 16),
-                        label: Text('Link')),
-                  ],
-                  selected: {kind},
-                  onSelectionChanged: (s) => onKindChanged(s.first),
-                  showSelectedIcon: false,
-                  style: const ButtonStyle(
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                ),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.attach_file),
-                  tooltip: 'Attach',
-                  onPressed: onAttach,
-                ),
-                IconButton.filled(
-                  icon: const Icon(Icons.send, size: 18),
-                  onPressed: onSend,
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PostCard extends StatelessWidget {
-  final VaultStore store;
-  final Space space;
-  final Post post;
-  final int depth;
-  final int childCount;
-  final bool expanded;
-  final VoidCallback onToggleReplies;
-  final VoidCallback onReply;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-  final bool hideReplyToggle;
-
-  const _PostCard({
-    super.key,
-    required this.store,
-    required this.space,
-    required this.post,
-    required this.depth,
-    required this.childCount,
-    required this.expanded,
-    required this.onToggleReplies,
-    required this.onReply,
-    required this.onEdit,
-    required this.onDelete,
-    this.hideReplyToggle = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final files = post.fileIds
-        .map((id) => store.fileById(space.id, id))
-        .whereType<DriveFile>()
-        .toList();
-    final icon = post.kind == PostKind.bookmark ? '🔖' : '📝';
-    final plaintext = bodyFromHtml(post.body);
-
-    final visualFiles = <DriveFile>[];
-    final attachmentFiles = <DriveFile>[];
-    for (final f in files) {
-      final cat = categoryFor(f.name);
-      if (cat == FileCategory.image ||
-          cat == FileCategory.video ||
-          cat == FileCategory.audio ||
-          cat == FileCategory.text) {
-        visualFiles.add(f);
-      } else {
-        attachmentFiles.add(f);
-      }
-    }
-
-    final card = Card(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 4, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(icon),
-                const SizedBox(width: 6),
-                Text(_fmt(post.createdAt),
-                    style: theme.textTheme.bodySmall),
-                if (post.editedAt != null) ...[
-                  const SizedBox(width: 4),
-                  Text('· edited', style: theme.textTheme.bodySmall),
-                ],
-                const Spacer(),
-                PopupMenuButton<String>(
-                  onSelected: (v) {
-                    if (v == 'edit') onEdit();
-                    if (v == 'delete') _confirmDelete(context);
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'edit', child: Text('Edit')),
-                    PopupMenuItem(value: 'delete', child: Text('Delete')),
-                  ],
-                ),
-              ],
-            ),
-            if (post.kind == PostKind.bookmark && post.url != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 4, right: 8),
-                child: InkWell(
-                  onTap: () => _openUrl(context),
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 6),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (post.thumbnail != null &&
-                            post.thumbnail!.isNotEmpty) ...[
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: Image.network(
-                              post.thumbnail!,
-                              height: 140,
-                              width: double.infinity,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) =>
-                                  const SizedBox.shrink(),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                        ],
-                        if (post.title != null && post.title!.isNotEmpty)
-                          Text(post.title!,
-                              style: theme.textTheme.titleSmall),
-                        if (post.description != null &&
-                            post.description!.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            post.description!,
-                            style: theme.textTheme.bodySmall,
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                        const SizedBox(height: 4),
-                        Text(
-                          post.url!,
-                          style: TextStyle(
-                              color: theme.colorScheme.primary,
-                              fontSize: 12),
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            if (plaintext.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 6, right: 8),
-                child: SelectableText(plaintext),
-              ),
-            if (visualFiles.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8, right: 8),
-                child: Column(
-                  children: visualFiles
-                      .map((f) => Padding(
-                            padding: const EdgeInsets.only(bottom: 6),
-                            child: _InlineMedia(
-                              key: ValueKey('${post.id}-${f.id}'),
-                              store: store,
-                              spaceId: space.id,
-                              file: f,
-                            ),
-                          ))
-                      .toList(),
-                ),
-              ),
-            if (attachmentFiles.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8, right: 8),
-                child: Column(
-                  children: attachmentFiles
-                      .map((f) =>
-                          _FileRow(store: store, space: space, file: f))
-                      .toList(),
-                ),
-              ),
-            if (post.tags.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 6, right: 8),
-                child: Wrap(
-                  spacing: 4,
-                  children: post.tags
-                      .map((t) => Chip(
-                            label: Text('#$t'),
-                            visualDensity: VisualDensity.compact,
-                            materialTapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap,
-                          ))
-                      .toList(),
-                ),
-              ),
-            Padding(
-              padding: const EdgeInsets.only(top: 6, right: 8),
-              child: Row(
-                children: [
-                  TextButton.icon(
-                    onPressed: onReply,
-                    icon: const Icon(Icons.reply, size: 16),
-                    label: const Text('Reply'),
-                    style: TextButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                  ),
-                  if (childCount > 0 && !hideReplyToggle) ...[
-                    const SizedBox(width: 4),
-                    TextButton(
-                      onPressed: onToggleReplies,
-                      style: TextButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: Text(
-                        expanded
-                            ? 'Hide $childCount ${childCount == 1 ? "reply" : "replies"}'
-                            : '$childCount ${childCount == 1 ? "reply" : "replies"}',
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (depth == 0) return card;
-    return Padding(
-      padding: const EdgeInsets.only(left: 16),
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border(
-            left: BorderSide(color: theme.colorScheme.outlineVariant, width: 2),
+Future<List<String>> _pickOrRecallFiles(
+  BuildContext context,
+  VaultStore store,
+  Space space,
+) async {
+  final choice = await showModalBottomSheet<String>(
+    context: context,
+    builder: (ctx) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.upload_file),
+            title: const Text('Upload a new file'),
+            onTap: () => Navigator.pop(ctx, 'new'),
           ),
-        ),
-        padding: const EdgeInsets.only(left: 4),
-        child: card,
-      ),
-    );
-  }
-
-  Future<void> _openUrl(BuildContext context) async {
-    final url = post.url;
-    if (url == null || url.isEmpty) return;
-    final uri = Uri.tryParse(url);
-    if (uri == null) return;
-    try {
-      final ok = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
-      if (!ok && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open $url')),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open link: $e')),
-        );
-      }
-    }
-  }
-
-  Future<void> _confirmDelete(BuildContext context) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete post?'),
-        content: const Text(
-            'Attached files stay in the drive. Replies will become top-level. Cannot be undone.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Delete')),
+          ListTile(
+            leading: const Icon(Icons.folder_open),
+            title: const Text('Recall from drive'),
+            onTap: () => Navigator.pop(ctx, 'existing'),
+          ),
         ],
       ),
+    ),
+  );
+  if (choice == null) return const [];
+
+  if (choice == 'new') {
+    final result = await FilePicker.platform.pickFiles(withData: true);
+    final picked = result?.files.single;
+    final bytes = picked?.bytes;
+    if (bytes == null || picked == null) return const [];
+    final f = await store.addFileFromBytes(
+      spaceId: space.id,
+      bytes: bytes,
+      name: picked.name,
     );
-    if (ok == true) onDelete();
+    return [f.id];
   }
 
-  String _fmt(DateTime t) {
-    final now = DateTime.now();
-    final local = t.toLocal();
-    final sameDay = local.year == now.year &&
-        local.month == now.month &&
-        local.day == now.day;
-    final hh = local.hour.toString().padLeft(2, '0');
-    final mm = local.minute.toString().padLeft(2, '0');
-    if (sameDay) return '$hh:$mm';
-    final ymd = '${local.year}-${local.month.toString().padLeft(2, '0')}-'
-        '${local.day.toString().padLeft(2, '0')}';
-    return '$ymd $hh:$mm';
+  if (choice == 'existing') {
+    final all = store.filesForSpace(space.id);
+    if (all.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Drive is empty')),
+        );
+      }
+      return const [];
+    }
+    return RecallFilesSheet.show(context, store, space);
   }
+
+  return const [];
 }
 
-// ---------------------------------------------------------------------------
-// Inline media dispatcher
-// ---------------------------------------------------------------------------
+// ── Inline media dispatcher ────────────────────────────────────────────────
 
 class _InlineMedia extends StatelessWidget {
   final VaultStore store;
@@ -1280,10 +1601,6 @@ class _InlineMedia extends StatelessWidget {
     }
   }
 }
-
-// ---------------------------------------------------------------------------
-// Inline image
-// ---------------------------------------------------------------------------
 
 class _InlineImage extends StatefulWidget {
   final VaultStore store;
@@ -1363,10 +1680,6 @@ class _InlineImageState extends State<_InlineImage> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Inline video — normal player, fit inside ConstrainedBox via FittedBox
-// ---------------------------------------------------------------------------
-
 class _InlineVideo extends StatefulWidget {
   final VaultStore store;
   final String spaceId;
@@ -1400,8 +1713,6 @@ class _InlineVideoState extends State<_InlineVideo> {
       final uri = await prepareMediaUri(bytes, widget.file.name);
       final player = Player();
       final controller = VideoController(player);
-      // Open paused so the first frame shows and no audio leaks out while
-      // scrolling.
       await player.open(Media(uri), play: false);
       if (!mounted) {
         await player.dispose();
@@ -1445,10 +1756,6 @@ class _InlineVideoState extends State<_InlineVideo> {
         fit: BoxFit.scaleDown,
         child: ConstrainedBox(
           constraints: const BoxConstraints(
-            // The video's intrinsic box is at least 300 wide so the normal
-            // MaterialVideoControls have room to lay out without overflow.
-            // FittedBox then scales the whole thing (video + controls) down
-            // to the available inline footprint.
             minWidth: 300,
             maxWidth: 600,
             maxHeight: 320,
@@ -1460,7 +1767,8 @@ class _InlineVideoState extends State<_InlineVideo> {
                     color: Theme.of(context)
                         .colorScheme
                         .surfaceContainerHighest,
-                    child: const Center(child: CircularProgressIndicator()),
+                    child:
+                        const Center(child: CircularProgressIndicator()),
                   ),
                 )
               : StreamBuilder<int?>(
@@ -1494,7 +1802,8 @@ class _InlineVideoState extends State<_InlineVideo> {
                                 MaterialPositionIndicator(),
                               ],
                             ),
-                            fullscreen: const MaterialVideoControlsThemeData(),
+                            fullscreen:
+                                const MaterialVideoControlsThemeData(),
                             child: Video(controller: controller),
                           ),
                         );
@@ -1507,10 +1816,6 @@ class _InlineVideoState extends State<_InlineVideo> {
     );
   }
 }
-
-// ---------------------------------------------------------------------------
-// Inline audio
-// ---------------------------------------------------------------------------
 
 class _InlineAudio extends StatefulWidget {
   final VaultStore store;
@@ -1590,10 +1895,6 @@ class _InlineAudioState extends State<_InlineAudio> {
     );
   }
 }
-
-// ---------------------------------------------------------------------------
-// Inline text preview
-// ---------------------------------------------------------------------------
 
 class _InlineText extends StatefulWidget {
   final VaultStore store;
@@ -1722,68 +2023,7 @@ class _InlineTextState extends State<_InlineText> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Small shared widgets
-// ---------------------------------------------------------------------------
-
-/// Shows the "upload new / recall from drive" flow and returns the IDs
-/// of the files to attach. Returns an empty list if the user cancels or
-/// selects nothing.
-Future<List<String>> _pickOrRecallFiles(
-  BuildContext context,
-  VaultStore store,
-  Space space,
-) async {
-  final choice = await showModalBottomSheet<String>(
-    context: context,
-    builder: (ctx) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.upload_file),
-            title: const Text('Upload a new file'),
-            onTap: () => Navigator.pop(ctx, 'new'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.folder_open),
-            title: const Text('Recall from drive'),
-            onTap: () => Navigator.pop(ctx, 'existing'),
-          ),
-        ],
-      ),
-    ),
-  );
-  if (choice == null) return const [];
-
-  if (choice == 'new') {
-    final result = await FilePicker.platform.pickFiles(withData: true);
-    final picked = result?.files.single;
-    final bytes = picked?.bytes;
-    if (bytes == null || picked == null) return const [];
-    final f = await store.addFileFromBytes(
-      spaceId: space.id,
-      bytes: bytes,
-      name: picked.name,
-    );
-    return [f.id];
-  }
-
-  if (choice == 'existing') {
-    final all = store.filesForSpace(space.id);
-    if (all.isEmpty) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Drive is empty')),
-        );
-      }
-      return const [];
-    }
-    return RecallFilesSheet.show(context, store, space);
-  }
-
-  return const [];
-}
+// ── Small shared widgets ───────────────────────────────────────────────────
 
 class _PlayCard extends StatelessWidget {
   final DriveFile file;
