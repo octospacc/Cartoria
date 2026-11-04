@@ -5,6 +5,7 @@ import '../../data/hooks.dart';
 import '../../data/models.dart';
 import '../../data/services/template.dart';
 import '../../data/store.dart';
+import 'hook_json_editor.dart';
 
 class HookEditScreen extends StatefulWidget {
   final VaultStore store;
@@ -16,19 +17,16 @@ class HookEditScreen extends StatefulWidget {
 }
 
 class _HookEditScreenState extends State<HookEditScreen> {
-  late final TextEditingController _name;
-  late final TextEditingController _key;
-  late final TextEditingController _url;
-  late final TextEditingController _body;
-  late final TextEditingController _timeout;
-  late final TextEditingController _tagFilters;
+  late String _workingId;
+  late TextEditingController _name;
+  late TextEditingController _key;
+  late TextEditingController _timeout;
+  late TextEditingController _tagFilters;
 
   late Set<String> _spaceIds;
   late Set<HookTrigger> _triggers;
   late Set<PostKind> _postKinds;
-  late String _method;
-  late List<MapEntry<TextEditingController, TextEditingController>> _headers;
-  late List<_MultipartRow> _parts;
+  late List<_RuleRow> _rules;
 
   String? _error;
   bool _saving = false;
@@ -37,45 +35,149 @@ class _HookEditScreenState extends State<HookEditScreen> {
   @override
   void initState() {
     super.initState();
-    final e = widget.existing;
-    _name = TextEditingController(text: e?.name ?? '');
-    _key = TextEditingController(text: e?.key ?? '');
-    _url = TextEditingController(text: e?.urlTemplate ?? '');
-    _body = TextEditingController(text: e?.bodyTemplate ?? '');
-    _timeout =
-        TextEditingController(text: (e?.timeoutSeconds ?? 15).toString());
-    _tagFilters =
-        TextEditingController(text: (e?.tagFilters ?? const {}).join(','));
-    _spaceIds = {...(e?.spaceIds ?? const {})};
-    _triggers = {...(e?.triggers ?? {HookTrigger.create})};
-    _postKinds = {...(e?.postKinds ?? const {})};
-    _method = e?.method ?? 'POST';
-    _headers = (e?.headers ?? const {}).entries
-        .map((entry) => MapEntry(
-              TextEditingController(text: entry.key),
-              TextEditingController(text: entry.value),
-            ))
-        .toList();
-    _parts = (e?.multipartParts ?? const []).map(_MultipartRow.fromPart).toList();
+    _loadFrom(widget.existing);
   }
 
   @override
   void dispose() {
-    _name.dispose();
-    _key.dispose();
-    _url.dispose();
-    _body.dispose();
-    _timeout.dispose();
-    _tagFilters.dispose();
-    for (final h in _headers) {
-      h.key.dispose();
-      h.value.dispose();
-    }
-    for (final p in _parts) {
-      p.dispose();
-    }
+    _disposeCurrent();
     super.dispose();
   }
+
+  // ── State load / dispose ───────────────────────────────────────────────
+
+  void _loadFrom(Hook? hook) {
+    _workingId = hook?.id ?? const Uuid().v7();
+    _name = TextEditingController(text: hook?.name ?? '');
+    _key = TextEditingController(text: hook?.key ?? '');
+    _timeout =
+        TextEditingController(text: (hook?.timeoutSeconds ?? 15).toString());
+    _tagFilters =
+        TextEditingController(text: (hook?.tagFilters ?? const {}).join(','));
+    _spaceIds = {...(hook?.spaceIds ?? const {})};
+    _triggers = {...(hook?.triggers ?? {HookTrigger.create})};
+    _postKinds = {...(hook?.postKinds ?? const {})};
+    _rules = (hook?.rules ?? const [HookRule(urlTemplate: '')])
+        .map(_RuleRow.fromRule)
+        .toList();
+  }
+
+  void _disposeCurrent() {
+    _name.dispose();
+    _key.dispose();
+    _timeout.dispose();
+    _tagFilters.dispose();
+    for (final r in _rules) {
+      r.dispose();
+    }
+  }
+
+  // ── JSON editor ────────────────────────────────────────────────────────
+
+  Future<void> _openJsonEditor() async {
+    final current = _buildHookForExport();
+    final result = await Navigator.push<Hook>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => HookJsonEditScreen(initialHook: current),
+      ),
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      _disposeCurrent();
+      _loadFrom(result);
+    });
+  }
+
+  /// Best-effort snapshot of the current form state for the JSON view.
+  /// Invalid or incomplete parts are skipped rather than throwing, so the
+  /// user can open JSON at any point in their editing and see what they've
+  /// entered so far.
+  Hook _buildHookForExport() {
+    final rules = <HookRule>[];
+    for (final r in _rules) {
+      final rule = _buildRule(r);
+      if (rule != null) rules.add(rule);
+    }
+    final tags = _tagFilters.text
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .where((s) => s.isNotEmpty)
+        .toSet();
+    return Hook(
+      id: _workingId,
+      key: _key.text.trim().isEmpty ? 'unnamed' : _key.text.trim(),
+      name: _name.text.trim().isEmpty ? 'Unnamed hook' : _name.text.trim(),
+      enabled: widget.existing?.enabled ?? true,
+      spaceIds: _spaceIds,
+      triggers: _triggers,
+      postKinds: _postKinds,
+      tagFilters: tags,
+      rules: rules,
+      timeoutSeconds: int.tryParse(_timeout.text.trim()) ?? 15,
+    );
+  }
+
+  HookRule? _buildRule(_RuleRow r) {
+    if (r.url.text.trim().isEmpty) return null;
+    final parts = <HookMultipartPart>[];
+    for (final p in r.parts) {
+      final pname = p.name.text.trim();
+      if (pname.isEmpty) continue;
+      try {
+        if (p.isFile) {
+          parts.add(HookMultipartPart(
+            name: pname,
+            filePath: p.value.text.trim(),
+            filename: p.filename.text.trim().isEmpty
+                ? null
+                : p.filename.text.trim(),
+            repeat: p.repeat ? 'post.files' : null,
+            join: p.repeat && p.join.text.isNotEmpty ? p.join.text : null,
+            prefix: p.repeat && p.prefix.text.isNotEmpty
+                ? p.prefix.text
+                : null,
+            suffix: p.repeat && p.suffix.text.isNotEmpty
+                ? p.suffix.text
+                : null,
+          ));
+        } else {
+          parts.add(HookMultipartPart(
+            name: pname,
+            template: p.value.text,
+            repeat: p.repeat ? 'post.files' : null,
+            join: p.repeat && p.join.text.isNotEmpty ? p.join.text : null,
+            prefix: p.repeat && p.prefix.text.isNotEmpty
+                ? p.prefix.text
+                : null,
+            suffix: p.repeat && p.suffix.text.isNotEmpty
+                ? p.suffix.text
+                : null,
+          ));
+        }
+      } catch (_) {
+        // Skip malformed parts during export; the user will see they're
+        // missing and can fix the form.
+      }
+    }
+    final headers = <String, String>{};
+    for (final h in r.headers) {
+      final hk = h.key.text.trim();
+      if (hk.isEmpty) continue;
+      headers[hk] = h.value.text;
+    }
+    return HookRule(
+      when: r.when.text.trim().isEmpty ? null : r.when.text.trim(),
+      method: r.method,
+      urlTemplate: r.url.text.trim(),
+      headers: headers,
+      bodyTemplate:
+          parts.isNotEmpty || r.body.text.isEmpty ? null : r.body.text,
+      multipartParts: parts,
+    );
+  }
+
+  // ── Save ───────────────────────────────────────────────────────────────
 
   String _suggestKey(String name) {
     final slug = name
@@ -99,20 +201,26 @@ class _HookEditScreenState extends State<HookEditScreen> {
       if (key.isEmpty) key = _suggestKey(name);
       if (!RegExp(r'^[a-z][a-z0-9_]*$').hasMatch(key)) {
         throw ArgumentError(
-            'Key must be lowercase letters/digits/underscore, starting '
-            'with a letter');
+            'Key must be lowercase letters/digits/underscore');
       }
-      final url = _url.text.trim();
-      if (url.isEmpty) throw ArgumentError('URL is required');
       if (_triggers.isEmpty) {
         throw ArgumentError('Select at least one trigger');
       }
+      if (_rules.isEmpty) {
+        throw ArgumentError('Add at least one rule');
+      }
 
-      final headers = <String, String>{};
-      for (final h in _headers) {
-        final k = h.key.text.trim();
-        if (k.isEmpty) continue;
-        headers[k] = h.value.text;
+      final rules = <HookRule>[];
+      for (var i = 0; i < _rules.length; i++) {
+        final r = _rules[i];
+        if (r.url.text.trim().isEmpty) {
+          throw ArgumentError('Rule ${i + 1}: URL is required');
+        }
+        final built = _buildRule(r);
+        if (built == null) {
+          throw ArgumentError('Rule ${i + 1}: could not be built');
+        }
+        rules.add(built);
       }
 
       final tags = _tagFilters.text
@@ -121,33 +229,8 @@ class _HookEditScreenState extends State<HookEditScreen> {
           .where((s) => s.isNotEmpty)
           .toSet();
 
-      final parts = <HookMultipartPart>[];
-      for (final p in _parts) {
-        final pname = p.name.text.trim();
-        if (pname.isEmpty) continue;
-        if (p.isFile) {
-          final idx = int.tryParse(p.value.text.trim());
-          if (idx == null || idx < 0) {
-            throw ArgumentError(
-                'Multipart part "$pname": file index must be 0 or greater');
-          }
-          parts.add(HookMultipartPart(
-            name: pname,
-            fileIndex: idx,
-            filename: p.filename.text.trim().isEmpty
-                ? null
-                : p.filename.text.trim(),
-          ));
-        } else {
-          parts.add(HookMultipartPart(
-            name: pname,
-            template: p.value.text,
-          ));
-        }
-      }
-
       final hook = Hook(
-        id: widget.existing?.id ?? const Uuid().v7(),
+        id: _workingId,
         key: key,
         name: name,
         enabled: widget.existing?.enabled ?? true,
@@ -155,14 +238,9 @@ class _HookEditScreenState extends State<HookEditScreen> {
         triggers: _triggers,
         postKinds: _postKinds,
         tagFilters: tags,
-        method: _method,
-        urlTemplate: url,
-        headers: headers,
-        bodyTemplate:
-            parts.isNotEmpty || _body.text.isEmpty ? null : _body.text,
+        rules: rules,
         timeoutSeconds:
             int.tryParse(_timeout.text.trim())?.clamp(1, 120) ?? 15,
-        multipartParts: parts,
       );
       await widget.store.saveHook(hook);
       if (mounted) Navigator.pop(context);
@@ -174,16 +252,22 @@ class _HookEditScreenState extends State<HookEditScreen> {
     }
   }
 
+  // ── Build ──────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     final spaces = widget.store.spaces;
     final isNew = widget.existing == null;
-    final hasMultipart = _parts.isNotEmpty;
 
     return Scaffold(
       appBar: AppBar(
         title: Text(isNew ? 'New hook' : 'Edit hook'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.code),
+            tooltip: 'Edit as JSON',
+            onPressed: _openJsonEditor,
+          ),
           TextButton(
             onPressed: _saving ? null : _save,
             child: const Text('Save'),
@@ -197,8 +281,8 @@ class _HookEditScreenState extends State<HookEditScreen> {
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
               child: Text(_error!,
-                  style:
-                      TextStyle(color: Theme.of(context).colorScheme.error)),
+                  style: TextStyle(
+                      color: Theme.of(context).colorScheme.error)),
             ),
           TextField(
             controller: _name,
@@ -212,13 +296,11 @@ class _HookEditScreenState extends State<HookEditScreen> {
             controller: _key,
             decoration: const InputDecoration(
               labelText: 'Key (used in {{previous.<key>.…}})',
-              helperText: 'Lowercase letters, digits, underscore. '
-                  'Leave empty to auto-generate.',
               border: OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 20),
-          _label('Triggers'),
+          _section('Triggers'),
           Wrap(
             spacing: 6,
             children: HookTrigger.values.map((t) {
@@ -236,7 +318,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
             }).toList(),
           ),
           const SizedBox(height: 20),
-          _label('Spaces'),
+          _section('Spaces'),
           Wrap(
             spacing: 6,
             runSpacing: 6,
@@ -254,14 +336,8 @@ class _HookEditScreenState extends State<HookEditScreen> {
               );
             }).toList(),
           ),
-          if (_spaceIds.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(top: 6),
-              child: Text('No spaces selected — hook runs for every space.',
-                  style: TextStyle(fontSize: 12)),
-            ),
           const SizedBox(height: 20),
-          _label('Post kinds'),
+          _section('Post kinds'),
           Wrap(
             spacing: 6,
             children: PostKind.values.map((k) {
@@ -278,141 +354,15 @@ class _HookEditScreenState extends State<HookEditScreen> {
               );
             }).toList(),
           ),
-          if (_postKinds.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(top: 6),
-              child: Text(
-                  'No kinds selected — matches both notes and bookmarks.',
-                  style: TextStyle(fontSize: 12)),
-            ),
           const SizedBox(height: 20),
           TextField(
             controller: _tagFilters,
             decoration: const InputDecoration(
               labelText: 'Tag filter (comma-separated, optional)',
-              helperText: 'Runs only when the post has at least one of '
-                  'these tags. Empty = any tags.',
               border: OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 20),
-          DropdownButtonFormField<String>(
-            value: _method,
-            decoration: const InputDecoration(
-              labelText: 'Method',
-              border: OutlineInputBorder(),
-            ),
-            items: const ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
-                .map((m) => DropdownMenuItem(value: m, child: Text(m)))
-                .toList(),
-            onChanged: (v) => setState(() => _method = v ?? 'POST'),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _url,
-            decoration: const InputDecoration(
-              labelText: 'URL template',
-              hintText: 'https://api.telegram.org/bot{{token}}/sendMessage',
-              helperText: '{{expr}} is URL-encoded. {{{expr}}} is raw.',
-              border: OutlineInputBorder(),
-            ),
-            minLines: 1,
-            maxLines: 3,
-          ),
-          const SizedBox(height: 20),
-          _label('Headers'),
-          ..._headers.asMap().entries.map((e) {
-            final i = e.key;
-            final pair = e.value;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    flex: 2,
-                    child: TextField(
-                      controller: pair.key,
-                      decoration:
-                          const InputDecoration(labelText: 'Header name'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    flex: 3,
-                    child: TextField(
-                      controller: pair.value,
-                      decoration:
-                          const InputDecoration(labelText: 'Value'),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.remove_circle_outline),
-                    onPressed: () => setState(() {
-                      pair.key.dispose();
-                      pair.value.dispose();
-                      _headers.removeAt(i);
-                    }),
-                  ),
-                ],
-              ),
-            );
-          }),
-          TextButton.icon(
-            onPressed: () => setState(() {
-              _headers.add(MapEntry(
-                TextEditingController(),
-                TextEditingController(),
-              ));
-            }),
-            icon: const Icon(Icons.add),
-            label: const Text('Add header'),
-          ),
-          const SizedBox(height: 20),
-          _label('Multipart fields (optional)'),
-          const Padding(
-            padding: EdgeInsets.only(bottom: 8),
-            child: Text(
-              'When present, replaces the JSON body. Each field is sent as '
-              'form-data. Text parts carry templated values (e.g. caption); '
-              'file parts upload a vault attachment by its 0-based index in '
-              'post.fileIds.',
-              style: TextStyle(fontSize: 12),
-            ),
-          ),
-          ..._parts.asMap().entries.map((e) {
-            final i = e.key;
-            final p = e.value;
-            return _MultipartRowWidget(
-              key: ValueKey(p.id),
-              row: p,
-              onRemove: () => setState(() {
-                p.dispose();
-                _parts.removeAt(i);
-              }),
-              onChanged: () => setState(() {}),
-            );
-          }),
-          TextButton.icon(
-            onPressed: () => setState(() {
-              _parts.add(_MultipartRow.empty());
-            }),
-            icon: const Icon(Icons.add),
-            label: const Text('Add multipart field'),
-          ),
-          const SizedBox(height: 20),
-          if (_method != 'GET' && !hasMultipart) ...[
-            TextField(
-              controller: _body,
-              decoration: const InputDecoration(
-                labelText: 'Body template',
-                helperText: '{{expr}} is JSON-escaped. {{{expr}}} is raw.',
-                border: OutlineInputBorder(),
-              ),
-              minLines: 4,
-              maxLines: 12,
-            ),
-            const SizedBox(height: 12),
-          ],
           TextField(
             controller: _timeout,
             decoration: const InputDecoration(
@@ -421,34 +371,62 @@ class _HookEditScreenState extends State<HookEditScreen> {
             ),
             keyboardType: TextInputType.number,
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 24),
+          _section('Rules'),
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8),
+            child: Text(
+              'The first rule whose "when" evaluates true fires. An empty '
+              '"when" always matches.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ),
+          ..._rules.asMap().entries.map((e) => _RuleCard(
+                key: ValueKey(e.value.id),
+                index: e.key,
+                row: e.value,
+                canDelete: _rules.length > 1,
+                onChanged: () => setState(() {}),
+                onDelete: () => setState(() {
+                  e.value.dispose();
+                  _rules.removeAt(e.key);
+                }),
+              )),
+          TextButton.icon(
+            onPressed: () => setState(() {
+              _rules.add(_RuleRow.empty());
+            }),
+            icon: const Icon(Icons.add),
+            label: const Text('Add rule'),
+          ),
+          const SizedBox(height: 16),
           TextButton.icon(
             onPressed: () => setState(() => _showPreview = !_showPreview),
             icon: Icon(_showPreview ? Icons.expand_less : Icons.expand_more),
             label: Text(_showPreview ? 'Hide preview' : 'Preview request'),
           ),
-          if (_showPreview) _buildPreview(hasMultipart),
+          if (_showPreview) _buildPreview(),
           const SizedBox(height: 40),
         ],
       ),
     );
   }
 
-  Widget _label(String text) => Padding(
+  Widget _section(String text) => Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(text, style: Theme.of(context).textTheme.titleSmall),
       );
 
-  Widget _buildPreview(bool hasMultipart) {
+  Widget _buildPreview() {
+    final built = _buildHookForExport();
     final samplePost = Post(
       id: 'preview-post',
       kind: PostKind.bookmark,
       body: '',
       url: 'https://example.com/article',
       title: 'Example title',
-      description: 'Example description',
       tags: const ['tag1'],
-      fileIds: const ['<file-id-0>', '<file-id-1>'],
+      fileIds: const [],
       createdAt: DateTime.now(),
     );
     final sampleSpace = Space(
@@ -457,47 +435,51 @@ class _HookEditScreenState extends State<HookEditScreen> {
       icon: '📓',
       createdAt: DateTime.now(),
     );
-    final previewHook = Hook(
-      id: widget.existing?.id ?? 'preview',
-      key: _key.text.isEmpty ? 'preview' : _key.text,
-      name: _name.text.isEmpty ? 'preview' : _name.text,
-      urlTemplate: _url.text,
-      headers: const {},
-      bodyTemplate: hasMultipart ? null : _body.text,
-      multipartParts: hasMultipart
-          ? _parts
-              .where((p) => p.name.text.isNotEmpty)
-              .map((p) => HookMultipartPart(
-                    name: p.name.text.trim(),
-                    template: p.isFile ? null : p.value.text,
-                    fileIndex:
-                        p.isFile ? int.tryParse(p.value.text) ?? 0 : null,
-                  ))
-              .toList()
-          : const [],
-    );
     final ctx = TemplateContext(
       post: samplePost,
       space: sampleSpace,
-      hook: previewHook,
+      hook: built,
       trigger: HookTrigger.create,
+      files: const [],
     );
-
-    final url = _url.text.isEmpty
-        ? ''
-        : TemplateRenderer.render(_url.text, ctx, escape: TemplateEscape.url);
-    final headers = _headers
-        .where((h) => h.key.text.isNotEmpty)
-        .map((h) =>
-            '${h.key.text}: ${TemplateRenderer.render(h.value.text, ctx)}')
-        .join('\n');
-
     final mono = Theme.of(context).textTheme.bodySmall?.copyWith(
           fontFamily: 'monospace',
+          fontSize: 11,
         );
-
+    final sections = <Widget>[];
+    if (built.rules.isEmpty) {
+      sections.add(const Text('No complete rules to preview yet.'));
+    }
+    for (var i = 0; i < built.rules.length; i++) {
+      final rule = built.rules[i];
+      String url;
+      try {
+        url = TemplateRenderer.render(rule.urlTemplate, ctx,
+            escape: TemplateEscape.url);
+      } catch (e) {
+        url = '<render error: $e>';
+      }
+      sections.add(Text('Rule ${i + 1} — ${rule.when ?? "always"}',
+          style: Theme.of(context).textTheme.titleSmall));
+      sections.add(SelectableText('${rule.method} $url', style: mono));
+      if (rule.multipartParts.isNotEmpty) {
+        sections.add(SelectableText(
+            '(multipart: ${rule.multipartParts.length} part'
+            '${rule.multipartParts.length == 1 ? "" : "s"})',
+            style: mono));
+      } else if (rule.bodyTemplate != null && rule.bodyTemplate!.isNotEmpty) {
+        try {
+          final body = TemplateRenderer.render(rule.bodyTemplate!, ctx,
+              escape: TemplateEscape.json);
+          sections.add(SelectableText(body, style: mono));
+        } catch (e) {
+          sections.add(SelectableText('<render error: $e>', style: mono));
+        }
+      }
+      sections.add(const SizedBox(height: 10));
+    }
     return Container(
-      margin: const EdgeInsets.only(top: 12),
+      margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
@@ -505,101 +487,337 @@ class _HookEditScreenState extends State<HookEditScreen> {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('URL', style: TextStyle(fontWeight: FontWeight.w600)),
-          SelectableText(url, style: mono),
-          if (headers.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            const Text('Headers',
-                style: TextStyle(fontWeight: FontWeight.w600)),
-            SelectableText(headers, style: mono),
-          ],
-          if (hasMultipart) ...[
-            const SizedBox(height: 8),
-            const Text('Multipart',
-                style: TextStyle(fontWeight: FontWeight.w600)),
-            ...previewHook.multipartParts.map((p) {
-              final value = p.template != null
-                  ? TemplateRenderer.render(p.template!, ctx)
-                  : '<file: post.fileIds[${p.fileIndex}]>';
-              return SelectableText('${p.name}: $value', style: mono);
-            }),
-          ] else if (_body.text.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            const Text('Body',
-                style: TextStyle(fontWeight: FontWeight.w600)),
-            SelectableText(
-              TemplateRenderer.render(_body.text, ctx,
-                  escape: TemplateEscape.json),
-              style: mono,
-            ),
-          ],
-        ],
+        children: sections,
       ),
     );
   }
 }
 
-// ── Multipart row model + widget ───────────────────────────────────────────
+// ── Rule row model ─────────────────────────────────────────────────────────
 
-class _MultipartRow {
+class _RuleRow {
+  final String id;
+  final TextEditingController when;
+  final TextEditingController url;
+  final TextEditingController body;
+  String method;
+  final List<_PartRow> parts;
+  final List<MapEntry<TextEditingController, TextEditingController>> headers;
+
+  _RuleRow({
+    required this.id,
+    required this.when,
+    required this.url,
+    required this.body,
+    required this.method,
+    required this.parts,
+    required this.headers,
+  });
+
+  factory _RuleRow.empty() => _RuleRow(
+        id: const Uuid().v4(),
+        when: TextEditingController(),
+        url: TextEditingController(),
+        body: TextEditingController(),
+        method: 'POST',
+        parts: [],
+        headers: [],
+      );
+
+  factory _RuleRow.fromRule(HookRule r) => _RuleRow(
+        id: const Uuid().v4(),
+        when: TextEditingController(text: r.when ?? ''),
+        url: TextEditingController(text: r.urlTemplate),
+        body: TextEditingController(text: r.bodyTemplate ?? ''),
+        method: r.method,
+        parts: r.multipartParts.map(_PartRow.fromPart).toList(),
+        headers: r.headers.entries
+            .map((e) => MapEntry(
+                  TextEditingController(text: e.key),
+                  TextEditingController(text: e.value),
+                ))
+            .toList(),
+      );
+
+  void dispose() {
+    when.dispose();
+    url.dispose();
+    body.dispose();
+    for (final p in parts) {
+      p.dispose();
+    }
+    for (final h in headers) {
+      h.key.dispose();
+      h.value.dispose();
+    }
+  }
+}
+
+class _PartRow {
   final String id;
   final TextEditingController name;
   final TextEditingController value;
   final TextEditingController filename;
+  final TextEditingController join;
+  final TextEditingController prefix;
+  final TextEditingController suffix;
   bool isFile;
+  bool repeat;
 
-  _MultipartRow({
+  _PartRow({
     required this.id,
     required this.name,
     required this.value,
     required this.filename,
+    required this.join,
+    required this.prefix,
+    required this.suffix,
     required this.isFile,
+    required this.repeat,
   });
 
-  factory _MultipartRow.empty() => _MultipartRow(
+  factory _PartRow.empty() => _PartRow(
         id: const Uuid().v4(),
         name: TextEditingController(),
         value: TextEditingController(),
         filename: TextEditingController(),
+        join: TextEditingController(),
+        prefix: TextEditingController(),
+        suffix: TextEditingController(),
         isFile: false,
+        repeat: false,
       );
 
-  factory _MultipartRow.fromPart(HookMultipartPart p) => _MultipartRow(
+  factory _PartRow.fromPart(HookMultipartPart p) => _PartRow(
         id: const Uuid().v4(),
         name: TextEditingController(text: p.name),
-        value: TextEditingController(
-          text: p.template ?? (p.fileIndex?.toString() ?? '0'),
-        ),
+        value: TextEditingController(text: p.template ?? p.filePath ?? ''),
         filename: TextEditingController(text: p.filename ?? ''),
-        isFile: p.fileIndex != null,
+        join: TextEditingController(text: p.join ?? ''),
+        prefix: TextEditingController(text: p.prefix ?? ''),
+        suffix: TextEditingController(text: p.suffix ?? ''),
+        isFile: p.filePath != null,
+        repeat: p.repeat != null,
       );
 
   void dispose() {
     name.dispose();
     value.dispose();
     filename.dispose();
+    join.dispose();
+    prefix.dispose();
+    suffix.dispose();
   }
 }
 
-class _MultipartRowWidget extends StatelessWidget {
-  final _MultipartRow row;
-  final VoidCallback onRemove;
-  final VoidCallback onChanged;
+// ── Rule card ──────────────────────────────────────────────────────────────
 
-  const _MultipartRowWidget({
+class _RuleCard extends StatelessWidget {
+  final int index;
+  final _RuleRow row;
+  final bool canDelete;
+  final VoidCallback onChanged;
+  final VoidCallback onDelete;
+
+  const _RuleCard({
+    super.key,
+    required this.index,
+    required this.row,
+    required this.canDelete,
+    required this.onChanged,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasParts = row.parts.isNotEmpty;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Text('Rule ${index + 1}',
+                    style: Theme.of(context).textTheme.titleSmall),
+                const Spacer(),
+                if (canDelete)
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: onDelete,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: row.when,
+              decoration: const InputDecoration(
+                labelText: 'When (optional)',
+                hintText: 'post.files.length >= 2 && post.files.length <= 10',
+                helperText: 'First rule whose condition is true fires. '
+                    'Empty always matches.',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                SizedBox(
+                  width: 120,
+                  child: DropdownButtonFormField<String>(
+                    value: row.method,
+                    decoration: const InputDecoration(labelText: 'Method'),
+                    items: const ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+                        .map((m) =>
+                            DropdownMenuItem(value: m, child: Text(m)))
+                        .toList(),
+                    onChanged: (v) {
+                      row.method = v ?? 'POST';
+                      onChanged();
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: row.url,
+                    decoration: const InputDecoration(
+                      labelText: 'URL template',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: row.body,
+              enabled: !hasParts,
+              decoration: InputDecoration(
+                labelText: hasParts
+                    ? 'Body template (disabled — multipart in use)'
+                    : 'Body template',
+                border: const OutlineInputBorder(),
+              ),
+              minLines: 3,
+              maxLines: 8,
+            ),
+            const SizedBox(height: 12),
+            _header(context, 'Headers'),
+            ...row.headers.asMap().entries.map((e) {
+              final i = e.key;
+              final pair = e.value;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: pair.key,
+                        decoration:
+                            const InputDecoration(labelText: 'Name'),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: TextField(
+                        controller: pair.value,
+                        decoration:
+                            const InputDecoration(labelText: 'Value'),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.remove_circle_outline),
+                      onPressed: () {
+                        pair.key.dispose();
+                        pair.value.dispose();
+                        row.headers.removeAt(i);
+                        onChanged();
+                      },
+                    ),
+                  ],
+                ),
+              );
+            }),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () {
+                  row.headers.add(MapEntry(
+                    TextEditingController(),
+                    TextEditingController(),
+                  ));
+                  onChanged();
+                },
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Add header'),
+              ),
+            ),
+            const SizedBox(height: 12),
+            _header(context, 'Multipart parts'),
+            ...row.parts.asMap().entries.map((e) {
+              final i = e.key;
+              return _PartCard(
+                key: ValueKey(e.value.id),
+                row: e.value,
+                onChanged: onChanged,
+                onDelete: () {
+                  e.value.dispose();
+                  row.parts.removeAt(i);
+                  onChanged();
+                },
+              );
+            }),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () {
+                  row.parts.add(_PartRow.empty());
+                  onChanged();
+                },
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Add part'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _header(BuildContext context, String text) => Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 6),
+        child: Text(text,
+            style: Theme.of(context)
+                .textTheme
+                .labelLarge
+                ?.copyWith(fontWeight: FontWeight.w600)),
+      );
+}
+
+// ── Part card ──────────────────────────────────────────────────────────────
+
+class _PartCard extends StatelessWidget {
+  final _PartRow row;
+  final VoidCallback onChanged;
+  final VoidCallback onDelete;
+
+  const _PartCard({
     super.key,
     required this.row,
-    required this.onRemove,
     required this.onChanged,
+    required this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
     return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -609,12 +827,12 @@ class _MultipartRowWidget extends StatelessWidget {
                   child: TextField(
                     controller: row.name,
                     decoration: const InputDecoration(
-                      labelText: 'Field name',
-                      hintText: 'photo, caption, chat_id, …',
+                      labelText: 'Name',
+                      hintText: 'chat_id, caption, photo, media…',
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 SegmentedButton<bool>(
                   segments: const [
                     ButtonSegment(value: false, label: Text('Text')),
@@ -623,7 +841,6 @@ class _MultipartRowWidget extends StatelessWidget {
                   selected: {row.isFile},
                   onSelectionChanged: (s) {
                     row.isFile = s.first;
-                    row.value.clear();
                     onChanged();
                   },
                   showSelectedIcon: false,
@@ -634,46 +851,71 @@ class _MultipartRowWidget extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            if (row.isFile) ...[
+            const SizedBox(height: 6),
+            TextField(
+              controller: row.value,
+              decoration: InputDecoration(
+                labelText: row.isFile
+                    ? 'File path (e.g. post.files.0.id or repeat.file.id)'
+                    : 'Value template',
+              ),
+              minLines: 1,
+              maxLines: 4,
+            ),
+            const SizedBox(height: 6),
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Repeat over post.files'),
+              value: row.repeat,
+              onChanged: (v) {
+                row.repeat = v;
+                onChanged();
+              },
+            ),
+            if (row.repeat)
               Row(
                 children: [
-                  SizedBox(
-                    width: 120,
+                  Expanded(
                     child: TextField(
-                      controller: row.value,
-                      keyboardType: TextInputType.number,
+                      controller: row.join,
                       decoration: const InputDecoration(
-                        labelText: 'File index',
-                        helperText: '0-based',
+                        labelText: 'Join (optional)',
+                        hintText: ',',
+                        helperText: 'If set, iterations merge into one field',
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
                   Expanded(
                     child: TextField(
-                      controller: row.filename,
-                      decoration: const InputDecoration(
-                        labelText: 'Filename override (optional)',
-                      ),
+                      controller: row.prefix,
+                      decoration: const InputDecoration(labelText: 'Prefix'),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: TextField(
+                      controller: row.suffix,
+                      decoration: const InputDecoration(labelText: 'Suffix'),
                     ),
                   ),
                 ],
               ),
-            ] else
-              TextField(
-                controller: row.value,
-                decoration: const InputDecoration(
-                  labelText: 'Value template',
-                  hintText: '{{post.title}}',
+            if (row.isFile && !row.repeat)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: TextField(
+                  controller: row.filename,
+                  decoration: const InputDecoration(
+                    labelText: 'Filename override (optional)',
+                  ),
                 ),
-                minLines: 1,
-                maxLines: 3,
               ),
             Align(
               alignment: Alignment.centerRight,
               child: TextButton.icon(
-                onPressed: onRemove,
+                onPressed: onDelete,
                 icon: const Icon(Icons.remove_circle_outline, size: 18),
                 label: const Text('Remove'),
               ),

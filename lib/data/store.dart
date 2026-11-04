@@ -438,8 +438,11 @@ class VaultStore extends ChangeNotifier {
     );
     if (active.isEmpty) return;
 
-    // Resolve each file at most once per batch — a hook with several file
-    // parts (photo + thumbnail, say) doesn't re-read the disk.
+    final files = post.fileIds
+        .map((id) => _fileIndex[space.id]?[id])
+        .whereType<DriveFile>()
+        .toList();
+
     final resolved = <String, ResolvedFile>{};
     Future<ResolvedFile?> resolveFile(String fileId) async {
       final cached = resolved[fileId];
@@ -466,6 +469,7 @@ class VaultStore extends ChangeNotifier {
         space: space,
         trigger: trigger,
         priorStates: priorStates,
+        files: files,
         resolveFile: resolveFile,
       );
     }

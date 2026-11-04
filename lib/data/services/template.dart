@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../../util/file_category.dart';
+import '../../util/mime.dart';
 import '../hooks.dart';
 import '../models.dart';
 
@@ -13,6 +15,11 @@ class TemplateContext {
   final Post? original;
   final Map<String, PostHookState> priorStates;
 
+  /// Drive files referenced by [post.fileIds], in order, so templates can
+  /// address `post.files.0.name` etc. Missing entries (deleted file) are
+  /// omitted, so indices here match [post.fileIds] only if none are missing.
+  final List<DriveFile> files;
+
   const TemplateContext({
     required this.post,
     required this.space,
@@ -20,59 +27,64 @@ class TemplateContext {
     required this.trigger,
     this.original,
     this.priorStates = const {},
+    this.files = const [],
   });
 
-  /// Resolves an expression like `post.title` or
-  /// `previous.tg_post.json.result.message_id`. Returns null when the path
-  /// doesn't resolve.
   String? lookup(String expr) {
     final parts = expr.split('.');
     final head = parts.first;
 
-    String? simple(String v) => v;
-
     switch (head) {
       case 'post':
+        if (parts.length >= 2 && parts[1] == 'files') {
+          if (parts.length == 3 && parts[2] == 'length') {
+            return files.length.toString();
+          }
+          if (parts.length >= 4) {
+            final idx = int.tryParse(parts[2]);
+            if (idx == null || idx < 0 || idx >= files.length) return null;
+            final f = files[idx];
+            switch (parts[3]) {
+              case 'id':
+                return f.id;
+              case 'name':
+                return f.name;
+              case 'category':
+                return categoryFor(f.name).name;
+              case 'mime':
+                return mimeTypeForName(f.name);
+              case 'size':
+                return f.sizeBytes.toString();
+            }
+          }
+          return null;
+        }
         if (parts.length != 2) return null;
         switch (parts[1]) {
-          case 'id':
-            return post.id;
-          case 'url':
-            return post.url ?? '';
-          case 'title':
-            return post.title ?? '';
-          case 'description':
-            return post.description ?? '';
-          case 'body':
-            return post.plaintext;
-          case 'tags':
-            return post.tags.join(',');
-          case 'kind':
-            return post.kind.name;
-          case 'createdAt':
-            return post.createdAt.toIso8601String();
+          case 'id': return post.id;
+          case 'url': return post.url ?? '';
+          case 'title': return post.title ?? '';
+          case 'description': return post.description ?? '';
+          case 'body': return post.plaintext;
+          case 'tags': return post.tags.join(',');
+          case 'kind': return post.kind.name;
+          case 'createdAt': return post.createdAt.toIso8601String();
         }
         return null;
       case 'space':
         if (parts.length != 2) return null;
         switch (parts[1]) {
-          case 'id':
-            return space.id;
-          case 'name':
-            return space.name;
-          case 'icon':
-            return space.icon;
+          case 'id': return space.id;
+          case 'name': return space.name;
+          case 'icon': return space.icon;
         }
         return null;
       case 'hook':
         if (parts.length != 2) return null;
         switch (parts[1]) {
-          case 'id':
-            return hook.id;
-          case 'key':
-            return hook.key;
-          case 'name':
-            return hook.name;
+          case 'id': return hook.id;
+          case 'key': return hook.key;
+          case 'name': return hook.name;
         }
         return null;
       case 'trigger':
@@ -83,27 +95,21 @@ class TemplateContext {
         final o = original;
         if (o == null || parts.length != 2) return null;
         switch (parts[1]) {
-          case 'url':
-            return o.url ?? '';
-          case 'title':
-            return o.title ?? '';
-          case 'description':
-            return o.description ?? '';
-          case 'body':
-            return o.plaintext;
+          case 'url': return o.url ?? '';
+          case 'title': return o.title ?? '';
+          case 'description': return o.description ?? '';
+          case 'body': return o.plaintext;
         }
         return null;
       case 'previous':
+        // (unchanged from the hooks round)
         if (parts.length < 3) return null;
         final state = priorStates[parts[1]];
         if (state == null) return null;
         switch (parts[2]) {
-          case 'status':
-            return state.lastStatus?.toString() ?? '';
-          case 'body':
-            return state.lastBody ?? '';
-          case 'error':
-            return state.lastError ?? '';
+          case 'status': return state.lastStatus?.toString() ?? '';
+          case 'body': return state.lastBody ?? '';
+          case 'error': return state.lastError ?? '';
           case 'headers':
             if (parts.length < 4) return null;
             return state.lastHeaders[parts[3]] ?? '';
@@ -161,23 +167,75 @@ class TemplateRenderer {
     TemplateContext ctx,
     TemplateEscape escape,
   ) {
-    // `{{a || fallback}}` — first non-empty wins. Fallback with no `.` is
-    // treated as a literal; with `.` it's looked up like any expression.
+    final segments = _splitPipeline(raw);
+    var value = _resolveBase(segments.first, ctx);
+    for (var i = 1; i < segments.length; i++) {
+      value = _applyFunction(value, segments[i]);
+    }
+    return _escape(value, escape);
+  }
+
+  static List<String> _splitPipeline(String raw) {
+    final parts = <String>[];
+    final cur = StringBuffer();
+    for (var i = 0; i < raw.length; i++) {
+      final c = raw[i];
+      if (c == '|' && i + 1 < raw.length && raw[i + 1] == '|') {
+        cur.write('||');
+        i++;
+      } else if (c == '|') {
+        parts.add(cur.toString().trim());
+        cur.clear();
+      } else {
+        cur.write(c);
+      }
+    }
+    parts.add(cur.toString().trim());
+    return parts;
+  }
+
+  static String _resolveBase(String raw, TemplateContext ctx) {
     final alternatives = raw.split('||').map((s) => s.trim());
     for (final alt in alternatives) {
       String? value;
       if (alt.contains('.')) {
         value = ctx.lookup(alt);
       } else {
-        // Single-segment: known identifiers, or a literal.
         final asExpr = ctx.lookup(alt);
         value = asExpr ?? alt;
       }
-      if (value != null && value.isNotEmpty) {
-        return _escape(value, escape);
-      }
+      if (value != null && value.isNotEmpty) return value;
     }
     return '';
+  }
+
+  static String _applyFunction(String value, String spec) {
+    final m = RegExp(r'^(\w+)(?:\((.*)\))?$').firstMatch(spec.trim());
+    if (m == null) return value;
+    final name = m.group(1)!;
+    final argsRaw = m.group(2);
+    final args = <String, String>{};
+    if (argsRaw != null) {
+      for (final pair in argsRaw.split(',')) {
+        final eq = pair.indexOf('=');
+        if (eq < 0) continue;
+        args[pair.substring(0, eq).trim()] =
+            pair.substring(eq + 1).trim();
+      }
+    }
+    switch (name) {
+      case 'upper':
+        return value.toUpperCase();
+      case 'lower':
+        return value.toLowerCase();
+      case 'default':
+        final d = args['value'] ?? args['0'] ?? '';
+        return value.isEmpty ? d : value;
+      case 'map':
+        if (args.containsKey(value)) return args[value]!;
+        return args['default'] ?? value;
+    }
+    return value;
   }
 
   static String _escape(String v, TemplateEscape escape) {
@@ -185,7 +243,6 @@ class TemplateRenderer {
       case TemplateEscape.url:
         return Uri.encodeComponent(v);
       case TemplateEscape.json:
-        // Escape for embedding inside a JSON string value.
         return jsonEncode(v).substring(1, jsonEncode(v).length - 1);
       case TemplateEscape.raw:
         return v;
