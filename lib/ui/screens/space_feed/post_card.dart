@@ -6,6 +6,8 @@ import '../../../data/store.dart';
 import '../../../util/file_category.dart';
 import '../../widgets/file_thumbnail.dart';
 import '../../widgets/hook_status_dialog.dart';
+import '../../widgets/post_source_dialog.dart';
+import '../../widgets/post_body.dart';
 import 'inline_media.dart';
 import 'link_preview_card.dart';
 import 'media_widgets.dart';
@@ -22,10 +24,6 @@ class PostCard extends StatelessWidget {
   final VoidCallback onReply;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
-
-  /// Called with the ID of an own-repo quoted post when the quote card is
-  /// tapped. Null disables tap-to-scroll (e.g. when the card is shown in a
-  /// context without a scrollable feed, like search results).
   final void Function(String quotedPostId)? onQuoteTap;
 
   const PostCard({
@@ -92,17 +90,17 @@ class PostCard extends StatelessWidget {
                     post: post,
                     onEdit: onEdit,
                     onDelete: () => _confirmDelete(context),
+                    onShowSource: () =>
+                        showPostSourceDialog(context, store, space, post),
                     onHookStatus: post.hookState.isEmpty
                         ? null
                         : () => showHookStatusDialog(context, post, store),
                   ),
                   if (plaintext.isNotEmpty) ...[
                     const SizedBox(height: 4),
-                    Text(
-                      plaintext,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        height: 1.4,
-                      ),
+                    PostBodyText(
+                      html: post.body,
+                      style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
                     ),
                   ],
                   if (isBookmark && post.url != null) ...[
@@ -132,8 +130,8 @@ class PostCard extends StatelessWidget {
                       padding: const EdgeInsets.only(top: 8),
                       child: Column(
                         children: attachmentFiles
-                            .map((f) => FileRow(
-                                store: store, space: space, file: f))
+                            .map((f) =>
+                                FileRow(store: store, space: space, file: f))
                             .toList(),
                       ),
                     ),
@@ -142,11 +140,9 @@ class PostCard extends StatelessWidget {
                     Wrap(
                       spacing: 4,
                       runSpacing: 4,
-                      children:
-                          post.tags.map((t) => _TagChip(tag: t)).toList(),
+                      children: post.tags.map((t) => _TagChip(tag: t)).toList(),
                     ),
                   ],
-                  // ── Quotes: at the very bottom, below media/tags ────
                   if (post.quotedPostId != null) ...[
                     const SizedBox(height: 8),
                     _QuotedOwnCard(
@@ -250,8 +246,8 @@ class _QuotedOwnCard extends StatelessWidget {
       decoration: BoxDecoration(
         border: Border.all(color: theme.colorScheme.outlineVariant),
         borderRadius: BorderRadius.circular(8),
-        color: theme.colorScheme.surfaceContainerHighest
-            .withValues(alpha: 0.25),
+        color:
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.25),
       ),
       clipBehavior: Clip.antiAlias,
       child: inner,
@@ -269,15 +265,10 @@ class _QuotedOwnCard extends StatelessWidget {
   }
 
   Widget _quotedContent(BuildContext context, ThemeData theme, Post quoted) {
-    final icon = quoted.kind == PostKind.bookmark
-        ? Icons.bookmark_outline
-        : Icons.notes;
+    final icon =
+        quoted.kind == PostKind.bookmark ? Icons.bookmark_outline : Icons.notes;
     final preview = _previewOf(quoted);
     final media = _mediaPreview(context, quoted);
-    final hasMedia = media is! SizedBox || (media).width != null;
-    // We can't cheaply ask a Widget "are you SizedBox.shrink?" — the
-    // helper returns SizedBox.shrink() when there's nothing to show, and
-    // we mirror that decision here so the layout condition matches.
     final mediaFiles = _mediaFiles(quoted);
 
     return Column(
@@ -309,7 +300,7 @@ class _QuotedOwnCard extends StatelessWidget {
             style: theme.textTheme.bodySmall?.copyWith(height: 1.35),
           ),
         ],
-        if (mediaFiles.isNotEmpty && hasMedia) media,
+        if (mediaFiles.isNotEmpty) media,
         if (quoted.quotedExternals.isNotEmpty) ...[
           const SizedBox(height: 4),
           Text(
@@ -457,8 +448,7 @@ class _QuotedExternalCard extends StatelessWidget {
                   ),
                   if (hasUri)
                     Icon(Icons.open_in_new,
-                        size: 12,
-                        color: theme.colorScheme.onSurfaceVariant),
+                        size: 12, color: theme.colorScheme.onSurfaceVariant),
                 ],
               ),
               if (content.isNotEmpty) ...[
@@ -516,7 +506,7 @@ class _QuotedExternalCard extends StatelessWidget {
   }
 }
 
-// ── Avatar, header, tags, actions (unchanged) ─────────────────────────────
+// ── Avatar, header, tags, actions ─────────────────────────────────────────
 
 class _PostAvatar extends StatelessWidget {
   final bool isBookmark;
@@ -548,12 +538,14 @@ class _PostHeader extends StatelessWidget {
   final Post post;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final VoidCallback onShowSource;
   final VoidCallback? onHookStatus;
 
   const _PostHeader({
     required this.post,
     required this.onEdit,
     required this.onDelete,
+    required this.onShowSource,
     this.onHookStatus,
   });
 
@@ -598,17 +590,22 @@ class _PostHeader extends StatelessWidget {
             tooltip: 'More',
             onSelected: (v) {
               if (v == 'edit') onEdit();
+              if (v == 'source') onShowSource();
               if (v == 'delete') onDelete();
               if (v == 'hook-status') onHookStatus?.call();
             },
             itemBuilder: (_) => [
               const PopupMenuItem(value: 'edit', child: Text('Edit')),
-              const PopupMenuItem(value: 'delete', child: Text('Delete')),
+              const PopupMenuItem(
+                value: 'source',
+                child: Text('Show source…'),
+              ),
               if (onHookStatus != null)
                 const PopupMenuItem(
                   value: 'hook-status',
                   child: Text('Hook status…'),
                 ),
+              const PopupMenuItem(value: 'delete', child: Text('Delete')),
             ],
           ),
         ),

@@ -337,6 +337,10 @@ class VaultStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Returns the raw HTML + frontmatter for [postId].
+  Future<String> readPostSource(String spaceId, String postId) =>
+      _posts.readSource(spaceId, postId);
+
   // ── Drive ──────────────────────────────────────────────────────────────
 
   Future<DriveFile> addFileFromBytes({
@@ -349,7 +353,7 @@ class VaultStore extends ChangeNotifier {
       bytes: bytes,
       name: name,
     );
-    _fileCache.putIfAbsent(spaceId, () => []).add(file);
+    _fileCache.putIfAbsent(spaceId, () => []).insert(0, file);
     _fileIndex.putIfAbsent(spaceId, () => {})[file.id] = file;
     notifyListeners();
     return file;
@@ -367,14 +371,14 @@ class VaultStore extends ChangeNotifier {
     return bytes;
   }
 
-Future<void> deleteFile(String spaceId, String fileId) async {
-  await _drive.delete(spaceId, fileId);
-  _fileCache[spaceId]?.removeWhere((x) => x.id == fileId);
-  _fileIndex[spaceId]?.remove(fileId);
-  _imageCache.remove('$spaceId:$fileId');
-  _imageAspectCache.remove('$spaceId:$fileId');    // ← add
-  notifyListeners();
-}
+  Future<void> deleteFile(String spaceId, String fileId) async {
+    await _drive.delete(spaceId, fileId);
+    _fileCache[spaceId]?.removeWhere((x) => x.id == fileId);
+    _fileIndex[spaceId]?.remove(fileId);
+    _imageCache.remove('$spaceId:$fileId');
+    _imageAspectCache.remove('$spaceId:$fileId'); // ← add
+    notifyListeners();
+  }
 
   // ── Archive (zip export / import) ──────────────────────────────────────
 

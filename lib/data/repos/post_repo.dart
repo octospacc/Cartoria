@@ -46,8 +46,8 @@ class PostRepository {
     if (rawHooks is Map) {
       for (final e in rawHooks.entries) {
         try {
-          hookState[e.key as String] = PostHookState.fromJson(
-              (e.value as Map).cast<String, dynamic>());
+          hookState[e.key as String] =
+              PostHookState.fromJson((e.value as Map).cast<String, dynamic>());
         } catch (err) {
           debugPrint('Bad hook state ${e.key}: $err');
         }
@@ -105,8 +105,7 @@ class PostRepository {
       if (title != null && title.isNotEmpty) 'title': title,
       if (description != null && description.isNotEmpty)
         'description': description,
-      if (thumbnail != null && thumbnail.isNotEmpty)
-        'thumbnail': thumbnail,
+      if (thumbnail != null && thumbnail.isNotEmpty) 'thumbnail': thumbnail,
       if (quotedPostId != null) 'quotedPostId': quotedPostId,
       if (hookState.isNotEmpty)
         'hooks': hookState.map((k, v) => MapEntry(k, v.toJson())),
@@ -162,10 +161,8 @@ class PostRepository {
       if (title != null && title.isNotEmpty) 'title': title,
       if (description != null && description.isNotEmpty)
         'description': description,
-      if (thumbnail != null && thumbnail.isNotEmpty)
-        'thumbnail': thumbnail,
-      if (existing.quotedPostId != null)
-        'quotedPostId': existing.quotedPostId,
+      if (thumbnail != null && thumbnail.isNotEmpty) 'thumbnail': thumbnail,
+      if (existing.quotedPostId != null) 'quotedPostId': existing.quotedPostId,
       if (existing.hookState.isNotEmpty)
         'hooks': existing.hookState.map((k, v) => MapEntry(k, v.toJson())),
     };
@@ -189,6 +186,17 @@ class PostRepository {
       quotedExternals: existing.quotedExternals,
       hookState: existing.hookState,
     );
+  }
+
+  /// Returns the raw on-disk representation of a post: frontmatter block
+  /// (`<!--- … --->`) followed by HTML body. Used by the "Show source"
+  /// menu entry to display the exact file content.
+  Future<String> readSource(String spaceId, String postId) async {
+    final f = fs.file(p.join(vaultPath, spaceId, 'posts', '$postId.html'));
+    if (!await f.exists()) {
+      throw StateError('Post $postId not found');
+    }
+    return f.readAsString();
   }
 
   Future<void> delete(String spaceId, String postId) async {

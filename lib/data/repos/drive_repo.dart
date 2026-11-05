@@ -58,7 +58,7 @@ class DriveRepository {
         debugPrint('Bad drive file $id: $err');
       }
     }
-    result.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    result.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return result;
   }
 
