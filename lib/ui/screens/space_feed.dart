@@ -4,12 +4,16 @@ import '../../data/models.dart';
 import '../../data/store.dart';
 import '../../platform/file_save.dart';
 import '../../util/html_utils.dart';
+import '../bookmark_import_helpers.dart';       // ← add this line
 import '../widgets/space_stats_dialog.dart';
-import '../bookmark_import_helpers.dart';
 import 'drive.dart';
 import 'space_feed/attachment_picker.dart';
 import 'space_feed/composer.dart';
 import 'space_feed/post_card.dart';
+
+/// Number of direct replies shown under a top-level post by default.
+/// Tune this to make the default feed denser (higher) or sparser (lower).
+const int kPreviewReplyCount = 2;
 
 class SpaceFeedScreen extends StatefulWidget {
   final VaultStore store;
@@ -183,29 +187,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     }
   }
 
-  Future<void> _deleteSpace() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Delete "${widget.space.name}"?'),
-        content: const Text(
-            'This removes every post and file in this space. Cannot be undone.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Delete')),
-        ],
-      ),
-    );
-    if (ok == true) {
-      await widget.store.deleteSpace(widget.space.id);
-      if (mounted) Navigator.pop(context);
-    }
-  }
-
   Future<void> _importBookmarks() async {
     final file = await pickAndParseBookmarkFile(context);
     if (file == null) return;
@@ -235,6 +216,29 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     }
   }
 
+  Future<void> _deleteSpace() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete "${widget.space.name}"?'),
+        content: const Text(
+            'This removes every post and file in this space. Cannot be undone.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await widget.store.deleteSpace(widget.space.id);
+      if (mounted) Navigator.pop(context);
+    }
+  }
+
   Set<String> _computeMatches(String query) {
     final terms = query
         .toLowerCase()
@@ -248,7 +252,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     final matches = <String>{};
     for (final p in posts) {
       final buf = StringBuffer();
-      buf.write(bodyFromHtml(p.body));
+      buf.write(p.plaintext);
       buf.write(' ');
       if (p.title != null) {
         buf.write(p.title);
@@ -334,18 +338,43 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         .toList();
   }
 
-  Widget _buildNode(_PostNode node, {required bool searchMode}) {
+  Widget _buildNode(
+    _PostNode node, {
+    required bool searchMode,
+    int depth = 0,
+  }) {
     final post = node.post;
-    final hasChildren = node.children.isNotEmpty;
-    final expanded = searchMode || _expanded.contains(post.id);
+    final totalChildren = node.children.length;
+    final hasChildren = totalChildren > 0;
+    final isExpanded = searchMode || _expanded.contains(post.id);
+
+    // Preview: at the top level, show the first kPreviewReplyCount direct
+    // replies even when the post isn't explicitly expanded. Deeper levels
+    // stay collapsed by default so a thread doesn't cascade.
+    final previewCount =
+        (!isExpanded && depth == 0 && hasChildren)
+            ? (totalChildren < kPreviewReplyCount
+                ? totalChildren
+                : kPreviewReplyCount)
+            : 0;
+
+    final List<_PostNode> visibleChildren;
+    if (isExpanded) {
+      visibleChildren = node.children;
+    } else if (previewCount > 0) {
+      visibleChildren = node.children.take(previewCount).toList();
+    } else {
+      visibleChildren = const [];
+    }
 
     final card = PostCard(
       key: ValueKey(post.id),
       store: widget.store,
       space: widget.space,
       post: post,
-      childCount: node.children.length,
-      expanded: expanded,
+      childCount: totalChildren,
+      previewCount: previewCount,
+      expanded: isExpanded,
       hideReplyToggle: searchMode,
       onToggleReplies: () => setState(() {
         if (_expanded.contains(post.id)) {
@@ -359,7 +388,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       onDelete: () => widget.store.deletePost(widget.space.id, post.id),
     );
 
-    if (!hasChildren || !expanded) return card;
+    if (visibleChildren.isEmpty) return card;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -379,10 +408,14 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
             padding: const EdgeInsets.only(left: 8, top: 6),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: node.children
+              children: visibleChildren
                   .map((c) => Padding(
                         padding: const EdgeInsets.only(bottom: 6),
-                        child: _buildNode(c, searchMode: searchMode),
+                        child: _buildNode(
+                          c,
+                          searchMode: searchMode,
+                          depth: depth + 1,
+                        ),
                       ))
                   .toList(),
             ),
@@ -404,10 +437,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         itemCount: roots.length,
         addAutomaticKeepAlives: false,
         itemBuilder: (context, i) {
-          // RepaintBoundary per item: when one card repaints (e.g. an
-          // image finishing its load, or an inline video entering play),
-          // its neighbours don't. This is the single biggest raster saving
-          // on a fast scroll through many image-bearing cards.
           return RepaintBoundary(
             child: Padding(
               padding: const EdgeInsets.only(bottom: 8),
@@ -493,7 +522,8 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
               PopupMenuButton<String>(
                 onSelected: (v) {
                   if (v == 'stats') {
-                    SpaceStatsDialog.show(context, widget.store, widget.space);
+                    SpaceStatsDialog.show(
+                        context, widget.store, widget.space);
                   }
                   if (v == 'import') _importBookmarks();
                   if (v == 'export') _exportSpace();
@@ -580,7 +610,8 @@ class _ComposerFooter extends StatelessWidget {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 760),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: child,
             ),
           ),

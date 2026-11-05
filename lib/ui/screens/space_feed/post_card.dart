@@ -13,6 +13,12 @@ class PostCard extends StatelessWidget {
   final Space space;
   final Post post;
   final int childCount;
+
+  /// How many direct children are currently visible due to preview (before
+  /// the user expands). 0 for nested posts and for roots that are already
+  /// expanded. Passed by `SpaceFeedScreen`; the card only uses it to pick
+  /// the right button text.
+  final int previewCount;
   final bool expanded;
   final bool hideReplyToggle;
   final VoidCallback onToggleReplies;
@@ -26,6 +32,7 @@ class PostCard extends StatelessWidget {
     required this.space,
     required this.post,
     required this.childCount,
+    this.previewCount = 0,
     required this.expanded,
     this.hideReplyToggle = false,
     required this.onToggleReplies,
@@ -139,6 +146,7 @@ class PostCard extends StatelessWidget {
                   const SizedBox(height: 2),
                   _PostActions(
                     childCount: childCount,
+                    previewCount: previewCount,
                     expanded: expanded,
                     hideReplyToggle: hideReplyToggle,
                     onToggleReplies: onToggleReplies,
@@ -230,8 +238,6 @@ class _PostHeader extends StatelessWidget {
         Expanded(
           child: Row(
             children: [
-              // Created timestamp is non-flexible: it's always short, and
-              // keeping it visible matters more than seeing the edit time.
               Text(
                 post.formattedCreatedAt,
                 maxLines: 1,
@@ -240,9 +246,6 @@ class _PostHeader extends StatelessWidget {
               ),
               if (edited != null) ...[
                 const SizedBox(width: 4),
-                // Edited segment may truncate on a narrow card; the
-                // enclosing Expanded absorbs any unused width, so the
-                // menu button's position is unaffected.
                 Flexible(
                   child: Text(
                     '· edited $edited',
@@ -312,6 +315,7 @@ class _TagChip extends StatelessWidget {
 
 class _PostActions extends StatelessWidget {
   final int childCount;
+  final int previewCount;
   final bool expanded;
   final bool hideReplyToggle;
   final VoidCallback onToggleReplies;
@@ -319,6 +323,7 @@ class _PostActions extends StatelessWidget {
 
   const _PostActions({
     required this.childCount,
+    required this.previewCount,
     required this.expanded,
     required this.hideReplyToggle,
     required this.onToggleReplies,
@@ -328,6 +333,7 @@ class _PostActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final toggle = _replyToggle(theme);
     return Row(
       children: [
         TextButton.icon(
@@ -341,24 +347,68 @@ class _PostActions extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 6),
           ),
         ),
-        if (childCount > 0 && !hideReplyToggle) ...[
+        if (toggle != null) ...[
           const SizedBox(width: 2),
-          TextButton(
-            onPressed: onToggleReplies,
-            style: TextButton.styleFrom(
-              foregroundColor: theme.colorScheme.onSurfaceVariant,
-              visualDensity: VisualDensity.compact,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-            ),
-            child: Text(
-              expanded
-                  ? 'Hide $childCount ${childCount == 1 ? "reply" : "replies"}'
-                  : '$childCount ${childCount == 1 ? "reply" : "replies"}',
-            ),
-          ),
+          toggle,
         ],
       ],
+    );
+  }
+
+  Widget? _replyToggle(ThemeData theme) {
+    if (hideReplyToggle) return null;
+    if (childCount == 0) return null;
+
+    final style = TextButton.styleFrom(
+      foregroundColor: theme.colorScheme.onSurfaceVariant,
+      visualDensity: VisualDensity.compact,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+    );
+
+    if (expanded) {
+      if (previewCount > 0) {
+        // Root expanded: clicking reduces to preview, not to zero.
+        return TextButton(
+          onPressed: onToggleReplies,
+          style: style,
+          child: const Text('Show fewer'),
+        );
+      }
+      // Nested expanded: clicking collapses fully (unchanged).
+      return TextButton(
+        onPressed: onToggleReplies,
+        style: style,
+        child: Text(
+          'Hide $childCount ${childCount == 1 ? "reply" : "replies"}',
+        ),
+      );
+    }
+
+    final hidden = childCount - previewCount;
+    if (hidden <= 0) {
+      // Root preview where all children fit inside the preview slot.
+      return null;
+    }
+
+    if (previewCount > 0) {
+      // Root preview: some are already visible, so say how many more.
+      return TextButton(
+        onPressed: onToggleReplies,
+        style: style,
+        child: Text(
+          'Show $hidden more ${hidden == 1 ? "reply" : "replies"}',
+        ),
+      );
+    }
+
+    // Nested collapsed (unchanged).
+    return TextButton(
+      onPressed: onToggleReplies,
+      style: style,
+      child: Text(
+        '$childCount ${childCount == 1 ? "reply" : "replies"}',
+      ),
     );
   }
 }
