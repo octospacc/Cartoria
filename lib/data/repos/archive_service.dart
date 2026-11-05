@@ -9,7 +9,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../util/fs_walk.dart';
 import '../../util/html_utils.dart';
-import '../models.dart';                  // ← add this line
+import '../models.dart';
 import '../space_archive.dart';
 import 'post_repo.dart';
 
@@ -75,7 +75,15 @@ class ArchiveService {
       if (!f.isFile || !f.name.startsWith(prefix)) continue;
       final rel = f.name.substring(prefix.length);
       if (rel.isEmpty) continue;
-      final dest = p.join(vaultPath, newId, rel);
+
+      // Normalise legacy `posts/` entries into `entries/` on the way in,
+      // so a vault that imports an old zip ends up with the current
+      // layout. The content is identical; only the directory name differs.
+      final normalisedRel = rel.startsWith('posts/')
+          ? 'entries/${rel.substring('posts/'.length)}'
+          : rel;
+
+      final dest = p.join(vaultPath, newId, normalisedRel);
       await fs.directory(p.dirname(dest)).create(recursive: true);
       await fs
           .file(dest)
@@ -92,8 +100,6 @@ class ArchiveService {
 
     return newId;
   }
-
-// Add to the ArchiveService class.
 
   /// Decodes a space zip into memory without touching the filesystem.
   /// Consumed by [VaultStore.importSpaceZipIntoExistingSpace].
@@ -137,19 +143,23 @@ class ArchiveService {
       break;
     }
 
-    // Posts
+    // Entries. Accept both `entries/` (current) and `posts/` (legacy zips)
+    // so imports from pre-rename exports still work.
     final posts = <Post>[];
     for (final f in archive.files) {
       if (!f.isFile) continue;
-      if (!f.name.startsWith('${prefix}posts/')) continue;
       if (!f.name.endsWith('.html')) continue;
+      final rel = f.name.startsWith(prefix)
+          ? f.name.substring(prefix.length)
+          : f.name;
+      if (!rel.startsWith('entries/') && !rel.startsWith('posts/')) continue;
       try {
         posts.add(PostRepository.parseContent(
           f.name,
           utf8.decode(f.content as List<int>),
         ));
       } catch (e) {
-        debugPrint('Skipping malformed post ${f.name}: $e');
+        debugPrint('Skipping malformed entry ${f.name}: $e');
       }
     }
     posts.sort((a, b) => a.createdAt.compareTo(b.createdAt));

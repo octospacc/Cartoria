@@ -296,79 +296,79 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     }
   }
 
-Future<void> _importFile() async {
-  final picked = await pickImportFile(context);
-  if (picked == null) return;
-  final lower = picked.name.toLowerCase();
-  if (lower.endsWith('.zip')) {
-    await _importZipIntoCurrent(picked.bytes);
-  } else if (lower.endsWith('.html') || lower.endsWith('.htm')) {
-    await _importBookmarksIntoCurrent(picked.bytes);
-  } else if (mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Unsupported file type')),
-    );
+  Future<void> _importFile() async {
+    final picked = await pickImportFile(context);
+    if (picked == null) return;
+    final lower = picked.name.toLowerCase();
+    if (lower.endsWith('.zip')) {
+      await _importZipIntoCurrent(picked.bytes);
+    } else if (lower.endsWith('.html') || lower.endsWith('.htm')) {
+      await _importBookmarksIntoCurrent(picked.bytes);
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unsupported file type')),
+      );
+    }
   }
-}
 
-Future<void> _importZipIntoCurrent(Uint8List bytes) async {
-  try {
-    final r = await widget.store.importSpaceZipIntoExistingSpace(
-      targetSpaceId: widget.space.id,
-      zipBytes: bytes,
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(spaceImportSummary(r))),
-    );
-  } catch (e) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Import failed: $e')),
+  Future<void> _importZipIntoCurrent(Uint8List bytes) async {
+    try {
+      final r = await widget.store.importSpaceZipIntoExistingSpace(
+        targetSpaceId: widget.space.id,
+        zipBytes: bytes,
       );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(spaceImportSummary(r))),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import failed: $e')),
+        );
+      }
     }
   }
-}
 
-Future<void> _importBookmarksIntoCurrent(Uint8List bytes) async {
-  BookmarkFile file;
-  try {
-    file = BookmarkFileParser.parse(
-      utf8.decode(bytes, allowMalformed: true),
-    );
-  } catch (e) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not parse file: $e')),
+  Future<void> _importBookmarksIntoCurrent(Uint8List bytes) async {
+    BookmarkFile file;
+    try {
+      file = BookmarkFileParser.parse(
+        utf8.decode(bytes, allowMalformed: true),
       );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not parse file: $e')),
+        );
+      }
+      return;
     }
-    return;
-  }
-  if (file.bookmarks.isEmpty) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No bookmarks found in file')),
+    if (file.bookmarks.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No bookmarks found in file')),
+        );
+      }
+      return;
+    }
+    try {
+      final r = await widget.store.importBookmarksIntoSpace(
+        spaceId: widget.space.id,
+        file: file,
       );
-    }
-    return;
-  }
-  try {
-    final r = await widget.store.importBookmarksIntoSpace(
-      spaceId: widget.space.id,
-      file: file,
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(bookmarkImportSummary(r))),
-    );
-  } catch (e) {
-    if (mounted) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Import failed: $e')),
+        SnackBar(content: Text(bookmarkImportSummary(r))),
       );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import failed: $e')),
+        );
+      }
     }
   }
-}
 
   Future<void> _deleteSpace() async {
     final ok = await showDialog<bool>(
@@ -512,12 +512,11 @@ Future<void> _importBookmarksIntoCurrent(Uint8List bytes) async {
     final hasChildren = totalChildren > 0;
     final isExpanded = searchMode || _expanded.contains(post.id);
 
-    final previewCount =
-        (!isExpanded && depth == 0 && hasChildren)
-            ? (totalChildren < kPreviewReplyCount
-                ? totalChildren
-                : kPreviewReplyCount)
-            : 0;
+    final previewCount = (!isExpanded && depth == 0 && hasChildren)
+        ? (totalChildren < kPreviewReplyCount
+            ? totalChildren
+            : kPreviewReplyCount)
+        : 0;
 
     final List<_PostNode> visibleChildren;
     if (isExpanded) {
@@ -592,33 +591,33 @@ Future<void> _importBookmarksIntoCurrent(Uint8List bytes) async {
     return KeyedSubtree(key: _keyFor(post.id), child: result);
   }
 
-Widget _buildFeed(List<_PostNode> roots, {required bool searchMode}) {
-  if (roots.isEmpty) {
-    return _emptyState(searchMode
-        ? 'No results for "${_searchCtrl.text.trim()}"'
-        : 'No posts yet. Write something.');
+  Widget _buildFeed(List<_PostNode> roots, {required bool searchMode}) {
+    if (roots.isEmpty) {
+      return _emptyState(searchMode
+          ? 'No results for "${_searchCtrl.text.trim()}"'
+          : 'Nothing here yet. Write a note or save a link.');
+    }
+    return SelectionArea(
+      child: ScrollablePositionedList.builder(
+        itemScrollController: searchMode ? _searchScroll : _feedScroll,
+        // Clamping physics eliminates the overshoot bounce that reads as
+        // "up-and-down jitter" near viewport edges. `ScrollablePositioned
+        // List` is more sensitive to bounce than plain `ListView` because
+        // it re-anchors item offsets during overscroll.
+        physics: const ClampingScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+        itemCount: roots.length,
+        itemBuilder: (context, i) {
+          return RepaintBoundary(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _buildNode(roots[i], searchMode: searchMode),
+            ),
+          );
+        },
+      ),
+    );
   }
-  return SelectionArea(
-    child: ScrollablePositionedList.builder(
-      itemScrollController: searchMode ? _searchScroll : _feedScroll,
-      // Clamping physics eliminates the overshoot bounce that reads as
-      // "up-and-down jitter" near viewport edges. `ScrollablePositioned
-      // List` is more sensitive to bounce than plain `ListView` because
-      // it re-anchors item offsets during overscroll.
-      physics: const ClampingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-      itemCount: roots.length,
-      itemBuilder: (context, i) {
-        return RepaintBoundary(
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: _buildNode(roots[i], searchMode: searchMode),
-          ),
-        );
-      },
-    ),
-  );
-}
 
   Widget _buildContent() {
     final query = _searchActive ? _searchCtrl.text.trim() : '';
@@ -692,20 +691,22 @@ Widget _buildFeed(List<_PostNode> roots, {required bool searchMode}) {
                 ),
               ),
               PopupMenuButton<String>(
-onSelected: (v) {
-  if (v == 'stats') {
-    SpaceStatsDialog.show(context, widget.store, widget.space);
-  }
-  if (v == 'import') _importFile();
-  if (v == 'export') _exportSpace();
-  if (v == 'delete') _deleteSpace();
-},
-itemBuilder: (_) => const [
-  PopupMenuItem(value: 'stats', child: Text('Statistics')),
-  PopupMenuItem(value: 'import', child: Text('Import…')),
-  PopupMenuItem(value: 'export', child: Text('Export this space…')),
-  PopupMenuItem(value: 'delete', child: Text('Delete this space…')),
-],
+                onSelected: (v) {
+                  if (v == 'stats') {
+                    SpaceStatsDialog.show(context, widget.store, widget.space);
+                  }
+                  if (v == 'import') _importFile();
+                  if (v == 'export') _exportSpace();
+                  if (v == 'delete') _deleteSpace();
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'stats', child: Text('Statistics')),
+                  PopupMenuItem(value: 'import', child: Text('Import…')),
+                  PopupMenuItem(
+                      value: 'export', child: Text('Export this space…')),
+                  PopupMenuItem(
+                      value: 'delete', child: Text('Delete this space…')),
+                ],
               ),
             ],
     );
@@ -778,8 +779,7 @@ class _ComposerFooter extends StatelessWidget {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 760),
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: child,
             ),
           ),

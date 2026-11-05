@@ -185,7 +185,11 @@ class PostCard extends StatelessWidget {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Delete post?'),
+        title: Text(
+          post.kind == PostKind.bookmark
+              ? 'Delete this bookmark?'
+              : 'Delete this note?',
+        ),
         content: const Text(
             'Attached files stay in the drive. Replies will become top-level. Cannot be undone.'),
         actions: [

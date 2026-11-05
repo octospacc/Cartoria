@@ -6,25 +6,54 @@ import 'package:uuid/uuid.dart';
 import '../../util/html_utils.dart';
 import '../models.dart';
 
-/// Reads and writes a space's posts as individual `posts/<id>.html`
+/// Reads and writes a space's entries as individual `entries/<id>.html`
 /// documents (HTML body with a JSON frontmatter block).
+///
+/// "Entry" is the on-disk collection name — one entry per post, note,
+/// bookmark, or reply. The type is still [Post] because that's the
+/// accurate technical umbrella (a bookmark is a post, a reply is a post);
+/// the folder name just shouldn't say "posts" when the UI never does.
+///
+/// Legacy spaces may still store entries under `posts/`. Every method
+/// resolves the actual directory at call time via [_entriesDir], so a
+/// vault whose startup migration failed still loads and writes correctly.
+/// New spaces always get `entries/`.
 ///
 /// Blockquotes in the body are extracted into [Post.quotedExternals] on
 /// load and re-serialised on save, so editing a post's text never touches
 /// its quotes. Own-repo quotes travel as the `quotedPostId` frontmatter
 /// field and are not represented as HTML.
-///
-/// File parsing is exposed via the static [parseContent] so archive
-/// import/export can decode posts without an instance (no vault path
-/// needed to parse a string into a [Post]).
 class PostRepository {
   final FileSystem fs;
   final String vaultPath;
 
   const PostRepository({required this.fs, required this.vaultPath});
 
+  // ── Directory resolution (current + legacy) ────────────────────────────
+
+  /// Returns the on-disk directory holding this space's entries.
+  ///
+  /// Prefers `entries/`. Falls back to `posts/` for spaces whose startup
+  /// migration didn't run (fresh install before migration, migration
+  /// error, or a vault authored by an older version of the app).
+  ///
+  /// When [create] is true and neither directory exists, creates
+  /// `entries/` — the current scheme. Never creates `posts/`.
+  Future<Directory> _entriesDir(String spaceId, {bool create = false}) async {
+    final entriesDir = fs.directory(p.join(vaultPath, spaceId, 'entries'));
+    if (await entriesDir.exists()) return entriesDir;
+
+    final legacyDir = fs.directory(p.join(vaultPath, spaceId, 'posts'));
+    if (await legacyDir.exists()) return legacyDir;
+
+    if (create) await entriesDir.create(recursive: true);
+    return entriesDir;
+  }
+
+  // ── Public API ─────────────────────────────────────────────────────────
+
   Future<List<Post>> list(String spaceId) async {
-    final dir = fs.directory(p.join(vaultPath, spaceId, 'posts'));
+    final dir = await _entriesDir(spaceId);
     if (!await dir.exists()) return const [];
 
     final result = <Post>[];
@@ -33,7 +62,7 @@ class PostRepository {
       try {
         result.add(parseContent(e.path, await e.readAsString()));
       } catch (err) {
-        debugPrint('Bad post ${e.path}: $err');
+        debugPrint('Bad entry ${e.path}: $err');
       }
     }
     result.sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -70,16 +99,15 @@ class PostRepository {
       if (title != null && title.isNotEmpty) 'title': title,
       if (description != null && description.isNotEmpty)
         'description': description,
-      if (thumbnail != null && thumbnail.isNotEmpty) 'thumbnail': thumbnail,
+      if (thumbnail != null && thumbnail.isNotEmpty)
+        'thumbnail': thumbnail,
       if (quotedPostId != null) 'quotedPostId': quotedPostId,
       if (hookState.isNotEmpty)
         'hooks': hookState.map((k, v) => MapEntry(k, v.toJson())),
     };
+    final dir = await _entriesDir(spaceId, create: true);
     await fs
-        .directory(p.join(vaultPath, spaceId, 'posts'))
-        .create(recursive: true);
-    await fs
-        .file(p.join(vaultPath, spaceId, 'posts', '$id.html'))
+        .file(p.join(dir.path, '$id.html'))
         .writeAsString(makeDocument(meta, html));
     return Post(
       id: id,
@@ -126,13 +154,16 @@ class PostRepository {
       if (title != null && title.isNotEmpty) 'title': title,
       if (description != null && description.isNotEmpty)
         'description': description,
-      if (thumbnail != null && thumbnail.isNotEmpty) 'thumbnail': thumbnail,
-      if (existing.quotedPostId != null) 'quotedPostId': existing.quotedPostId,
+      if (thumbnail != null && thumbnail.isNotEmpty)
+        'thumbnail': thumbnail,
+      if (existing.quotedPostId != null)
+        'quotedPostId': existing.quotedPostId,
       if (existing.hookState.isNotEmpty)
         'hooks': existing.hookState.map((k, v) => MapEntry(k, v.toJson())),
     };
+    final dir = await _entriesDir(spaceId);
     await fs
-        .file(p.join(vaultPath, spaceId, 'posts', '${existing.id}.html'))
+        .file(p.join(dir.path, '${existing.id}.html'))
         .writeAsString(makeDocument(meta, html));
     return Post(
       id: existing.id,
@@ -154,17 +185,19 @@ class PostRepository {
   }
 
   Future<void> delete(String spaceId, String postId) async {
-    final f = fs.file(p.join(vaultPath, spaceId, 'posts', '$postId.html'));
+    final dir = await _entriesDir(spaceId);
+    final f = fs.file(p.join(dir.path, '$postId.html'));
     if (await f.exists()) await f.delete();
   }
 
-  /// Returns the raw on-disk representation of a post: frontmatter block
-  /// (`<!--- … --->`) followed by HTML body. Used by the "Show source"
-  /// menu entry to display the exact file content.
+  /// Returns the raw on-disk representation of an entry: frontmatter block
+  /// (`<!--- … --->`) followed by HTML body. Used by the "Show source" menu
+  /// entry to display the exact file content.
   Future<String> readSource(String spaceId, String postId) async {
-    final f = fs.file(p.join(vaultPath, spaceId, 'posts', '$postId.html'));
+    final dir = await _entriesDir(spaceId);
+    final f = fs.file(p.join(dir.path, '$postId.html'));
     if (!await f.exists()) {
-      throw StateError('Post $postId not found');
+      throw StateError('Entry $postId not found');
     }
     return f.readAsString();
   }
@@ -174,9 +207,10 @@ class PostRepository {
     String postId,
     Map<String, PostHookState> updates,
   ) async {
-    final f = fs.file(p.join(vaultPath, spaceId, 'posts', '$postId.html'));
+    final dir = await _entriesDir(spaceId);
+    final f = fs.file(p.join(dir.path, '$postId.html'));
     if (!await f.exists()) {
-      throw StateError('Post $postId not found');
+      throw StateError('Entry $postId not found');
     }
     final content = await f.readAsString();
     final meta = parseFrontmatterMeta(content);
@@ -196,7 +230,7 @@ class PostRepository {
 
   // ── Static parsing ─────────────────────────────────────────────────────
 
-  /// Parses an on-disk post file (frontmatter + HTML body) into a [Post].
+  /// Parses an on-disk entry file (frontmatter + HTML body) into a [Post].
   /// Does not touch [fs] or [vaultPath], so it can be called on zip entries
   /// during import without constructing a repository.
   ///
@@ -212,8 +246,8 @@ class PostRepository {
     if (rawHooks is Map) {
       for (final e in rawHooks.entries) {
         try {
-          hookState[e.key as String] =
-              PostHookState.fromJson((e.value as Map).cast<String, dynamic>());
+          hookState[e.key as String] = PostHookState.fromJson(
+              (e.value as Map).cast<String, dynamic>());
         } catch (err) {
           debugPrint('Bad hook state ${e.key}: $err');
         }
@@ -275,23 +309,14 @@ class PostRepository {
       if (post.hookState.isNotEmpty)
         'hooks': post.hookState.map((k, v) => MapEntry(k, v.toJson())),
     };
-    await fs
-        .directory(p.join(vaultPath, spaceId, 'posts'))
-        .create(recursive: true);
-    final f = fs.file(p.join(vaultPath, spaceId, 'posts', '${post.id}.html'));
+    final dir = await _entriesDir(spaceId, create: true);
+    final f = fs.file(p.join(dir.path, '${post.id}.html'));
     await f.writeAsString(makeDocument(meta, html));
     return parseContent(f.path, await f.readAsString());
   }
 
   // ── Blockquote helpers (static, no instance state) ─────────────────────
 
-  /// Extracts `<blockquote data-author="…" data-uri="…">text</blockquote>`
-  /// blocks from [html]. Returns the HTML with those blocks removed, plus
-  /// the parsed [QuotedExternal] entries in document order.
-  ///
-  /// Static because it touches nothing on the instance — used both by
-  /// [parseContent] (static context) and by the instance `update`/`create`
-  /// paths through [_appendBlockquotes].
   static (String, List<QuotedExternal>) _extractBlockquotes(String html) {
     final bq = RegExp(
       r'<blockquote([^>]*)>(.*?)</blockquote>',
@@ -315,8 +340,6 @@ class PostRepository {
     return (stripped.trim(), quotes);
   }
 
-  /// Appends semantic `<blockquote>` elements for [quotes] to [bodyHtml].
-  /// Static for the same reason as [_extractBlockquotes].
   static String _appendBlockquotes(
     String bodyHtml,
     List<QuotedExternal> quotes,

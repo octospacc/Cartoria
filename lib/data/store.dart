@@ -193,8 +193,8 @@ class VaultStore extends ChangeNotifier {
   }
 
   Future<void> reload() async {
+    await _migratePostFolders();
     _drive.clearCache();
-
     _spaceCache.clear();
     _postCache.clear();
     _fileCache.clear();
@@ -217,6 +217,45 @@ class VaultStore extends ChangeNotifier {
     }
     _resortSpacesByUsage();
     notifyListeners();
+  }
+
+  /// One-shot migration of legacy `posts/` directories into `entries/`.
+  ///
+  /// Runs at every reload, but is a no-op after the first successful pass
+  /// per space. Failures are logged and *do not* block the reload — the
+  /// [PostRepository] falls back to `posts/` at read time, so a space whose
+  /// migration failed still functions; it just stays on the old folder
+  /// name until the underlying issue is resolved.
+  Future<void> _migratePostFolders() async {
+    final root = fs.directory(vaultPath);
+    if (!await root.exists()) return;
+
+    final pending = <Directory>[];
+    await for (final e in root.list(followLinks: false)) {
+      if (e is! Directory) continue;
+      final oldDir = fs.directory(p.join(e.path, 'posts'));
+      if (!await oldDir.exists()) continue;
+
+      final newDir = fs.directory(p.join(e.path, 'entries'));
+      if (await newDir.exists()) {
+        // Both exist — likely a partial migration or manual copy. Leave it:
+        // entries/ wins at read time, posts/ is dead weight the user can
+        // clean up. Warn so it shows up in logs if it ever happens.
+        debugPrint('Both posts/ and entries/ exist in ${e.path}; '
+            'leaving both, entries/ takes precedence');
+        continue;
+      }
+      pending.add(oldDir);
+    }
+
+    for (final oldDir in pending) {
+      try {
+        await oldDir.rename(p.join(p.dirname(oldDir.path), 'entries'));
+      } catch (err) {
+        debugPrint('Migration posts/→entries/ failed for ${oldDir.path}: $err. '
+            'PostRepository will fall back to reading from posts/.');
+      }
+    }
   }
 
   // ── Spaces ─────────────────────────────────────────────────────────────
