@@ -139,6 +139,7 @@ class VaultStore extends ChangeNotifier {
   }
 
   Future<void> reload() async {
+    _drive.clearCache();
     _spaceCache.clear();
     _postCache.clear();
     _fileCache.clear();

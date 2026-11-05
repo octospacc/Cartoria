@@ -28,7 +28,7 @@ class _DriveScreenState extends State<DriveScreen> {
         final files = widget.store.filesForSpace(widget.space.id);
         return Scaffold(
           appBar: AppBar(
-            title: Text('${widget.space.name} · drive'),
+            title: Text('${widget.space.name} · Drive'),
             actions: [
               IconButton(
                 icon: Icon(_grid ? Icons.view_list : Icons.grid_view),
