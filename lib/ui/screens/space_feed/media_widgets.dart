@@ -104,6 +104,7 @@ class PlayCard extends StatelessWidget {
                 children: [
                   Text(file.name,
                       style: theme.textTheme.bodyMedium,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis),
                   Text(
                     '$label · ${(file.sizeBytes / 1024).toStringAsFixed(1)} KB',

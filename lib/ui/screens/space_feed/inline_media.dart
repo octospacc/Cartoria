@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
@@ -56,64 +57,116 @@ class _InlineImage extends StatefulWidget {
   State<_InlineImage> createState() => _InlineImageState();
 }
 
+class _InlineImageData {
+  final Uint8List bytes;
+  final double aspectRatio;
+  const _InlineImageData(this.bytes, this.aspectRatio);
+}
+
 class _InlineImageState extends State<_InlineImage> {
-  late Future<Uint8List> _future;
+  late Future<_InlineImageData> _future;
 
   @override
   void initState() {
     super.initState();
-    _future = widget.store.readImageBytes(widget.spaceId, widget.file.id);
+    _future = _load();
   }
 
   @override
   void didUpdateWidget(covariant _InlineImage old) {
     super.didUpdateWidget(old);
     if (old.file.id != widget.file.id) {
-      _future = widget.store.readImageBytes(widget.spaceId, widget.file.id);
+      _future = _load();
+    }
+  }
+
+  Future<_InlineImageData> _load() async {
+    final bytes =
+        await widget.store.readImageBytes(widget.spaceId, widget.file.id);
+
+    // Use the cached ratio when available — this is what makes re-visits
+    // (and subsequent scroll-backs) jump-free.
+    final cached =
+        widget.store.imageAspectRatio(widget.spaceId, widget.file.id);
+    if (cached != null) {
+      return _InlineImageData(bytes, cached);
+    }
+
+    // First visit: decode to get dimensions, cache the ratio, return.
+    // `instantiateImageCodec` runs off the UI thread, so the frame cost
+    // is just the await in the FutureBuilder.
+    try {
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final w = frame.image.width;
+      final h = frame.image.height;
+      final ratio = (w > 0 && h > 0) ? w / h : 16.0 / 9.0;
+      frame.image.dispose();
+      codec.dispose();
+      widget.store.cacheImageAspect(widget.spaceId, widget.file.id, ratio);
+      return _InlineImageData(bytes, ratio);
+    } catch (_) {
+      return _InlineImageData(bytes, 16.0 / 9.0);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return FutureBuilder<Uint8List>(
+    return FutureBuilder<_InlineImageData>(
       future: _future,
       builder: (context, snap) {
+        // Use the real ratio as soon as we know it — from the completed
+        // future, or from the store cache (set by a previous visit to
+        // this same image). Fall back to 16:9 on the very first visit
+        // before the decode completes.
+        final ratio = snap.data?.aspectRatio ??
+            widget.store.imageAspectRatio(widget.spaceId, widget.file.id) ??
+            16.0 / 9.0;
+
+        // Placeholder uses the SAME constrained box and aspect ratio as
+        // the loaded image — no size jump when loading finishes.
+        final box = ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 320, maxWidth: 600),
+          child: AspectRatio(
+            aspectRatio: ratio,
+            child: snap.hasError || !snap.hasData
+                ? Container(
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Center(
+                      child: snap.hasError
+                          ? const Icon(Icons.broken_image_outlined)
+                          : const CircularProgressIndicator(),
+                    ),
+                  )
+                : ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.memory(
+                      snap.data!.bytes,
+                      fit: BoxFit.contain,
+                      width: double.infinity,
+                      height: double.infinity,
+                    ),
+                  ),
+          ),
+        );
+
         if (snap.hasError || !snap.hasData) {
-          return Container(
-            height: 120,
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Center(
-              child: snap.hasError
-                  ? const Icon(Icons.broken_image_outlined)
-                  : const CircularProgressIndicator(),
-            ),
-          );
+          return Align(alignment: Alignment.centerLeft, child: box);
         }
-        final bytes = snap.data!;
         return GestureDetector(
           onTap: () => showDialog(
             context: context,
             builder: (_) => Dialog(
               backgroundColor: Colors.transparent,
               insetPadding: const EdgeInsets.all(12),
-              child: InteractiveViewer(child: Image.memory(bytes)),
+              child: InteractiveViewer(child: Image.memory(snap.data!.bytes)),
             ),
           ),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: ConstrainedBox(
-                constraints:
-                    const BoxConstraints(maxHeight: 320, maxWidth: 600),
-                child: Image.memory(bytes, fit: BoxFit.contain),
-              ),
-            ),
-          ),
+          child: Align(alignment: Alignment.centerLeft, child: box),
         );
       },
     );

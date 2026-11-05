@@ -16,8 +16,19 @@ class Space {
   });
 }
 
-/// Per-hook result stored on the [Post] that fired it. Deliberately small:
-/// only what the executor can fill from a single HTTP round-trip.
+/// A quote of a post from another account (not in this vault).
+///
+/// Deserialized from `<blockquote data-author="…" data-uri="…">text</blockquote>`
+/// in the post body. [uri] is an `at://` URI that the app can translate to a
+/// bsky.app URL; [author] is a handle if available, else the DID.
+class QuotedExternal {
+  final String? author;
+  final String? uri;
+  final String text;
+
+  const QuotedExternal({this.author, this.uri, required this.text});
+}
+
 class PostHookState {
   final DateTime lastFiredAt;
   final int? lastStatus;
@@ -55,17 +66,29 @@ class Post {
   final String id;
   final String? parentId;
   final PostKind kind;
-  final String body; // HTML
+
+  /// HTML body — contains only the post's own text (paragraphs, `<br>`).
+  /// External quotes are stored separately in [quotedExternals] and are
+  /// re-serialised into the body on save.
+  final String body;
+
   final String? url;
   final String? title;
   final String? description;
-  final String? thumbnail; // URL string
+  final String? thumbnail;
   final List<String> tags;
   final List<String> fileIds;
   final DateTime createdAt;
   final DateTime? editedAt;
 
-  /// `hookKey` → last result. Populated by the hook executor.
+  /// Reference to a post in the same vault that this post quotes. Set for
+  /// own-repo quotes; null otherwise.
+  final String? quotedPostId;
+
+  /// Quotes of other accounts' posts. Rendered as inner cards, tapping
+  /// opens the original on bsky.app.
+  final List<QuotedExternal> quotedExternals;
+
   final Map<String, PostHookState> hookState;
 
   String? _plaintextCache;
@@ -88,13 +111,13 @@ class Post {
     this.fileIds = const [],
     required this.createdAt,
     this.editedAt,
+    this.quotedPostId,
+    this.quotedExternals = const [],
     this.hookState = const {},
   });
 
-  /// Plaintext rendering of [body]. Memoised.
   String get plaintext => _plaintextCache ??= bodyFromHtml(body);
 
-  /// Host of [url] (or the raw URL if parsing fails). Memoised.
   String get domain {
     final u = url;
     if (u == null || u.isEmpty) return '';
@@ -110,8 +133,6 @@ class Post {
     return _domainCache = d;
   }
 
-  /// `HH:MM` for today, `YYYY-MM-DD HH:MM` otherwise. Memoised, and
-  /// invalidated once per day so "today" stays honest across midnight.
   String get formattedCreatedAt {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -122,8 +143,6 @@ class Post {
     return _formattedCache!;
   }
 
-  /// Same format as [formattedCreatedAt], for [editedAt]. Null when the
-  /// post has never been edited.
   String? get formattedEditedAt {
     final edited = editedAt;
     if (edited == null) return null;
@@ -149,7 +168,6 @@ class Post {
     return '$ymd $hh:$mm';
   }
 
-  /// Returns a copy with [newState] as the hook state.
   Post withHookState(Map<String, PostHookState> newState) => Post(
         id: id,
         parentId: parentId,
@@ -163,6 +181,8 @@ class Post {
         fileIds: fileIds,
         createdAt: createdAt,
         editedAt: editedAt,
+        quotedPostId: quotedPostId,
+        quotedExternals: quotedExternals,
         hookState: newState,
       );
 }

@@ -92,6 +92,19 @@ class VaultStore extends ChangeNotifier {
     };
   }
 
+  final Map<String, double> _imageAspectCache = {};
+
+  /// Aspect ratio (width / height) for a drive image, cached after first
+  /// decode. Used by inline media rendering to reserve the correct space
+  /// before the image loads, eliminating layout jumps during scroll.
+  double? imageAspectRatio(String spaceId, String fileId) =>
+      _imageAspectCache['$spaceId:$fileId'];
+
+  void cacheImageAspect(String spaceId, String fileId, double ratio) {
+    if (ratio <= 0 || !ratio.isFinite) return;
+    _imageAspectCache['$spaceId:$fileId'] = ratio;
+  }
+
   // ── Usage ordering ─────────────────────────────────────────────────────
 
   /// Reorders [_spaceCache] so the most recently used spaces come first.
@@ -168,6 +181,7 @@ class VaultStore extends ChangeNotifier {
     _postCache.clear();
     _fileCache.clear();
     _fileIndex.clear();
+    _imageAspectCache.clear();
 
     final spaces = await _spaces.list();
     for (final space in spaces) {
@@ -353,13 +367,14 @@ class VaultStore extends ChangeNotifier {
     return bytes;
   }
 
-  Future<void> deleteFile(String spaceId, String fileId) async {
-    await _drive.delete(spaceId, fileId);
-    _fileCache[spaceId]?.removeWhere((x) => x.id == fileId);
-    _fileIndex[spaceId]?.remove(fileId);
-    _imageCache.remove('$spaceId:$fileId');
-    notifyListeners();
-  }
+Future<void> deleteFile(String spaceId, String fileId) async {
+  await _drive.delete(spaceId, fileId);
+  _fileCache[spaceId]?.removeWhere((x) => x.id == fileId);
+  _fileIndex[spaceId]?.remove(fileId);
+  _imageCache.remove('$spaceId:$fileId');
+  _imageAspectCache.remove('$spaceId:$fileId');    // ← add
+  notifyListeners();
+}
 
   // ── Archive (zip export / import) ──────────────────────────────────────
 

@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import '../../data/models.dart';
 import '../../data/store.dart';
 import '../../platform/file_save.dart';
 import '../../util/html_utils.dart';
-import '../bookmark_import_helpers.dart';       // ← add this line
+import '../bookmark_import_helpers.dart';
 import '../widgets/space_stats_dialog.dart';
 import 'drive.dart';
 import 'space_feed/attachment_picker.dart';
@@ -12,7 +13,6 @@ import 'space_feed/composer.dart';
 import 'space_feed/post_card.dart';
 
 /// Number of direct replies shown under a top-level post by default.
-/// Tune this to make the default feed denser (higher) or sparser (lower).
 const int kPreviewReplyCount = 2;
 
 class SpaceFeedScreen extends StatefulWidget {
@@ -34,13 +34,119 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   bool _sending = false;
   bool _searchActive = false;
 
+  // Separate controllers so scroll position is preserved when toggling
+  // search. Only one list is attached at a time, but each keeps its own
+  // position across the toggle.
+  final ItemScrollController _feedScroll = ItemScrollController();
+  final ItemScrollController _searchScroll = ItemScrollController();
+
+  // GlobalKeys on each rendered post so nested targets (inside a root's
+  // inline tree) can be located with Scrollable.ensureVisible.
+  final Map<String, GlobalKey> _postKeys = {};
+
+  // Cancellation token: a new scroll-to request supersedes an in-flight one.
+  int _scrollToken = 0;
+
+  GlobalKey _keyFor(String postId) =>
+      _postKeys.putIfAbsent(postId, () => GlobalKey());
+
   @override
   void dispose() {
     _bodyCtrl.dispose();
     _urlCtrl.dispose();
     _searchCtrl.dispose();
+    _postKeys.clear();
     super.dispose();
   }
+
+  // ── Scroll to a quoted post ────────────────────────────────────────────
+
+  Future<void> _scrollToPost(String postId) async {
+    final token = ++_scrollToken;
+
+    // Exit search first — the target may be filtered out of the search
+    // result tree, and scrollTo() needs the feed controller attached.
+    if (_searchActive) {
+      setState(() {
+        _searchCtrl.clear();
+        _searchActive = false;
+      });
+      await WidgetsBinding.instance.endOfFrame;
+      if (token != _scrollToken) return;
+    }
+
+    // Locate the target's root and ancestor chain in the full tree.
+    final roots = _buildTree();
+    final chain = <String>[];
+    int? rootIndex;
+    bool find(_PostNode node, List<String> path) {
+      path.add(node.post.id);
+      if (node.post.id == postId) return true;
+      for (final c in node.children) {
+        if (find(c, path)) return true;
+      }
+      path.removeLast();
+      return false;
+    }
+
+    for (var i = 0; i < roots.length; i++) {
+      if (find(roots[i], chain)) {
+        rootIndex = i;
+        break;
+      }
+    }
+    if (rootIndex == null) return;
+    if (token != _scrollToken) return;
+
+    // Expand every ancestor so the target is built and visible.
+    var changed = false;
+    setState(() {
+      for (var i = 0; i < chain.length - 1; i++) {
+        if (!_expanded.contains(chain[i])) {
+          _expanded.add(chain[i]);
+          changed = true;
+        }
+      }
+    });
+    if (changed) {
+      await WidgetsBinding.instance.endOfFrame;
+      if (token != _scrollToken) return;
+    }
+
+    // Precise jump: index of the top-level ancestor. No estimation.
+    if (!_feedScroll.isAttached) return;
+    try {
+      await _feedScroll.scrollTo(
+        index: rootIndex,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOutCubic,
+        alignment: 0.05,
+      );
+    } catch (_) {
+      // Controller detached mid-flight (e.g. tree swapped out).
+      return;
+    }
+    if (token != _scrollToken) return;
+
+    // If the target is nested inside that root, ensure it's fully visible.
+    if (postId != chain.first) {
+      await WidgetsBinding.instance.endOfFrame;
+      if (token != _scrollToken) return;
+      final ctx = _postKeys[postId]?.currentContext;
+      if (ctx != null) {
+        try {
+          await Scrollable.ensureVisible(
+            ctx,
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeInOutCubic,
+            alignment: 0.05,
+          );
+        } catch (_) {}
+      }
+    }
+  }
+
+  // ── Compose / edit / delete ────────────────────────────────────────────
 
   List<String> _extractTags(String body) {
     final re = RegExp(r'(?:^|\s)#([A-Za-z0-9_]+)');
@@ -239,6 +345,8 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     }
   }
 
+  // ── Search / tree ──────────────────────────────────────────────────────
+
   Set<String> _computeMatches(String query) {
     final terms = query
         .toLowerCase()
@@ -274,6 +382,14 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         final f = widget.store.fileById(spaceId, fid);
         if (f != null) {
           buf.write(f.name);
+          buf.write(' ');
+        }
+      }
+      for (final q in p.quotedExternals) {
+        buf.write(q.text);
+        buf.write(' ');
+        if (q.author != null) {
+          buf.write(q.author);
           buf.write(' ');
         }
       }
@@ -348,9 +464,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     final hasChildren = totalChildren > 0;
     final isExpanded = searchMode || _expanded.contains(post.id);
 
-    // Preview: at the top level, show the first kPreviewReplyCount direct
-    // replies even when the post isn't explicitly expanded. Deeper levels
-    // stay collapsed by default so a thread doesn't cascade.
     final previewCount =
         (!isExpanded && depth == 0 && hasChildren)
             ? (totalChildren < kPreviewReplyCount
@@ -386,67 +499,78 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       onReply: () => _reply(post),
       onEdit: () => _edit(post),
       onDelete: () => widget.store.deletePost(widget.space.id, post.id),
+      onQuoteTap: searchMode ? null : _scrollToPost,
     );
 
-    if (visibleChildren.isEmpty) return card;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        card,
-        Padding(
-          padding: const EdgeInsets.only(left: 16),
-          child: Container(
-            decoration: BoxDecoration(
-              border: Border(
-                left: BorderSide(
-                  color: Theme.of(context).colorScheme.outlineVariant,
-                  width: 2,
+    Widget result;
+    if (visibleChildren.isEmpty) {
+      result = card;
+    } else {
+      result = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          card,
+          Padding(
+            padding: const EdgeInsets.only(left: 16),
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                    width: 2,
+                  ),
                 ),
               ),
-            ),
-            padding: const EdgeInsets.only(left: 8, top: 6),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: visibleChildren
-                  .map((c) => Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: _buildNode(
-                          c,
-                          searchMode: searchMode,
-                          depth: depth + 1,
-                        ),
-                      ))
-                  .toList(),
+              padding: const EdgeInsets.only(left: 8, top: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: visibleChildren
+                    .map((c) => Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: _buildNode(
+                            c,
+                            searchMode: searchMode,
+                            depth: depth + 1,
+                          ),
+                        ))
+                    .toList(),
+              ),
             ),
           ),
-        ),
-      ],
-    );
+        ],
+      );
+    }
+
+    return KeyedSubtree(key: _keyFor(post.id), child: result);
   }
 
-  Widget _buildFeed(List<_PostNode> roots, {required bool searchMode}) {
-    if (roots.isEmpty) {
-      return _emptyState(searchMode
-          ? 'No results for "${_searchCtrl.text.trim()}"'
-          : 'No posts yet. Write something.');
-    }
-    return SelectionArea(
-      child: ListView.builder(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-        itemCount: roots.length,
-        addAutomaticKeepAlives: false,
-        itemBuilder: (context, i) {
-          return RepaintBoundary(
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: _buildNode(roots[i], searchMode: searchMode),
-            ),
-          );
-        },
-      ),
-    );
+Widget _buildFeed(List<_PostNode> roots, {required bool searchMode}) {
+  if (roots.isEmpty) {
+    return _emptyState(searchMode
+        ? 'No results for "${_searchCtrl.text.trim()}"'
+        : 'No posts yet. Write something.');
   }
+  return SelectionArea(
+    child: ScrollablePositionedList.builder(
+      itemScrollController: searchMode ? _searchScroll : _feedScroll,
+      // Clamping physics eliminates the overshoot bounce that reads as
+      // "up-and-down jitter" near viewport edges. `ScrollablePositioned
+      // List` is more sensitive to bounce than plain `ListView` because
+      // it re-anchors item offsets during overscroll.
+      physics: const ClampingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+      itemCount: roots.length,
+      itemBuilder: (context, i) {
+        return RepaintBoundary(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _buildNode(roots[i], searchMode: searchMode),
+          ),
+        );
+      },
+    ),
+  );
+}
 
   Widget _buildContent() {
     final query = _searchActive ? _searchCtrl.text.trim() : '';

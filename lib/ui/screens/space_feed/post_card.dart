@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../data/models.dart';
 import '../../../data/store.dart';
 import '../../../util/file_category.dart';
+import '../../widgets/file_thumbnail.dart';
 import '../../widgets/hook_status_dialog.dart';
 import 'inline_media.dart';
 import 'link_preview_card.dart';
@@ -13,11 +15,6 @@ class PostCard extends StatelessWidget {
   final Space space;
   final Post post;
   final int childCount;
-
-  /// How many direct children are currently visible due to preview (before
-  /// the user expands). 0 for nested posts and for roots that are already
-  /// expanded. Passed by `SpaceFeedScreen`; the card only uses it to pick
-  /// the right button text.
   final int previewCount;
   final bool expanded;
   final bool hideReplyToggle;
@@ -25,6 +22,11 @@ class PostCard extends StatelessWidget {
   final VoidCallback onReply;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+
+  /// Called with the ID of an own-repo quoted post when the quote card is
+  /// tapped. Null disables tap-to-scroll (e.g. when the card is shown in a
+  /// context without a scrollable feed, like search results).
+  final void Function(String quotedPostId)? onQuoteTap;
 
   const PostCard({
     super.key,
@@ -39,6 +41,7 @@ class PostCard extends StatelessWidget {
     required this.onReply,
     required this.onEdit,
     required this.onDelete,
+    this.onQuoteTap,
   });
 
   @override
@@ -143,6 +146,27 @@ class PostCard extends StatelessWidget {
                           post.tags.map((t) => _TagChip(tag: t)).toList(),
                     ),
                   ],
+                  // ── Quotes: at the very bottom, below media/tags ────
+                  if (post.quotedPostId != null) ...[
+                    const SizedBox(height: 8),
+                    _QuotedOwnCard(
+                      store: store,
+                      space: space,
+                      quotedPostId: post.quotedPostId!,
+                      onTap: onQuoteTap == null
+                          ? null
+                          : () => onQuoteTap!(post.quotedPostId!),
+                    ),
+                  ],
+                  if (post.quotedExternals.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    ...post.quotedExternals
+                        .map((q) => Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: _QuotedExternalCard(quote: q),
+                            ))
+                        .toList(),
+                  ],
                   const SizedBox(height: 2),
                   _PostActions(
                     childCount: childCount,
@@ -182,6 +206,318 @@ class PostCard extends StatelessWidget {
   }
 }
 
+// ── Quote cards ────────────────────────────────────────────────────────────
+
+class _QuotedOwnCard extends StatelessWidget {
+  final VaultStore store;
+  final Space space;
+  final String quotedPostId;
+  final VoidCallback? onTap;
+
+  const _QuotedOwnCard({
+    required this.store,
+    required this.space,
+    required this.quotedPostId,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final quoted = _find();
+
+    final inner = Padding(
+      padding: const EdgeInsets.all(10),
+      child: quoted == null
+          ? Row(
+              children: [
+                Icon(Icons.link_off,
+                    size: 14, color: theme.colorScheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Text(
+                  'Quoted post unavailable',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            )
+          : _quotedContent(context, theme, quoted),
+    );
+
+    final decorated = Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+        color: theme.colorScheme.surfaceContainerHighest
+            .withValues(alpha: 0.25),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: inner,
+    );
+
+    if (onTap == null) return decorated;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: decorated,
+      ),
+    );
+  }
+
+  Widget _quotedContent(BuildContext context, ThemeData theme, Post quoted) {
+    final icon = quoted.kind == PostKind.bookmark
+        ? Icons.bookmark_outline
+        : Icons.notes;
+    final preview = _previewOf(quoted);
+    final media = _mediaPreview(context, quoted);
+    final hasMedia = media is! SizedBox || (media).width != null;
+    // We can't cheaply ask a Widget "are you SizedBox.shrink?" — the
+    // helper returns SizedBox.shrink() when there's nothing to show, and
+    // we mirror that decision here so the layout condition matches.
+    final mediaFiles = _mediaFiles(quoted);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 14, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'Quoted from this space',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            if (onTap != null)
+              Icon(Icons.arrow_outward,
+                  size: 12, color: theme.colorScheme.onSurfaceVariant),
+          ],
+        ),
+        if (preview.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            preview,
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall?.copyWith(height: 1.35),
+          ),
+        ],
+        if (mediaFiles.isNotEmpty && hasMedia) media,
+        if (quoted.quotedExternals.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            '↪ includes another quote',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  List<DriveFile> _mediaFiles(Post quoted) {
+    return quoted.fileIds
+        .map((id) => store.fileById(space.id, id))
+        .whereType<DriveFile>()
+        .where((f) {
+          final cat = categoryFor(f.name);
+          return cat == FileCategory.image || cat == FileCategory.video;
+        })
+        .take(4)
+        .toList();
+  }
+
+  Widget _mediaPreview(BuildContext context, Post quoted) {
+    final files = _mediaFiles(quoted);
+    if (files.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Wrap(
+        spacing: 4,
+        runSpacing: 4,
+        children: files.map((f) {
+          final isVideo = categoryFor(f.name) == FileCategory.video;
+          return SizedBox(
+            width: 56,
+            height: 56,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (isVideo)
+                    Container(
+                      color: theme.colorScheme.surfaceContainerHighest,
+                      child: Icon(
+                        Icons.videocam,
+                        size: 24,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    )
+                  else
+                    FileThumbnail(
+                      store: store,
+                      spaceId: space.id,
+                      file: f,
+                      iconSize: 24,
+                    ),
+                  if (isVideo)
+                    Center(
+                      child: Icon(
+                        Icons.play_circle_outline,
+                        size: 20,
+                        color: Colors.white.withValues(alpha: 0.9),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  String _previewOf(Post p) {
+    if (p.plaintext.isNotEmpty) return p.plaintext;
+    if (p.title != null && p.title!.isNotEmpty) return p.title!;
+    if (p.description != null && p.description!.isNotEmpty) {
+      return p.description!;
+    }
+    if (p.url != null) return p.url!;
+    return '';
+  }
+
+  Post? _find() {
+    for (final p in store.postsForSpace(space.id)) {
+      if (p.id == quotedPostId) return p;
+    }
+    return null;
+  }
+}
+
+class _QuotedExternalCard extends StatelessWidget {
+  final QuotedExternal quote;
+
+  const _QuotedExternalCard({required this.quote});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final hasUri = quote.uri != null && quote.uri!.isNotEmpty;
+    final label = (quote.author != null && quote.author!.isNotEmpty)
+        ? quote.author!
+        : 'External quote';
+
+    final content = quote.text.isNotEmpty
+        ? quote.text
+        : (hasUri ? 'Tap to view the quoted post' : '');
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: hasUri ? () => _open(context, quote.uri!) : null,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: theme.colorScheme.outlineVariant),
+            borderRadius: BorderRadius.circular(8),
+            color: theme.colorScheme.surfaceContainerHighest
+                .withValues(alpha: 0.25),
+          ),
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.format_quote,
+                      size: 14, color: theme.colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (hasUri)
+                    Icon(Icons.open_in_new,
+                        size: 12,
+                        color: theme.colorScheme.onSurfaceVariant),
+                ],
+              ),
+              if (content.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  content,
+                  maxLines: 8,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    height: 1.35,
+                    fontStyle: quote.text.isEmpty
+                        ? FontStyle.italic
+                        : FontStyle.normal,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _open(BuildContext context, String atUri) async {
+    final httpUrl = _atUriToHttp(atUri);
+    if (httpUrl == null) return;
+    final uri = Uri.tryParse(httpUrl);
+    if (uri == null) return;
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open $httpUrl')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open link: $e')),
+        );
+      }
+    }
+  }
+
+  static String? _atUriToHttp(String atUri) {
+    if (!atUri.startsWith('at://')) return null;
+    final rest = atUri.substring(5);
+    final parts = rest.split('/');
+    if (parts.length != 3) return null;
+    final did = parts[0];
+    final collection = parts[1];
+    final rkey = parts[2];
+    if (collection != 'app.bsky.feed.post') return null;
+    return 'https://bsky.app/profile/$did/post/$rkey';
+  }
+}
+
+// ── Avatar, header, tags, actions (unchanged) ─────────────────────────────
+
 class _PostAvatar extends StatelessWidget {
   final bool isBookmark;
   final ThemeData theme;
@@ -212,9 +548,6 @@ class _PostHeader extends StatelessWidget {
   final Post post;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
-
-  /// Null when the post has no hook state yet — the menu item is hidden
-  /// rather than shown disabled, so a fresh post stays uncluttered.
   final VoidCallback? onHookStatus;
 
   const _PostHeader({
@@ -232,9 +565,6 @@ class _PostHeader extends StatelessWidget {
 
     return Row(
       children: [
-        // Outer Expanded takes `available - 28` so the fixed-width menu
-        // button is always flush with the card's right edge, whether or
-        // not the edited segment is present.
         Expanded(
           child: Row(
             children: [
@@ -368,14 +698,12 @@ class _PostActions extends StatelessWidget {
 
     if (expanded) {
       if (previewCount > 0) {
-        // Root expanded: clicking reduces to preview, not to zero.
         return TextButton(
           onPressed: onToggleReplies,
           style: style,
           child: const Text('Show fewer'),
         );
       }
-      // Nested expanded: clicking collapses fully (unchanged).
       return TextButton(
         onPressed: onToggleReplies,
         style: style,
@@ -386,13 +714,9 @@ class _PostActions extends StatelessWidget {
     }
 
     final hidden = childCount - previewCount;
-    if (hidden <= 0) {
-      // Root preview where all children fit inside the preview slot.
-      return null;
-    }
+    if (hidden <= 0) return null;
 
     if (previewCount > 0) {
-      // Root preview: some are already visible, so say how many more.
       return TextButton(
         onPressed: onToggleReplies,
         style: style,
@@ -402,7 +726,6 @@ class _PostActions extends StatelessWidget {
       );
     }
 
-    // Nested collapsed (unchanged).
     return TextButton(
       onPressed: onToggleReplies,
       style: style,

@@ -9,8 +9,10 @@ import '../models.dart';
 /// Reads and writes a space's posts as individual `posts/<id>.html`
 /// documents (HTML body with a JSON frontmatter block).
 ///
-/// Stateless w.r.t. caching: every method hits the filesystem. The
-/// [VaultStore] facade owns the in-memory cache and notifies listeners.
+/// Blockquotes in the body are extracted into [Post.quotedExternals] on
+/// load and re-serialised on save, so editing a post's text never touches
+/// its quotes. Own-repo quotes travel as the `quotedPostId` frontmatter
+/// field and are not represented as HTML.
 class PostRepository {
   final FileSystem fs;
   final String vaultPath;
@@ -36,6 +38,8 @@ class PostRepository {
 
   Post _parse(String path, String content) {
     final meta = parseFrontmatterMeta(content);
+    final rawBody = bodyAfterFrontmatter(content);
+    final (cleanBody, externals) = _extractBlockquotes(rawBody);
 
     final hookState = <String, PostHookState>{};
     final rawHooks = meta['hooks'];
@@ -54,7 +58,7 @@ class PostRepository {
       id: (meta['id'] as String?) ?? p.basenameWithoutExtension(path),
       parentId: meta['parent'] as String?,
       kind: PostKind.values.byName((meta['kind'] as String?) ?? 'note'),
-      body: bodyAfterFrontmatter(content),
+      body: cleanBody,
       url: meta['url'] as String?,
       title: meta['title'] as String?,
       description: meta['description'] as String?,
@@ -65,6 +69,8 @@ class PostRepository {
       editedAt: meta['edited'] != null
           ? DateTime.parse(meta['edited'] as String)
           : null,
+      quotedPostId: meta['quotedPostId'] as String?,
+      quotedExternals: externals,
       hookState: hookState,
     );
   }
@@ -81,11 +87,13 @@ class PostRepository {
     List<String> tags = const [],
     List<String> fileIds = const [],
     DateTime? createdAt,
+    String? quotedPostId,
+    List<QuotedExternal> quotedExternals = const [],
     Map<String, PostHookState> hookState = const {},
   }) async {
     final id = const Uuid().v7();
     final now = createdAt ?? DateTime.now().toUtc();
-    final html = bodyToHtml(plaintextBody);
+    final html = _appendBlockquotes(bodyToHtml(plaintextBody), quotedExternals);
     final meta = <String, dynamic>{
       'id': id,
       'kind': kind.name,
@@ -99,6 +107,7 @@ class PostRepository {
         'description': description,
       if (thumbnail != null && thumbnail.isNotEmpty)
         'thumbnail': thumbnail,
+      if (quotedPostId != null) 'quotedPostId': quotedPostId,
       if (hookState.isNotEmpty)
         'hooks': hookState.map((k, v) => MapEntry(k, v.toJson())),
     };
@@ -112,7 +121,7 @@ class PostRepository {
       id: id,
       parentId: parentId,
       kind: kind,
-      body: html,
+      body: bodyToHtml(plaintextBody),
       url: url,
       title: title,
       description: description,
@@ -120,13 +129,12 @@ class PostRepository {
       tags: tags,
       fileIds: fileIds,
       createdAt: now,
+      quotedPostId: quotedPostId,
+      quotedExternals: quotedExternals,
       hookState: hookState,
     );
   }
 
-  /// Rewrites the HTML document for [existing] with new content, preserving
-  /// the original `id`, `created`, `parent`, and `hooks` state. Returns the
-  /// new [Post] so the caller can swap its cache entry in place.
   Future<Post> update({
     required String spaceId,
     required Post existing,
@@ -139,7 +147,8 @@ class PostRepository {
     List<String> tags = const [],
     List<String> fileIds = const [],
   }) async {
-    final html = bodyToHtml(plaintextBody);
+    final cleanBody = bodyToHtml(plaintextBody);
+    final html = _appendBlockquotes(cleanBody, existing.quotedExternals);
     final now = DateTime.now().toUtc();
     final meta = <String, dynamic>{
       'id': existing.id,
@@ -155,9 +164,10 @@ class PostRepository {
         'description': description,
       if (thumbnail != null && thumbnail.isNotEmpty)
         'thumbnail': thumbnail,
+      if (existing.quotedPostId != null)
+        'quotedPostId': existing.quotedPostId,
       if (existing.hookState.isNotEmpty)
-        'hooks':
-            existing.hookState.map((k, v) => MapEntry(k, v.toJson())),
+        'hooks': existing.hookState.map((k, v) => MapEntry(k, v.toJson())),
     };
     await fs
         .file(p.join(vaultPath, spaceId, 'posts', '${existing.id}.html'))
@@ -166,7 +176,7 @@ class PostRepository {
       id: existing.id,
       parentId: existing.parentId,
       kind: kind,
-      body: html,
+      body: cleanBody,
       url: url,
       title: title,
       description: description,
@@ -175,6 +185,8 @@ class PostRepository {
       fileIds: fileIds,
       createdAt: existing.createdAt,
       editedAt: now,
+      quotedPostId: existing.quotedPostId,
+      quotedExternals: existing.quotedExternals,
       hookState: existing.hookState,
     );
   }
@@ -184,12 +196,6 @@ class PostRepository {
     if (await f.exists()) await f.delete();
   }
 
-  /// Merges [updates] into the post's frontmatter `hooks` field and returns
-  /// the re-read post. Used by the hook executor to persist each hook's
-  /// response without touching the post body or edit timestamp.
-  ///
-  /// Callers must serialise access to a given post (the facade holds a
-  /// per-post lock) so a pending update can't clobber a hook patch.
   Future<Post> patchHookState(
     String spaceId,
     String postId,
@@ -213,5 +219,49 @@ class PostRepository {
     meta['hooks'] = current;
     await f.writeAsString(makeDocument(meta, body));
     return _parse(f.path, await f.readAsString());
+  }
+
+  // ── Blockquote helpers ─────────────────────────────────────────────────
+
+  /// Extracts `<blockquote data-author="…" data-uri="…">text</blockquote>`
+  /// blocks from [html]. Returns the HTML with those blocks removed, plus
+  /// the parsed [QuotedExternal] entries in document order.
+  (String, List<QuotedExternal>) _extractBlockquotes(String html) {
+    final bq = RegExp(
+      r'<blockquote([^>]*)>(.*?)</blockquote>',
+      dotAll: true,
+      caseSensitive: false,
+    );
+    final attr = RegExp(r'data-([\w-]+)\s*=\s*"([^"]*)"');
+    final quotes = <QuotedExternal>[];
+    final stripped = html.replaceAllMapped(bq, (m) {
+      final attrs = <String, String>{};
+      for (final a in attr.allMatches(m.group(1)!)) {
+        attrs[a.group(1)!] = a.group(2)!;
+      }
+      quotes.add(QuotedExternal(
+        author: attrs['author'],
+        uri: attrs['uri'],
+        text: unescapeHtml(m.group(2)!.trim()),
+      ));
+      return '';
+    });
+    return (stripped.trim(), quotes);
+  }
+
+  String _appendBlockquotes(String bodyHtml, List<QuotedExternal> quotes) {
+    if (quotes.isEmpty) return bodyHtml;
+    final buf = StringBuffer(bodyHtml);
+    for (final q in quotes) {
+      buf.write('\n<blockquote');
+      if (q.author != null && q.author!.isNotEmpty) {
+        buf.write(' data-author="${escapeHtml(q.author!)}"');
+      }
+      if (q.uri != null && q.uri!.isNotEmpty) {
+        buf.write(' data-uri="${escapeHtml(q.uri!)}"');
+      }
+      buf.write('>${escapeHtml(q.text)}</blockquote>');
+    }
+    return buf.toString();
   }
 }
