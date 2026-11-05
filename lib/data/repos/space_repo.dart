@@ -5,6 +5,8 @@ import 'package:uuid/uuid.dart';
 import '../../util/html_utils.dart';
 import '../models.dart';
 
+/// Reads and writes space directories: `<vault>/<space-id>/space.html`
+/// holds the frontmatter (id, name, icon, created) and a trivial body.
 class SpaceRepository {
   final FileSystem fs;
   final String vaultPath;
@@ -48,9 +50,7 @@ class SpaceRepository {
     final dir = p.join(vaultPath, id);
     await fs.directory(p.join(dir, 'posts')).create(recursive: true);
     await fs.directory(p.join(dir, 'drive')).create(recursive: true);
-    await fs
-        .file(p.join(dir, 'drive_meta.json'))
-        .writeAsString('{}');
+    await fs.file(p.join(dir, 'drive_meta.json')).writeAsString('{}');
     final meta = <String, dynamic>{
       'id': id,
       'name': name,
@@ -61,6 +61,39 @@ class SpaceRepository {
         .file(p.join(dir, 'space.html'))
         .writeAsString(makeDocument(meta, '<h1>${escapeHtml(name)}</h1>'));
     return Space(id: id, name: name, icon: icon, createdAt: now);
+  }
+
+  /// Rewrites `space.html` with new [name] and [icon], preserving the
+  /// original `id` and `created` from disk. The body is regenerated to
+  /// match the new name (the app never writes custom body content).
+  Future<Space> update({
+    required String spaceId,
+    required String name,
+    required String icon,
+  }) async {
+    final f = fs.file(p.join(vaultPath, spaceId, 'space.html'));
+    if (!await f.exists()) {
+      throw StateError('Space $spaceId not found');
+    }
+    final content = await f.readAsString();
+    final oldMeta = parseFrontmatterMeta(content);
+    final createdAt = DateTime.parse(oldMeta['created'] as String);
+
+    final updatedMeta = <String, dynamic>{
+      'id': spaceId,
+      'name': name,
+      'icon': icon,
+      'created': createdAt.toIso8601String(),
+    };
+    await f.writeAsString(
+      makeDocument(updatedMeta, '<h1>${escapeHtml(name)}</h1>'),
+    );
+    return Space(
+      id: spaceId,
+      name: name,
+      icon: icon,
+      createdAt: createdAt,
+    );
   }
 
   Future<void> delete(String spaceId) async {

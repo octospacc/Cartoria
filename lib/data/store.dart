@@ -1,22 +1,16 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:fs_shim/fs_shim.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:archive/archive.dart';   // already there via archive_service, but re-add here for _backupVault
 
-import '../util/fs_walk.dart';
-import 'sync/sync_config.dart';
-import 'sync/github_provider.dart';
-import 'sync/gitlab_provider.dart';
-import 'sync/sync_provider.dart';
-import 'sync/sync_service.dart';
-
-import '../util/mime.dart';
 import '../platform/fs.dart';
+import '../util/fs_walk.dart';
+import '../util/mime.dart';
 import 'bookmarks.dart';
 import 'hooks.dart';
 import 'models.dart';
@@ -29,6 +23,11 @@ import 'repos/space_repo.dart';
 import 'services/hook_executor.dart';
 import 'services/link_metadata.dart';
 import 'services/space_stats.dart';
+import 'sync/sync_config.dart';
+import 'sync/github_provider.dart';
+import 'sync/gitlab_provider.dart';
+import 'sync/sync_provider.dart';
+import 'sync/sync_service.dart';
 
 export 'repos/bookmarks_importer.dart' show BookmarkImportResult;
 export 'services/link_metadata.dart' show LinkMetadata;
@@ -47,13 +46,9 @@ class VaultStore extends ChangeNotifier {
   late final HooksRepository _hooks;
   late final HookExecutor _executor;
   late final BookmarksImporter _bookmarksImporter;
-
   late final SyncConfigStore _syncConfigStore;
   late final SyncTokenStore _syncTokenStore;
   late final SyncCacheStore _syncCacheStore;
-
-  SyncConfig? _cachedSyncConfig;
-  SyncConfig? get syncConfig => _cachedSyncConfig;
 
   final http.Client _httpClient = http.Client();
 
@@ -63,14 +58,11 @@ class VaultStore extends ChangeNotifier {
   final Map<String, Map<String, DriveFile>> _fileIndex = {};
   final Map<String, Uint8List> _imageCache = {};
 
-  /// Per-post serialisation: hooks patch the post file in the background
-  /// while a user may be editing it. Both `updatePost` and `_runHooks`
-  /// acquire the same lock so they can't interleave a read and a write.
   final Map<String, Future<void>> _postLocks = {};
-
-  /// Per-post serialisation of hook batches: if the user edits rapidly, the
-  /// second batch waits for the first to finish rather than racing.
   final Map<String, Future<void>> _hookChains = {};
+
+  SyncConfig? _cachedSyncConfig;
+  SyncConfig? get syncConfig => _cachedSyncConfig;
 
   // ── Read accessors ─────────────────────────────────────────────────────
 
@@ -100,6 +92,37 @@ class VaultStore extends ChangeNotifier {
     };
   }
 
+  // ── Usage ordering ─────────────────────────────────────────────────────
+
+  /// Reorders [_spaceCache] so the most recently used spaces come first.
+  ///
+  /// "Last used" for a space is
+  /// `max(space.createdAt, max post.createdAt)`. Posts include replies
+  /// (they're stored in the same `_postCache[spaceId]`). Using the
+  /// space's own creation time as a floor keeps freshly created or
+  /// freshly imported spaces near the top even when every imported post
+  /// carries a backdated `ADD_DATE`.
+  ///
+  /// Called on load and after any mutation that changes a space's newest
+  /// post. Edits do **not** trigger a re-sort: they don't change
+  /// `createdAt`, so they don't count as "posting".
+  void _resortSpacesByUsage() {
+    _spaceCache.sort((a, b) {
+      final aKey = _lastUsedAt(a);
+      final bKey = _lastUsedAt(b);
+      return bKey.compareTo(aKey);
+    });
+  }
+
+  DateTime _lastUsedAt(Space space) {
+    var max = space.createdAt;
+    final posts = _postCache[space.id] ?? const <Post>[];
+    for (final p in posts) {
+      if (p.createdAt.isAfter(max)) max = p.createdAt;
+    }
+    return max;
+  }
+
   // ── Lifecycle ──────────────────────────────────────────────────────────
 
   Future<void> init() async {
@@ -120,16 +143,16 @@ class VaultStore extends ChangeNotifier {
     _hooks = HooksRepository(fs: fs, vaultPath: vaultPath);
     _executor = HookExecutor(client: _httpClient);
     _bookmarksImporter = BookmarksImporter(posts: _posts);
+    _syncConfigStore = SyncConfigStore(fs: fs, vaultPath: vaultPath);
+    _syncTokenStore = SyncTokenStore(fs: fs);
+    _syncCacheStore = SyncCacheStore(fs: fs);
     _link = LinkMetadataService(
       proxyUrl: kIsWeb ? 'https://corsproxy.io/?url={url}' : null,
     );
 
     await _hooks.load();
-    await reload();
-    _syncConfigStore = SyncConfigStore(fs: fs, vaultPath: vaultPath);
-    _syncTokenStore = SyncTokenStore(fs: fs);
-    _syncCacheStore = SyncCacheStore(fs: fs);
     _cachedSyncConfig = await _syncConfigStore.load();
+    await reload();
   }
 
   @override
@@ -140,6 +163,7 @@ class VaultStore extends ChangeNotifier {
 
   Future<void> reload() async {
     _drive.clearCache();
+
     _spaceCache.clear();
     _postCache.clear();
     _fileCache.clear();
@@ -159,6 +183,7 @@ class VaultStore extends ChangeNotifier {
         _fileIndex[space.id] = {};
       }
     }
+    _resortSpacesByUsage();
     notifyListeners();
   }
 
@@ -170,8 +195,24 @@ class VaultStore extends ChangeNotifier {
     _postCache[space.id] = [];
     _fileCache[space.id] = [];
     _fileIndex[space.id] = {};
+    _resortSpacesByUsage();
     notifyListeners();
     return space;
+  }
+
+  Future<void> updateSpace(
+    String spaceId, {
+    required String name,
+    required String icon,
+  }) async {
+    final updated = await _spaces.update(
+      spaceId: spaceId,
+      name: name,
+      icon: icon,
+    );
+    final idx = _spaceCache.indexWhere((s) => s.id == spaceId);
+    if (idx >= 0) _spaceCache[idx] = updated;
+    notifyListeners();
   }
 
   Future<void> deleteSpace(String spaceId) async {
@@ -211,6 +252,7 @@ class VaultStore extends ChangeNotifier {
       fileIds: fileIds,
     );
     _postCache.putIfAbsent(spaceId, () => []).add(post);
+    _resortSpacesByUsage();
     notifyListeners();
 
     final space = spaceById(spaceId);
@@ -277,6 +319,7 @@ class VaultStore extends ChangeNotifier {
   Future<void> deletePost(String spaceId, String postId) async {
     await _posts.delete(spaceId, postId);
     _postCache[spaceId]?.removeWhere((x) => x.id == postId);
+    _resortSpacesByUsage();
     notifyListeners();
   }
 
@@ -351,6 +394,7 @@ class VaultStore extends ChangeNotifier {
       final merged = [...existing, ...r.created]
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
       _postCache[spaceId] = merged;
+      _resortSpacesByUsage();
       notifyListeners();
     }
     return r.result;
@@ -370,6 +414,7 @@ class VaultStore extends ChangeNotifier {
     if (r.created.isNotEmpty) {
       _postCache[space.id] = List.of(r.created)
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      _resortSpacesByUsage();
       notifyListeners();
     }
     return space;
@@ -497,154 +542,154 @@ class VaultStore extends ChangeNotifier {
 
     await _withPostLock(postId, () async {
       final patched = await _posts.patchHookState(space.id, postId, results);
-      final idx = _postCache[space.id]?.indexWhere((x) => x.id == postId) ?? -1;
+      final idx =
+          _postCache[space.id]?.indexWhere((x) => x.id == postId) ?? -1;
       if (idx >= 0) _postCache[space.id]![idx] = patched;
       notifyListeners();
     });
   }
 
-// ── Sync ────────────────────────────────────────────────────────────────
+  // ── Sync ───────────────────────────────────────────────────────────────
 
-Future<void> saveSyncConfig(SyncConfig config) async {
-  final old = _cachedSyncConfig;
-  if (old != null &&
-      (old.provider != config.provider ||
-       old.owner != config.owner ||
-       old.repo != config.repo ||
-       old.branch != config.branch)) {
-    await _syncCacheStore.clear(old.tokenKey);
+  Future<void> saveSyncConfig(SyncConfig config) async {
+    final old = _cachedSyncConfig;
+    if (old != null &&
+        (old.provider != config.provider ||
+            old.owner != config.owner ||
+            old.repo != config.repo ||
+            old.branch != config.branch)) {
+      await _syncCacheStore.clear(old.tokenKey);
+    }
+    await _syncConfigStore.save(config);
+    _cachedSyncConfig = config;
+    notifyListeners();
   }
-  await _syncConfigStore.save(config);
-  _cachedSyncConfig = config;
-  notifyListeners();
-}
 
-Future<String?> loadSyncToken() async {
-  final c = _cachedSyncConfig;
-  if (c == null) return null;
-  return _syncTokenStore.load(c.tokenKey);
-}
-
-Future<void> saveSyncToken(String token) async {
-  final c = _cachedSyncConfig;
-  if (c == null) throw StateError('Sync not configured');
-  await _syncTokenStore.save(c.tokenKey, token);
-}
-
-Future<void> clearSyncToken() async {
-  final c = _cachedSyncConfig;
-  if (c == null) return;
-  await _syncTokenStore.delete(c.tokenKey);
-}
-
-SyncProvider _makeProvider(http.Client client, SyncConfig config) {
-  switch (config.provider) {
-    case SyncProviderKind.github:
-      return GitHubProvider(client: client);
-    case SyncProviderKind.gitlab:
-      return GitLabProvider(client: client);
+  Future<String?> loadSyncToken() async {
+    final c = _cachedSyncConfig;
+    if (c == null) return null;
+    return _syncTokenStore.load(c.tokenKey);
   }
-}
 
-Future<void> verifySyncAccess() async {
-  final config = _cachedSyncConfig;
-  if (config == null) throw StateError('Sync not configured');
-  final token = await _syncTokenStore.load(config.tokenKey);
-  if (token == null) throw StateError('Sync token not set');
-  final client = http.Client();
-  try {
-    _makeProvider(client, config)
-        .verifyAccess(config: config, token: token);
-  } finally {
-    client.close();
+  Future<void> saveSyncToken(String token) async {
+    final c = _cachedSyncConfig;
+    if (c == null) throw StateError('Sync not configured');
+    await _syncTokenStore.save(c.tokenKey, token);
   }
-}
 
-Future<SyncPushResult> syncPush({
-  SyncProgressCallback? onProgress,
-}) async {
-  final config = _cachedSyncConfig;
-  if (config == null) throw StateError('Sync not configured');
-  final token = await _syncTokenStore.load(config.tokenKey);
-  if (token == null) throw StateError('Sync token not set');
-  final client = http.Client();
-  try {
-    final provider = _makeProvider(client, config);
-    final service = SyncService(
-      fs: fs,
-      vaultPath: vaultPath,
-      config: config,
-      provider: provider,
-      cacheStore: _syncCacheStore,
-    );
-    final result = await service.push(token: token, onProgress: onProgress);
-    await saveSyncConfig(config.copyWith(
-      lastSyncedAt: DateTime.now().toUtc(),
-      lastCommitSha: result.commitSha,
-    ));
-    await reload();
-    return result;
-  } finally {
-    client.close();
+  Future<void> clearSyncToken() async {
+    final c = _cachedSyncConfig;
+    if (c == null) return;
+    await _syncTokenStore.delete(c.tokenKey);
   }
-}
 
-Future<SyncPullResult> syncPull({
-  SyncProgressCallback? onProgress,
-}) async {
-  final config = _cachedSyncConfig;
-  if (config == null) throw StateError('Sync not configured');
-  final token = await _syncTokenStore.load(config.tokenKey);
-  if (token == null) throw StateError('Sync token not set');
-
-  // Back up the current vault before overwriting.
-  await _backupVault();
-
-  final client = http.Client();
-  try {
-    final provider = _makeProvider(client, config);
-    final service = SyncService(
-      fs: fs,
-      vaultPath: vaultPath,
-      config: config,
-      provider: provider,
-      cacheStore: _syncCacheStore,
-    );
-    final result = await service.pull(token: token, onProgress: onProgress);
-    await saveSyncConfig(config.copyWith(
-      lastSyncedAt: DateTime.now().toUtc(),
-    ));
-    await reload();
-    return result;
-  } finally {
-    client.close();
+  SyncProvider _makeProvider(http.Client client, SyncConfig config) {
+    switch (config.provider) {
+      case SyncProviderKind.github:
+        return GitHubProvider(client: client);
+      case SyncProviderKind.gitlab:
+        return GitLabProvider(client: client);
+    }
   }
-}
 
-Future<void> _backupVault() async {
-  if (kIsWeb) {
-    throw UnsupportedError('Vault backup is not supported on web.');
-  }
-  final archive = Archive();
-  final root = fs.directory(vaultPath);
-  if (!await root.exists()) return;
-  final files = await walkFiles(root);
-  for (final f in files) {
+  Future<void> verifySyncAccess() async {
+    final config = _cachedSyncConfig;
+    if (config == null) throw StateError('Sync not configured');
+    final token = await _syncTokenStore.load(config.tokenKey);
+    if (token == null) throw StateError('Sync token not set');
+    final client = http.Client();
     try {
-      final rel = p.relative(f.path, from: vaultPath);
-      final bytes = await f.readAsBytes();
-      archive.addFile(ArchiveFile(rel, bytes.length, bytes));
-    } catch (_) {}
+      await _makeProvider(client, config)
+          .verifyAccess(config: config, token: token);
+    } finally {
+      client.close();
+    }
   }
-  final supportDir = await getApplicationSupportDirectory();
-  final backupDir = fs.directory(p.join(supportDir.path, 'vault_backups'));
-  await backupDir.create(recursive: true);
-  final stamp = DateTime.now()
-      .toIso8601String()
-      .replaceAll(RegExp(r'[^0-9T]'), '')
-      .substring(0, 15);
-  await fs
-      .file(p.join(backupDir.path, 'pre-pull-$stamp.zip'))
-      .writeAsBytes(Uint8List.fromList(ZipEncoder().encode(archive)!));
-}
+
+  Future<SyncPushResult> syncPush({
+    SyncProgressCallback? onProgress,
+  }) async {
+    final config = _cachedSyncConfig;
+    if (config == null) throw StateError('Sync not configured');
+    final token = await _syncTokenStore.load(config.tokenKey);
+    if (token == null) throw StateError('Sync token not set');
+    final client = http.Client();
+    try {
+      final provider = _makeProvider(client, config);
+      final service = SyncService(
+        fs: fs,
+        vaultPath: vaultPath,
+        config: config,
+        provider: provider,
+        cacheStore: _syncCacheStore,
+      );
+      final result = await service.push(token: token, onProgress: onProgress);
+      await saveSyncConfig(config.copyWith(
+        lastSyncedAt: DateTime.now().toUtc(),
+        lastCommitSha: result.commitSha,
+      ));
+      await reload();
+      return result;
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<SyncPullResult> syncPull({
+    SyncProgressCallback? onProgress,
+  }) async {
+    final config = _cachedSyncConfig;
+    if (config == null) throw StateError('Sync not configured');
+    final token = await _syncTokenStore.load(config.tokenKey);
+    if (token == null) throw StateError('Sync token not set');
+
+    await _backupVault();
+
+    final client = http.Client();
+    try {
+      final provider = _makeProvider(client, config);
+      final service = SyncService(
+        fs: fs,
+        vaultPath: vaultPath,
+        config: config,
+        provider: provider,
+        cacheStore: _syncCacheStore,
+      );
+      final result = await service.pull(token: token, onProgress: onProgress);
+      await saveSyncConfig(config.copyWith(
+        lastSyncedAt: DateTime.now().toUtc(),
+      ));
+      await reload();
+      return result;
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<void> _backupVault() async {
+    if (kIsWeb) {
+      throw UnsupportedError('Vault backup is not supported on web.');
+    }
+    final archive = Archive();
+    final root = fs.directory(vaultPath);
+    if (!await root.exists()) return;
+    final files = await walkFiles(root);
+    for (final f in files) {
+      try {
+        final rel = p.relative(f.path, from: vaultPath);
+        final bytes = await f.readAsBytes();
+        archive.addFile(ArchiveFile(rel, bytes.length, bytes));
+      } catch (_) {}
+    }
+    final supportDir = await getApplicationSupportDirectory();
+    final backupDir = fs.directory(p.join(supportDir.path, 'vault_backups'));
+    await backupDir.create(recursive: true);
+    final stamp = DateTime.now()
+        .toIso8601String()
+        .replaceAll(RegExp(r'[^0-9T]'), '')
+        .substring(0, 15);
+    await fs
+        .file(p.join(backupDir.path, 'pre-pull-$stamp.zip'))
+        .writeAsBytes(Uint8List.fromList(ZipEncoder().encode(archive)!));
+  }
 }

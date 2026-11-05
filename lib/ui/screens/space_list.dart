@@ -25,14 +25,6 @@ class SpaceListScreen extends StatelessWidget {
         title: const Text('Spaces'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.sync),
-            tooltip: 'Sync',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => SyncScreen(store: store)),
-            ),
-          ),
-          IconButton(
             icon: const Icon(Icons.bolt_outlined),
             tooltip: 'Hooks',
             onPressed: () => Navigator.push(
@@ -40,6 +32,14 @@ class SpaceListScreen extends StatelessWidget {
               MaterialPageRoute(
                 builder: (_) => HookListScreen(store: store),
               ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.sync),
+            tooltip: 'Sync',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => SyncScreen(store: store)),
             ),
           ),
           PopupMenuButton<String>(
@@ -79,10 +79,12 @@ class SpaceListScreen extends StatelessWidget {
                 if (v == 'stats') {
                   SpaceStatsDialog.show(context, store, space);
                 }
+                if (v == 'edit') _editSpace(context, space);
                 if (v == 'delete') _confirmDelete(context, space);
               },
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'stats', child: Text('Statistics')),
+                PopupMenuItem(value: 'edit', child: Text('Edit')),
                 PopupMenuItem(value: 'delete', child: Text('Delete space')),
               ],
             ),
@@ -103,7 +105,7 @@ class SpaceListScreen extends StatelessWidget {
     );
   }
 
-  // ── Create / delete ────────────────────────────────────────────────────
+  // ── Create / edit / delete ─────────────────────────────────────────────
 
   Future<void> _newSpace(BuildContext context) async {
     final result = await _showCreateSpaceDialog(
@@ -113,6 +115,23 @@ class SpaceListScreen extends StatelessWidget {
     );
     if (result != null) {
       await store.createSpace(name: result.name, icon: result.icon);
+    }
+  }
+
+  Future<void> _editSpace(BuildContext context, Space space) async {
+    final result = await _showCreateSpaceDialog(
+      context,
+      initialName: space.name,
+      initialIcon: space.icon,
+      title: 'Edit space',
+      confirmLabel: 'Save',
+    );
+    if (result != null) {
+      await store.updateSpace(
+        space.id,
+        name: result.name,
+        icon: result.icon,
+      );
     }
   }
 
@@ -145,7 +164,7 @@ class SpaceListScreen extends StatelessWidget {
         type: FileType.custom,
         allowedExtensions: ['zip'],
       );
-      if (result == null) return; // user cancelled — silent is correct
+      if (result == null) return;
       final picked = result.files.single;
       Uint8List? bytes = picked.bytes;
       if (bytes == null && picked.path != null) {
@@ -230,53 +249,75 @@ class SpaceListScreen extends StatelessWidget {
   }) async {
     final c = TextEditingController(text: initialName);
     var icon = initialIcon;
+
+    // 560px holds ~11 chips per row; clamp to 90% of screen so phones
+    // still fit without horizontal overflow.
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final maxAllowed = screenWidth * 0.9;
+    final dialogWidth = 560.0 < maxAllowed ? 560.0 : maxAllowed;
+
     final result = await showDialog<({String name, String icon})>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          title: Text(title),
-          content: SizedBox(
-            width: 340,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextField(
-                  controller: c,
-                  autofocus: true,
-                  decoration: const InputDecoration(labelText: 'Name'),
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: kSpaceIcons
-                      .map((i) => ChoiceChip(
-                            label:
-                                Text(i, style: const TextStyle(fontSize: 20)),
-                            selected: icon == i,
-                            onSelected: (_) => setS(() => icon = i),
-                          ))
-                      .toList(),
-                ),
-              ],
+        builder: (ctx, setS) {
+          final theme = Theme.of(ctx);
+          return AlertDialog(
+            scrollable: true,
+            title: Text(title),
+            content: SizedBox(
+              width: dialogWidth,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: c,
+                    autofocus: true,
+                    decoration: const InputDecoration(labelText: 'Name'),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: kSpaceIcons.map((i) {
+                      final selected = icon == i;
+                      return ChoiceChip(
+                        label: Text(
+                          i,
+                          style: const TextStyle(fontSize: 20),
+                        ),
+                        selected: selected,
+                        showCheckmark: false,
+                        avatar: selected
+                            ? Icon(
+                                Icons.check,
+                                size: 18,
+                                color: theme.colorScheme.onSecondaryContainer,
+                              )
+                            : const SizedBox(width: 18, height: 18),
+                        onSelected: (_) => setS(() => icon = i),
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final name = c.text.trim();
-                if (name.isEmpty) return;
-                Navigator.pop(ctx, (name: name, icon: icon));
-              },
-              child: Text(confirmLabel),
-            ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final name = c.text.trim();
+                  if (name.isEmpty) return;
+                  Navigator.pop(ctx, (name: name, icon: icon));
+                },
+                child: Text(confirmLabel),
+              ),
+            ],
+          );
+        },
       ),
     );
     c.dispose();

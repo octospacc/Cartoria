@@ -17,9 +17,7 @@ class Space {
 }
 
 /// Per-hook result stored on the [Post] that fired it. Deliberately small:
-/// only what the executor can fill from a single HTTP round-trip. The full
-/// response body is kept so `{{previous.<key>.json.<path>}}` can address
-/// arbitrary fields (e.g. Telegram's `result.message_id`).
+/// only what the executor can fill from a single HTTP round-trip.
 class PostHookState {
   final DateTime lastFiredAt;
   final int? lastStatus;
@@ -67,18 +65,16 @@ class Post {
   final DateTime createdAt;
   final DateTime? editedAt;
 
-  /// `hookKey` → last result. Populated by the hook executor via
-  /// [VaultStore] / [PostRepository.patchHookState]. Empty until at least
-  /// one hook has fired on this post.
+  /// `hookKey` → last result. Populated by the hook executor.
   final Map<String, PostHookState> hookState;
 
   String? _plaintextCache;
   String? _domainCache;
   String? _formattedCache;
   DateTime? _formattedForDay;
+  String? _editedCache;
+  DateTime? _editedForDay;
 
-  // `const` removed: mutable cache fields can't exist in a const class.
-  // Nothing in the codebase constructs `const Post(...)`.
   Post({
     required this.id,
     this.parentId,
@@ -126,6 +122,20 @@ class Post {
     return _formattedCache!;
   }
 
+  /// Same format as [formattedCreatedAt], for [editedAt]. Null when the
+  /// post has never been edited.
+  String? get formattedEditedAt {
+    final edited = editedAt;
+    if (edited == null) return null;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    if (_editedCache == null || _editedForDay != today) {
+      _editedForDay = today;
+      _editedCache = _format(edited, now);
+    }
+    return _editedCache;
+  }
+
   static String _format(DateTime t, DateTime now) {
     final local = t.toLocal();
     final sameDay = local.year == now.year &&
@@ -139,8 +149,7 @@ class Post {
     return '$ymd $hh:$mm';
   }
 
-  /// Returns a copy with [newState] as the hook state. Used by the facade
-  /// after [PostRepository.patchHookState] re-reads the on-disk version.
+  /// Returns a copy with [newState] as the hook state.
   Post withHookState(Map<String, PostHookState> newState) => Post(
         id: id,
         parentId: parentId,

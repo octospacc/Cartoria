@@ -220,24 +220,42 @@ class _PostHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final subtle = theme.colorScheme.onSurfaceVariant;
+    final edited = post.formattedEditedAt;
+
     return Row(
       children: [
-        Text(
-          post.formattedCreatedAt,
-          maxLines: 1,
-          softWrap: false,
-          style: theme.textTheme.bodySmall?.copyWith(color: subtle),
-        ),
-        if (post.editedAt != null) ...[
-          const SizedBox(width: 4),
-          Text(
-            '· edited',
-            maxLines: 1,
-            softWrap: false,
-            style: theme.textTheme.bodySmall?.copyWith(color: subtle),
+        // Outer Expanded takes `available - 28` so the fixed-width menu
+        // button is always flush with the card's right edge, whether or
+        // not the edited segment is present.
+        Expanded(
+          child: Row(
+            children: [
+              // Created timestamp is non-flexible: it's always short, and
+              // keeping it visible matters more than seeing the edit time.
+              Text(
+                post.formattedCreatedAt,
+                maxLines: 1,
+                softWrap: false,
+                style: theme.textTheme.bodySmall?.copyWith(color: subtle),
+              ),
+              if (edited != null) ...[
+                const SizedBox(width: 4),
+                // Edited segment may truncate on a narrow card; the
+                // enclosing Expanded absorbs any unused width, so the
+                // menu button's position is unaffected.
+                Flexible(
+                  child: Text(
+                    '· edited $edited',
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(color: subtle),
+                  ),
+                ),
+              ],
+            ],
           ),
-        ],
-        const Spacer(),
+        ),
         SizedBox(
           height: 24,
           width: 28,
