@@ -12,6 +12,7 @@ import '../../platform/file_read.dart';
 import '../widgets/space_stats_dialog.dart';
 import 'hooks_list.dart';
 import 'space_feed.dart';
+import 'sync_screen.dart';
 
 class SpaceListScreen extends StatelessWidget {
   final VaultStore store;
@@ -23,6 +24,14 @@ class SpaceListScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Spaces'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.sync),
+            tooltip: 'Sync',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => SyncScreen(store: store)),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.bolt_outlined),
             tooltip: 'Hooks',
@@ -73,10 +82,8 @@ class SpaceListScreen extends StatelessWidget {
                 if (v == 'delete') _confirmDelete(context, space);
               },
               itemBuilder: (_) => const [
-                PopupMenuItem(
-                    value: 'stats', child: Text('Statistics')),
-                PopupMenuItem(
-                    value: 'delete', child: Text('Delete space')),
+                PopupMenuItem(value: 'stats', child: Text('Statistics')),
+                PopupMenuItem(value: 'delete', child: Text('Delete space')),
               ],
             ),
             onTap: () => Navigator.push(
@@ -245,8 +252,8 @@ class SpaceListScreen extends StatelessWidget {
                   runSpacing: 6,
                   children: kSpaceIcons
                       .map((i) => ChoiceChip(
-                            label: Text(i,
-                                style: const TextStyle(fontSize: 20)),
+                            label:
+                                Text(i, style: const TextStyle(fontSize: 20)),
                             selected: icon == i,
                             onSelected: (_) => setS(() => icon = i),
                           ))
