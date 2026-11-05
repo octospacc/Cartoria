@@ -14,11 +14,14 @@ class TemplateContext {
   final HookTrigger trigger;
   final Post? original;
   final Map<String, PostHookState> priorStates;
-
-  /// Drive files referenced by [post.fileIds], in order, so templates can
-  /// address `post.files.0.name` etc. Missing entries (deleted file) are
-  /// omitted, so indices here match [post.fileIds] only if none are missing.
   final List<DriveFile> files;
+
+  /// The post this one replies to, if any. Enables `parent.post.*` (fields)
+  /// and `parent.previous.<key>.*` (parent's hook results).
+  final Post? parent;
+
+  /// Parent's `hookState` map, if [parent] is not null.
+  final Map<String, PostHookState> parentPriorStates;
 
   const TemplateContext({
     required this.post,
@@ -28,6 +31,8 @@ class TemplateContext {
     this.original,
     this.priorStates = const {},
     this.files = const [],
+    this.parent,
+    this.parentPriorStates = const {},
   });
 
   String? lookup(String expr) {
@@ -62,6 +67,7 @@ class TemplateContext {
         if (parts.length != 2) return null;
         switch (parts[1]) {
           case 'id': return post.id;
+          case 'parentId': return post.parentId; // null for root posts
           case 'url': return post.url ?? '';
           case 'title': return post.title ?? '';
           case 'description': return post.description ?? '';
@@ -101,52 +107,88 @@ class TemplateContext {
           case 'body': return o.plaintext;
         }
         return null;
-      case 'previous':
-        // (unchanged from the hooks round)
-        if (parts.length < 3) return null;
-        final state = priorStates[parts[1]];
-        if (state == null) return null;
-        switch (parts[2]) {
-          case 'status': return state.lastStatus?.toString() ?? '';
-          case 'body': return state.lastBody ?? '';
-          case 'error': return state.lastError ?? '';
-          case 'headers':
-            if (parts.length < 4) return null;
-            return state.lastHeaders[parts[3]] ?? '';
-          case 'json':
-            if (parts.length < 4) return null;
-            final raw = state.lastBody;
-            if (raw == null || raw.isEmpty) return null;
-            try {
-              dynamic v = jsonDecode(raw);
-              for (var i = 3; i < parts.length; i++) {
-                if (v is Map) {
-                  v = v[parts[i]];
-                } else if (v is List) {
-                  final idx = int.tryParse(parts[i]);
-                  if (idx == null || idx < 0 || idx >= v.length) return null;
-                  v = v[idx];
-                } else {
-                  return null;
-                }
-              }
-              if (v == null) return null;
-              if (v is String) return v;
-              if (v is num || v is bool) return v.toString();
-              return jsonEncode(v);
-            } catch (_) {
-              return null;
-            }
+      case 'parent':
+        final p = parent;
+        if (p == null || parts.length < 3) return null;
+        if (parts[1] == 'post') {
+          switch (parts[2]) {
+            case 'id': return p.id;
+            case 'parentId': return p.parentId;
+            case 'url': return p.url ?? '';
+            case 'title': return p.title ?? '';
+            case 'description': return p.description ?? '';
+            case 'body': return p.plaintext;
+            case 'tags': return p.tags.join(',');
+            case 'kind': return p.kind.name;
+            case 'createdAt': return p.createdAt.toIso8601String();
+          }
+          return null;
+        }
+        if (parts[1] == 'previous' && parts.length >= 4) {
+          return _resolvePrevious(
+            parentPriorStates,
+            parts.sublist(2),
+          );
         }
         return null;
+      case 'previous':
+        if (parts.length < 3) return null;
+        return _resolvePrevious(priorStates, parts.sublist(1));
+    }
+    return null;
+  }
+
+  /// Shared logic for `previous.<key>.<path>` and `parent.previous.<key>.<path>`.
+  static String? _resolvePrevious(
+    Map<String, PostHookState> states,
+    List<String> parts,
+  ) {
+    final key = parts[0];
+    final state = states[key];
+    if (state == null) return null;
+    if (parts.length < 2) return null;
+    switch (parts[1]) {
+      case 'status':
+        return state.lastStatus?.toString() ?? '';
+      case 'body':
+        return state.lastBody ?? '';
+      case 'error':
+        return state.lastError ?? '';
+      case 'headers':
+        if (parts.length < 3) return null;
+        return state.lastHeaders[parts[2]] ?? '';
+      case 'json':
+        if (parts.length < 3) return null;
+        final raw = state.lastBody;
+        if (raw == null || raw.isEmpty) return null;
+        try {
+          dynamic v = jsonDecode(raw);
+          for (var i = 2; i < parts.length; i++) {
+            if (v is Map) {
+              v = v[parts[i]];
+            } else if (v is List) {
+              final idx = int.tryParse(parts[i]);
+              if (idx == null || idx < 0 || idx >= v.length) return null;
+              v = v[idx];
+            } else {
+              return null;
+            }
+          }
+          if (v == null) return null;
+          if (v is String) return v;
+          if (v is num || v is bool) return v.toString();
+          return jsonEncode(v);
+        } catch (_) {
+          return null;
+        }
     }
     return null;
   }
 }
 
 class TemplateRenderer {
-  static final _triple = RegExp(r'\{\{\{([^}]+)\}\}\}');
-  static final _double = RegExp(r'\{\{([^}]+)\}\}');
+  static final _triple = RegExp(r'\{\{\{(.+?)\}\}\}', dotAll: true);
+  static final _double = RegExp(r'\{\{(.+?)\}\}', dotAll: true);
 
   static String render(
     String template,
@@ -216,11 +258,15 @@ class TemplateRenderer {
     final argsRaw = m.group(2);
     final args = <String, String>{};
     if (argsRaw != null) {
-      for (final pair in argsRaw.split(',')) {
+      for (final pair in _splitArgs(argsRaw)) {
         final eq = pair.indexOf('=');
-        if (eq < 0) continue;
-        args[pair.substring(0, eq).trim()] =
-            pair.substring(eq + 1).trim();
+        if (eq < 0) {
+          // Positional arg — stored under numeric keys "0", "1", …
+          args[args.length.toString()] = _unquote(pair.trim());
+        } else {
+          args[pair.substring(0, eq).trim()] =
+              _unquote(pair.substring(eq + 1).trim());
+        }
       }
     }
     switch (name) {
@@ -234,8 +280,52 @@ class TemplateRenderer {
       case 'map':
         if (args.containsKey(value)) return args[value]!;
         return args['default'] ?? value;
+      case 'wrap':
+        if (value.isEmpty) return '';
+        final prefix = args['prefix'] ?? '';
+        final suffix = args['suffix'] ?? '';
+        return '$prefix$value$suffix';
     }
     return value;
+  }
+
+  /// Splits `a=1, b='x,y', c=z` on top-level commas, ignoring commas
+  /// inside single- or double-quoted substrings.
+  static List<String> _splitArgs(String raw) {
+    final result = <String>[];
+    final buf = StringBuffer();
+    var quote = '';
+    for (var i = 0; i < raw.length; i++) {
+      final c = raw[i];
+      if (quote.isNotEmpty) {
+        buf.write(c);
+        if (c == quote) quote = '';
+      } else if (c == '"' || c == "'") {
+        quote = c;
+        buf.write(c);
+      } else if (c == ',') {
+        final s = buf.toString().trim();
+        if (s.isNotEmpty) result.add(s);
+        buf.clear();
+      } else {
+        buf.write(c);
+      }
+    }
+    final s = buf.toString().trim();
+    if (s.isNotEmpty) result.add(s);
+    return result;
+  }
+
+  static String _unquote(String s) {
+    if (s.length >= 2) {
+      final first = s[0];
+      final last = s[s.length - 1];
+      if ((first == '"' && last == '"') ||
+          (first == "'" && last == "'")) {
+        return s.substring(1, s.length - 1);
+      }
+    }
+    return s;
   }
 
   static String _escape(String v, TemplateEscape escape) {

@@ -29,9 +29,11 @@ class HookExecutor {
     required Hook hook,
     required Post post,
     required Post? original,
+    required Post? parent,
     required Space space,
     required HookTrigger trigger,
     required Map<String, PostHookState> priorStates,
+    required Map<String, PostHookState> parentPriorStates,
     required List<DriveFile> files,
     required FileResolver resolveFile,
   }) async {
@@ -44,9 +46,10 @@ class HookExecutor {
       original: original,
       priorStates: priorStates,
       files: files,
+      parent: parent,
+      parentPriorStates: parentPriorStates,
     );
 
-    // First matching rule wins. Rules without `when` always match.
     HookRule? chosen;
     for (final rule in hook.rules) {
       if (ConditionEvaluator.evaluate(rule.when, baseCtx)) {
@@ -158,16 +161,20 @@ class HookExecutor {
     http.MultipartRequest req,
   ) async {
     if (part.template != null) {
-      req.fields[part.name] = TemplateRenderer.render(part.template!, ctx);
+      final value = TemplateRenderer.render(part.template!, ctx);
+      if (part.skipIfEmpty && value.isEmpty) return;
+      req.fields[part.name] = value;
       return;
     }
     final fileId = ctx.lookup(part.filePath!);
     if (fileId == null || fileId.isEmpty) {
+      if (part.skipIfEmpty) return;
       throw StateError('Part "${part.name}": filePath '
           '"${part.filePath}" resolved to nothing.');
     }
     final resolved = await resolveFile(fileId);
     if (resolved == null) {
+      if (part.skipIfEmpty) return;
       throw StateError('Part "${part.name}": file $fileId not found.');
     }
     req.files.add(http.MultipartFile.fromBytes(
@@ -184,18 +191,11 @@ class HookExecutor {
     FileResolver resolveFile,
     http.MultipartRequest req,
   ) async {
-    // Resolve the iteration list. Today only post.files is supported;
-    // extending later is a matter of adding more paths here.
     final files = part.repeat == 'post.files' ? ctx.files : const <DriveFile>[];
-    if (files.isEmpty) {
-      // A repeated part with no iterations is a no-op, not an error — the
-      // rule's `when` should have excluded this case, but we tolerate it.
-      return;
-    }
+    if (files.isEmpty) return;
 
     if (part.join != null) {
-      final joinSep = part.join!; // ← add this line
-      // Joined mode: one field, all iterations concatenated.
+      final joinSep = part.join!;
       final rendered = <String>[];
       for (var i = 0; i < files.length; i++) {
         final iterCtx = _iterContext(ctx, files, i);
@@ -212,16 +212,18 @@ class HookExecutor {
       }
       final value =
           '${part.prefix ?? ''}${rendered.join(joinSep)}${part.suffix ?? ''}';
+      if (part.skipIfEmpty && value.isEmpty) return;
       req.fields[part.name] = value;
       return;
     }
 
-    // Expanded mode: N parts with templated names.
     for (var i = 0; i < files.length; i++) {
       final iterCtx = _iterContext(ctx, files, i);
       final name = TemplateRenderer.render(part.name, iterCtx);
       if (part.template != null) {
-        req.fields[name] = TemplateRenderer.render(part.template!, iterCtx);
+        final value = TemplateRenderer.render(part.template!, iterCtx);
+        if (part.skipIfEmpty && value.isEmpty) continue;
+        req.fields[name] = value;
       } else {
         final id = iterCtx.lookup(part.filePath!);
         if (id == null || id.isEmpty) continue;
@@ -246,29 +248,30 @@ class HookExecutor {
     int index,
   ) {
     final f = files[index];
-    return _RepeatTemplateContext(parent: ctx, file: f, index: index);
+    return _RepeatTemplateContext(host: ctx, file: f, index: index);
   }
 }
 
-/// Wraps a parent [TemplateContext] with `repeat.index` and
-/// `repeat.file.*` bindings. All other paths fall through to the parent.
 class _RepeatTemplateContext extends TemplateContext {
-  final TemplateContext parent;
+  final TemplateContext _host;
   final DriveFile file;
   final int index;
 
   _RepeatTemplateContext({
-    required this.parent,
+    required TemplateContext host,
     required this.file,
     required this.index,
-  }) : super(
-          post: parent.post,
-          space: parent.space,
-          hook: parent.hook,
-          trigger: parent.trigger,
-          original: parent.original,
-          priorStates: parent.priorStates,
-          files: parent.files,
+  })  : _host = host,
+        super(
+          post: host.post,
+          space: host.space,
+          hook: host.hook,
+          trigger: host.trigger,
+          original: host.original,
+          priorStates: host.priorStates,
+          files: host.files,
+          parent: host.parent,
+          parentPriorStates: host.parentPriorStates,
         );
 
   @override
@@ -281,15 +284,14 @@ class _RepeatTemplateContext extends TemplateContext {
         case 'name':
           return file.name;
         case 'category':
-          // Reuses the parent lookup's category logic by delegating.
-          return parent.lookup('post.files.$index.category');
+          return _host.lookup('post.files.$index.category');
         case 'mime':
-          return parent.lookup('post.files.$index.mime');
+          return _host.lookup('post.files.$index.mime');
         case 'size':
           return file.sizeBytes.toString();
       }
       return null;
     }
-    return parent.lookup(expr);
+    return _host.lookup(expr);
   }
 }

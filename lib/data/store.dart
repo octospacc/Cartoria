@@ -495,6 +495,17 @@ class VaultStore extends ChangeNotifier {
     }
     if (post == null) return;
 
+    // Look up the parent for `parent.post.*` / `parent.previous.<key>.*`.
+    Post? parentPost;
+    if (post.parentId != null) {
+      for (final p in _postCache[space.id] ?? const <Post>[]) {
+        if (p.id == post.parentId) {
+          parentPost = p;
+          break;
+        }
+      }
+    }
+
     final active = _hooks.activeFor(
       spaceId: space.id,
       trigger: trigger,
@@ -530,10 +541,12 @@ class VaultStore extends ChangeNotifier {
       results[hook.key] = await _executor.execute(
         hook: hook,
         post: post,
+        parent: parentPost,
         original: originalSnapshot,
         space: space,
         trigger: trigger,
         priorStates: priorStates,
+        parentPriorStates: parentPost?.hookState ?? const {},
         files: files,
         resolveFile: resolveFile,
       );
@@ -542,8 +555,7 @@ class VaultStore extends ChangeNotifier {
 
     await _withPostLock(postId, () async {
       final patched = await _posts.patchHookState(space.id, postId, results);
-      final idx =
-          _postCache[space.id]?.indexWhere((x) => x.id == postId) ?? -1;
+      final idx = _postCache[space.id]?.indexWhere((x) => x.id == postId) ?? -1;
       if (idx >= 0) _postCache[space.id]![idx] = patched;
       notifyListeners();
     });

@@ -2,19 +2,79 @@ import '../data/models.dart';
 
 enum HookTrigger { create, edit }
 
-// ── Hook rule ──────────────────────────────────────────────────────────────
-
-/// One branch of a hook. The first rule whose [when] evaluates truthy
-/// executes; the rest are skipped. An empty [when] always matches.
+/// One field in a multipart/form-data request.
 ///
-/// A rule is a complete request spec — method, URL, headers, body or
-/// multipart parts. Splitting the request shape out of [Hook] lets one
-/// hook dispatch to `sendMessage` / `sendPhoto` / `sendMediaGroup` without
-/// the app knowing those methods exist.
+/// Three shapes:
+///   - text field:       [template] set, [filePath] null, [repeat] null
+///   - file field:       [filePath] set, [template] null, [repeat] null
+///   - repeated field:   [repeat] set; produces N parts (or one joined
+///                       field when [join] is set)
+///
+/// When [skipIfEmpty] is true and the rendered value is the empty string,
+/// the part is omitted from the request entirely. Useful for optional
+/// JSON-envelope fields like Telegram's `reply_parameters` that must not
+/// appear at all (rather than as `{}`) when there's nothing to send.
+class HookMultipartPart {
+  final String name;
+  final String? template;
+  final String? filePath;
+  final String? filename;
+  final String? repeat;
+  final String? join;
+  final String? prefix;
+  final String? suffix;
+  final bool skipIfEmpty;
+
+  const HookMultipartPart({
+    required this.name,
+    this.template,
+    this.filePath,
+    this.filename,
+    this.repeat,
+    this.join,
+    this.prefix,
+    this.suffix,
+    this.skipIfEmpty = false,
+  }) : assert(
+          (template != null) != (filePath != null),
+          'Exactly one of template or filePath must be set',
+        ),
+        assert(
+          join == null || repeat != null,
+          'join requires repeat',
+        ),
+        assert(
+          (prefix == null && suffix == null) || join != null,
+          'prefix/suffix require join',
+        );
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        if (template != null) 'template': template,
+        if (filePath != null) 'filePath': filePath,
+        if (filename != null) 'filename': filename,
+        if (repeat != null) 'repeat': repeat,
+        if (join != null) 'join': join,
+        if (prefix != null) 'prefix': prefix,
+        if (suffix != null) 'suffix': suffix,
+        if (skipIfEmpty) 'skipIfEmpty': skipIfEmpty,
+      };
+
+  factory HookMultipartPart.fromJson(Map<String, dynamic> j) =>
+      HookMultipartPart(
+        name: j['name'] as String,
+        template: j['template'] as String?,
+        filePath: j['filePath'] as String?,
+        filename: j['filename'] as String?,
+        repeat: j['repeat'] as String?,
+        join: j['join'] as String?,
+        prefix: j['prefix'] as String?,
+        suffix: j['suffix'] as String?,
+        skipIfEmpty: (j['skipIfEmpty'] as bool?) ?? false,
+      );
+}
+
 class HookRule {
-  /// Boolean expression, evaluated against [TemplateContext]. Null or
-  /// empty means "always match". Grammar documented in
-  /// `services/condition.dart`.
   final String? when;
   final String method;
   final String urlTemplate;
@@ -54,8 +114,6 @@ class HookRule {
             .toList(),
       );
 
-  /// Builds a single rule from the pre-rules hook format, so existing
-  /// `hooks.json` files load without manual migration.
   factory HookRule.fromLegacy(Map<String, dynamic> j) => HookRule(
         method: (j['method'] as String?) ?? 'POST',
         urlTemplate: j['urlTemplate'] as String,
@@ -69,94 +127,6 @@ class HookRule {
       );
 }
 
-// ── Multipart part (extended) ──────────────────────────────────────────────
-
-/// One field in a multipart/form-data request.
-///
-/// Three shapes:
-///   - text field:       [template] set, [filePath] null, [repeat] null
-///   - file field:       [filePath] set, [template] null, [repeat] null
-///   - repeated field:   [repeat] set; produces N parts (or one joined
-///                       field when [join] is set)
-///
-/// [name] and [template] support `{{repeat.index}}` and
-/// `{{repeat.file.*}}` when [repeat] is set — see `services/template.dart`.
-class HookMultipartPart {
-  final String name;
-  final String? template;
-
-  /// Path into [TemplateContext] that resolves to a file ID. Examples:
-  /// `post.files.0.id` (first attachment) or `repeat.file.id` (inside a
-  /// repeated part). The executor reads bytes via the file resolver.
-  final String? filePath;
-
-  /// Optional filename override on the upload. Supports the same
-  /// `{{repeat.*}}` tokens as [name].
-  final String? filename;
-
-  /// Path into [TemplateContext] that resolves to a list. Today only
-  /// `post.files` is supported; the field is a string so the model doesn't
-  /// hard-code it.
-  final String? repeat;
-
-  /// When set, all [repeat] iterations render into a single field named
-  /// [name] (which must not contain `{{repeat.index}}`); their rendered
-  /// values are concatenated with this string between them.
-  final String? join;
-
-  /// Optional prefix / suffix wrapped around a joined field. Useful for
-  /// producing a JSON array: prefix `[`, suffix `]`.
-  final String? prefix;
-  final String? suffix;
-
-  const HookMultipartPart({
-    required this.name,
-    this.template,
-    this.filePath,
-    this.filename,
-    this.repeat,
-    this.join,
-    this.prefix,
-    this.suffix,
-  }) : assert(
-          (template != null) != (filePath != null),
-          'Exactly one of template or filePath must be set',
-        ),
-        assert(
-          join == null || repeat != null,
-          'join requires repeat',
-        ),
-        assert(
-          (prefix == null && suffix == null) || join != null,
-          'prefix/suffix require join',
-        );
-
-  Map<String, dynamic> toJson() => {
-        'name': name,
-        if (template != null) 'template': template,
-        if (filePath != null) 'filePath': filePath,
-        if (filename != null) 'filename': filename,
-        if (repeat != null) 'repeat': repeat,
-        if (join != null) 'join': join,
-        if (prefix != null) 'prefix': prefix,
-        if (suffix != null) 'suffix': suffix,
-      };
-
-  factory HookMultipartPart.fromJson(Map<String, dynamic> j) =>
-      HookMultipartPart(
-        name: j['name'] as String,
-        template: j['template'] as String?,
-        filePath: j['filePath'] as String?,
-        filename: j['filename'] as String?,
-        repeat: j['repeat'] as String?,
-        join: j['join'] as String?,
-        prefix: j['prefix'] as String?,
-        suffix: j['suffix'] as String?,
-      );
-}
-
-// ── Hook ───────────────────────────────────────────────────────────────────
-
 class Hook {
   final String id;
   final String key;
@@ -166,10 +136,7 @@ class Hook {
   final Set<HookTrigger> triggers;
   final Set<PostKind> postKinds;
   final Set<String> tagFilters;
-
-  /// Ordered list of branches. First rule whose `when` matches executes.
   final List<HookRule> rules;
-
   final int timeoutSeconds;
 
   const Hook({
