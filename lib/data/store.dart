@@ -28,10 +28,28 @@ import 'sync/github_provider.dart';
 import 'sync/gitlab_provider.dart';
 import 'sync/sync_provider.dart';
 import 'sync/sync_service.dart';
+import 'space_archive.dart';
 
 export 'repos/bookmarks_importer.dart' show BookmarkImportResult;
 export 'services/link_metadata.dart' show LinkMetadata;
 export 'services/space_stats.dart' show SpaceStats;
+export 'space_archive.dart' show ExtractedFile, ExtractedSpace;
+
+class SpaceImportResult {
+  final int total;
+  final int imported;
+  final int skippedDuplicates;
+  final int filesImported;
+  final int filesSkipped;
+
+  const SpaceImportResult({
+    required this.total,
+    required this.imported,
+    required this.skippedDuplicates,
+    required this.filesImported,
+    required this.filesSkipped,
+  });
+}
 
 class VaultStore extends ChangeNotifier {
   late final FileSystem fs;
@@ -389,6 +407,100 @@ class VaultStore extends ChangeNotifier {
     final id = await _archive.importSpace(zipBytes);
     await reload();
     return id;
+  }
+
+  Future<SpaceImportResult> importSpaceZipIntoExistingSpace({
+    required String targetSpaceId,
+    required Uint8List zipBytes,
+  }) async {
+    final extracted = await _archive.readSpaceArchive(zipBytes);
+
+    final existingPosts = _postCache[targetSpaceId] ?? const <Post>[];
+    final existingIds = {for (final p in existingPosts) p.id};
+    final existingUrls = <String>{
+      for (final p in existingPosts)
+        if (p.kind == PostKind.bookmark && p.url != null) p.url!,
+    };
+    final existingFileIds = (_fileCache[targetSpaceId] ?? const <DriveFile>[])
+        .map((f) => f.id)
+        .toSet();
+
+    // Posts referenced as a reply parent within the incoming batch — these
+    // must be imported even if their URL matches something in the target,
+    // otherwise the reply's `parent` field would point to a missing post.
+    final referencedParents = <String>{
+      for (final p in extracted.posts)
+        if (p.parentId != null) p.parentId!,
+    };
+
+    // Decide what to import.
+    final toImportPosts = <Post>[];
+    var skippedDuplicates = 0;
+    for (final p in extracted.posts) {
+      if (existingIds.contains(p.id)) {
+        skippedDuplicates++;
+        continue;
+      }
+      if (p.kind == PostKind.bookmark &&
+          p.url != null &&
+          existingUrls.contains(p.url) &&
+          !referencedParents.contains(p.id)) {
+        skippedDuplicates++;
+        continue;
+      }
+      toImportPosts.add(p);
+    }
+
+    // Import files first so imported posts can resolve fileIds.
+    final importedFiles = await _drive.importExistingFiles(
+      spaceId: targetSpaceId,
+      files: extracted.files,
+      existingIds: existingFileIds,
+    );
+    final filesSkipped = extracted.files.length - importedFiles.length;
+
+    // Import posts.
+    final importedPosts = <Post>[];
+    var failedPosts = 0;
+    for (final p in toImportPosts) {
+      try {
+        final imported =
+            await _posts.importExisting(spaceId: targetSpaceId, post: p);
+        importedPosts.add(imported);
+      } catch (e) {
+        debugPrint('Failed to import post ${p.id}: $e');
+        failedPosts++;
+      }
+    }
+
+    // Update caches in one shot.
+    if (importedPosts.isNotEmpty) {
+      final merged = [
+        ...(_postCache[targetSpaceId] ?? const <Post>[]),
+        ...importedPosts,
+      ]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      _postCache[targetSpaceId] = merged;
+    }
+    if (importedFiles.isNotEmpty) {
+      _fileCache[targetSpaceId] = [
+        ...(_fileCache[targetSpaceId] ?? const <DriveFile>[]),
+        ...importedFiles,
+      ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      for (final f in importedFiles) {
+        _fileIndex.putIfAbsent(targetSpaceId, () => {})[f.id] = f;
+      }
+    }
+
+    _resortSpacesByUsage();
+    notifyListeners();
+
+    return SpaceImportResult(
+      total: extracted.posts.length,
+      imported: importedPosts.length,
+      skippedDuplicates: skippedDuplicates + failedPosts,
+      filesImported: importedFiles.length,
+      filesSkipped: filesSkipped,
+    );
   }
 
   // ── Bookmark import ────────────────────────────────────────────────────

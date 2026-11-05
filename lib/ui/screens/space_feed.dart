@@ -1,8 +1,11 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import '../../data/models.dart';
 import '../../data/store.dart';
+import '../../data/bookmarks.dart';
 import '../../platform/file_save.dart';
 import '../../util/html_utils.dart';
 import '../bookmark_import_helpers.dart';
@@ -293,34 +296,79 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     }
   }
 
-  Future<void> _importBookmarks() async {
-    final file = await pickAndParseBookmarkFile(context);
-    if (file == null) return;
-    if (file.bookmarks.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No bookmarks found in file')),
-        );
-      }
-      return;
-    }
-    try {
-      final r = await widget.store.importBookmarksIntoSpace(
-        spaceId: widget.space.id,
-        file: file,
-      );
-      if (!mounted) return;
+Future<void> _importFile() async {
+  final picked = await pickImportFile(context);
+  if (picked == null) return;
+  final lower = picked.name.toLowerCase();
+  if (lower.endsWith('.zip')) {
+    await _importZipIntoCurrent(picked.bytes);
+  } else if (lower.endsWith('.html') || lower.endsWith('.htm')) {
+    await _importBookmarksIntoCurrent(picked.bytes);
+  } else if (mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Unsupported file type')),
+    );
+  }
+}
+
+Future<void> _importZipIntoCurrent(Uint8List bytes) async {
+  try {
+    final r = await widget.store.importSpaceZipIntoExistingSpace(
+      targetSpaceId: widget.space.id,
+      zipBytes: bytes,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(spaceImportSummary(r))),
+    );
+  } catch (e) {
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(bookmarkImportSummary(r))),
+        SnackBar(content: Text('Import failed: $e')),
       );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Import failed: $e')),
-        );
-      }
     }
   }
+}
+
+Future<void> _importBookmarksIntoCurrent(Uint8List bytes) async {
+  BookmarkFile file;
+  try {
+    file = BookmarkFileParser.parse(
+      utf8.decode(bytes, allowMalformed: true),
+    );
+  } catch (e) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not parse file: $e')),
+      );
+    }
+    return;
+  }
+  if (file.bookmarks.isEmpty) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No bookmarks found in file')),
+      );
+    }
+    return;
+  }
+  try {
+    final r = await widget.store.importBookmarksIntoSpace(
+      spaceId: widget.space.id,
+      file: file,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(bookmarkImportSummary(r))),
+    );
+  } catch (e) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Import failed: $e')),
+      );
+    }
+  }
+}
 
   Future<void> _deleteSpace() async {
     final ok = await showDialog<bool>(
@@ -644,24 +692,20 @@ Widget _buildFeed(List<_PostNode> roots, {required bool searchMode}) {
                 ),
               ),
               PopupMenuButton<String>(
-                onSelected: (v) {
-                  if (v == 'stats') {
-                    SpaceStatsDialog.show(
-                        context, widget.store, widget.space);
-                  }
-                  if (v == 'import') _importBookmarks();
-                  if (v == 'export') _exportSpace();
-                  if (v == 'delete') _deleteSpace();
-                },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'stats', child: Text('Statistics')),
-                  PopupMenuItem(
-                      value: 'import', child: Text('Import bookmarks…')),
-                  PopupMenuItem(
-                      value: 'export', child: Text('Export this space…')),
-                  PopupMenuItem(
-                      value: 'delete', child: Text('Delete this space…')),
-                ],
+onSelected: (v) {
+  if (v == 'stats') {
+    SpaceStatsDialog.show(context, widget.store, widget.space);
+  }
+  if (v == 'import') _importFile();
+  if (v == 'export') _exportSpace();
+  if (v == 'delete') _deleteSpace();
+},
+itemBuilder: (_) => const [
+  PopupMenuItem(value: 'stats', child: Text('Statistics')),
+  PopupMenuItem(value: 'import', child: Text('Import…')),
+  PopupMenuItem(value: 'export', child: Text('Export this space…')),
+  PopupMenuItem(value: 'delete', child: Text('Delete this space…')),
+],
               ),
             ],
     );

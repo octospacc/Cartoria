@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
 import '../../util/json_format.dart';
+import '../space_archive.dart';
 import '../models.dart';
 
 /// Stores opaque file blobs under `drive/<id>.<ext>` (or `drive/<id>` for
@@ -213,8 +214,8 @@ class DriveRepository {
     final f = fs.file(p.join(vaultPath, spaceId, 'drive_meta.json'));
     if (!await f.exists()) return {};
     final raw = jsonDecode(await f.readAsString()) as Map;
-    return raw.map((k, v) =>
-        MapEntry(k as String, (v as Map).cast<String, dynamic>()));
+    return raw.map(
+        (k, v) => MapEntry(k as String, (v as Map).cast<String, dynamic>()));
   }
 
   Future<void> _writeMeta(
@@ -225,5 +226,52 @@ class DriveRepository {
     await fs
         .file(p.join(vaultPath, spaceId, 'drive_meta.json'))
         .writeAsString(prettyJson(meta));
+  }
+
+// Add to the DriveRepository class.
+
+  /// Writes multiple pre-read files into [spaceId] with one metadata write.
+  /// Skips ids in [existingIds]. Returns the DriveFile records created.
+  Future<List<DriveFile>> importExistingFiles({
+    required String spaceId,
+    required Map<String, ExtractedFile> files,
+    required Set<String> existingIds,
+  }) async {
+    if (files.isEmpty) return const [];
+    await fs
+        .directory(p.join(vaultPath, spaceId, 'drive'))
+        .create(recursive: true);
+
+    final meta = await _readMeta(spaceId);
+    final index = await _driveIndex(spaceId);
+    final result = <DriveFile>[];
+
+    for (final entry in files.entries) {
+      final id = entry.key;
+      final ef = entry.value;
+      if (existingIds.contains(id)) continue;
+      final ext = _sanitizedExtension(ef.name);
+      final diskName = ext.isEmpty ? id : '$id.$ext';
+      final path = p.join(vaultPath, spaceId, 'drive', diskName);
+      try {
+        await fs.file(path).writeAsBytes(ef.bytes);
+        meta[id] = {
+          'name': ef.name,
+          'created': ef.createdAt.toIso8601String(),
+        };
+        index[id] = path;
+        result.add(DriveFile(
+          id: id,
+          name: ef.name,
+          sizeBytes: ef.bytes.length,
+          createdAt: ef.createdAt,
+        ));
+      } catch (e) {
+        debugPrint('Failed to write imported file $id: $e');
+      }
+    }
+
+    await _writeMeta(spaceId, meta);
+    return result;
   }
 }

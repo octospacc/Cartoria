@@ -9,6 +9,9 @@ import 'package:uuid/uuid.dart';
 
 import '../../util/fs_walk.dart';
 import '../../util/html_utils.dart';
+import '../models.dart';                  // ← add this line
+import '../space_archive.dart';
+import 'post_repo.dart';
 
 /// Zips a whole space directory (or extracts one from a zip).
 ///
@@ -88,5 +91,94 @@ class ArchiveService {
     }
 
     return newId;
+  }
+
+// Add to the ArchiveService class.
+
+  /// Decodes a space zip into memory without touching the filesystem.
+  /// Consumed by [VaultStore.importSpaceZipIntoExistingSpace].
+  Future<ExtractedSpace> readSpaceArchive(Uint8List zipBytes) async {
+    final archive = ZipDecoder().decodeBytes(zipBytes);
+
+    ArchiveFile? spaceFile;
+    for (final f in archive.files) {
+      if (!f.isFile) continue;
+      if (f.name == 'space.html' || f.name.endsWith('/space.html')) {
+        if (spaceFile == null || f.name.length < spaceFile.name.length) {
+          spaceFile = f;
+        }
+      }
+    }
+    if (spaceFile == null) {
+      throw const FormatException('Zip does not contain space.html');
+    }
+
+    final content = utf8.decode(spaceFile.content as List<int>);
+    final meta = parseFrontmatterMeta(content);
+    final name = (meta['name'] as String?) ?? 'Imported space';
+    final icon = (meta['icon'] as String?) ?? '📓';
+    final createdAtStr = meta['created'] as String?;
+    final createdAt = createdAtStr != null
+        ? DateTime.parse(createdAtStr)
+        : DateTime.now().toUtc();
+
+    final spaceDir = p.dirname(spaceFile.name);
+    final prefix = (spaceDir.isEmpty || spaceDir == '.') ? '' : '$spaceDir/';
+
+    // drive_meta.json (optional)
+    var driveMeta = <String, Map<String, dynamic>>{};
+    for (final f in archive.files) {
+      if (!f.isFile || f.name != '${prefix}drive_meta.json') continue;
+      try {
+        final raw = jsonDecode(utf8.decode(f.content as List<int>)) as Map;
+        driveMeta = raw.map((k, v) =>
+            MapEntry(k as String, (v as Map).cast<String, dynamic>()));
+      } catch (_) {}
+      break;
+    }
+
+    // Posts
+    final posts = <Post>[];
+    for (final f in archive.files) {
+      if (!f.isFile) continue;
+      if (!f.name.startsWith('${prefix}posts/')) continue;
+      if (!f.name.endsWith('.html')) continue;
+      try {
+        posts.add(PostRepository.parseContent(
+          f.name,
+          utf8.decode(f.content as List<int>),
+        ));
+      } catch (e) {
+        debugPrint('Skipping malformed post ${f.name}: $e');
+      }
+    }
+    posts.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+    // Drive files
+    final files = <String, ExtractedFile>{};
+    for (final f in archive.files) {
+      if (!f.isFile) continue;
+      if (!f.name.startsWith('${prefix}drive/')) continue;
+      final base = f.name.substring('${prefix}drive/'.length);
+      if (base.isEmpty || base.contains('/')) continue;
+      final dot = base.indexOf('.');
+      final id = dot < 0 ? base : base.substring(0, dot);
+      final m = driveMeta[id];
+      final fname = (m?['name'] as String?) ?? base;
+      final fcreated = m?['created'] as String?;
+      files[id] = ExtractedFile(
+        name: fname,
+        bytes: Uint8List.fromList(f.content as List<int>),
+        createdAt: fcreated != null ? DateTime.parse(fcreated) : createdAt,
+      );
+    }
+
+    return ExtractedSpace(
+      name: name,
+      icon: icon,
+      createdAt: createdAt,
+      posts: posts,
+      files: files,
+    );
   }
 }

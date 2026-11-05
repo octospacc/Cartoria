@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -42,23 +43,10 @@ class SpaceListScreen extends StatelessWidget {
               MaterialPageRoute(builder: (_) => SyncScreen(store: store)),
             ),
           ),
-          PopupMenuButton<String>(
+          IconButton(
             icon: const Icon(Icons.file_download_outlined),
             tooltip: 'Import',
-            onSelected: (v) {
-              if (v == 'zip') _importZip(context);
-              if (v == 'bookmarks') _importBookmarksAsNewSpace(context);
-            },
-            itemBuilder: (_) => const [
-              PopupMenuItem(
-                value: 'zip',
-                child: Text('Import space (.zip)…'),
-              ),
-              PopupMenuItem(
-                value: 'bookmarks',
-                child: Text('Import bookmarks (.html)…'),
-              ),
-            ],
+            onPressed: () => _importFile(context),
           ),
         ],
       ),
@@ -155,88 +143,89 @@ class SpaceListScreen extends StatelessWidget {
     if (ok == true) await store.deleteSpace(space.id);
   }
 
-  // ── Import: zip ────────────────────────────────────────────────────────
-
-  Future<void> _importZip(BuildContext context) async {
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        withData: true,
-        type: FileType.custom,
-        allowedExtensions: ['zip'],
-      );
-      if (result == null) return;
-      final picked = result.files.single;
-      Uint8List? bytes = picked.bytes;
-      if (bytes == null && picked.path != null) {
-        bytes = await readFileFromPath(picked.path!);
-      }
-      if (bytes == null) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Could not read the selected file'),
-            ),
-          );
-        }
-        return;
-      }
-      if (!context.mounted) return;
-      final id = await store.importSpaceZip(bytes);
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Imported space ${id.substring(0, 8)}…')),
-      );
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Import failed: $e')));
-      }
-    }
-  }
-
-  // ── Import: bookmarks → new space ──────────────────────────────────────
-
-  Future<void> _importBookmarksAsNewSpace(BuildContext context) async {
-    final file = await pickAndParseBookmarkFile(context);
-    if (file == null) return;
-    if (file.bookmarks.isEmpty) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No bookmarks found in file')),
-        );
-      }
-      return;
-    }
-    if (!context.mounted) return;
-
-    final result = await _showCreateSpaceDialog(
-      context,
-      initialName: file.title ?? 'Imported Bookmarks',
-      initialIcon: '📚',
-      title: 'Import bookmarks',
-      confirmLabel: 'Import',
+Future<void> _importFile(BuildContext context) async {
+  final picked = await pickImportFile(context);
+  if (picked == null) return;
+  final lower = picked.name.toLowerCase();
+  if (lower.endsWith('.zip')) {
+    await _importZipBytes(context, picked.bytes);
+  } else if (lower.endsWith('.html') || lower.endsWith('.htm')) {
+    await _importBookmarksBytes(context, picked.bytes);
+  } else if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Unsupported file type')),
     );
-    if (result == null) return;
+  }
+}
 
-    try {
-      final space = await store.importBookmarksAsNewSpace(
-        file: file,
-        spaceName: result.name,
-        icon: result.icon,
-      );
-      if (!context.mounted) return;
-      final count = store.postsForSpace(space.id).length;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Imported $count into "${space.name}"')),
-      );
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Import failed: $e')),
-        );
-      }
+Future<void> _importZipBytes(BuildContext context, Uint8List bytes) async {
+  try {
+    final id = await store.importSpaceZip(bytes);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Imported space ${id.substring(0, 8)}…')),
+    );
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Import failed: $e')));
     }
   }
+}
+
+Future<void> _importBookmarksBytes(
+    BuildContext context, Uint8List bytes) async {
+  BookmarkFile file;
+  try {
+    file = BookmarkFileParser.parse(
+      utf8.decode(bytes, allowMalformed: true),
+    );
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not parse file: $e')),
+      );
+    }
+    return;
+  }
+  if (file.bookmarks.isEmpty) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No bookmarks found in file')),
+      );
+    }
+    return;
+  }
+  if (!context.mounted) return;
+
+  final result = await _showCreateSpaceDialog(
+    context,
+    initialName: file.title ?? 'Imported Bookmarks',
+    initialIcon: '📚',
+    title: 'Import bookmarks',
+    confirmLabel: 'Import',
+  );
+  if (result == null) return;
+
+  try {
+    final space = await store.importBookmarksAsNewSpace(
+      file: file,
+      spaceName: result.name,
+      icon: result.icon,
+    );
+    if (!context.mounted) return;
+    final count = store.postsForSpace(space.id).length;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Imported $count into "${space.name}"')),
+    );
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Import failed: $e')),
+      );
+    }
+  }
+}
 
   // ── Shared: new-space dialog ───────────────────────────────────────────
 
