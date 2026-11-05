@@ -3,6 +3,7 @@ import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
 import '../../util/html_utils.dart';
+import '../../util/json_format.dart';
 import '../models.dart';
 
 /// Reads and writes space directories: `<vault>/<space-id>/space.html`
@@ -50,7 +51,11 @@ class SpaceRepository {
     final dir = p.join(vaultPath, id);
     await fs.directory(p.join(dir, 'posts')).create(recursive: true);
     await fs.directory(p.join(dir, 'drive')).create(recursive: true);
-    await fs.file(p.join(dir, 'drive_meta.json')).writeAsString('{}');
+    // Pretty-printed for git-friendliness, even though the empty object is
+    // only read back if the user manually inspects the file.
+    await fs
+        .file(p.join(dir, 'drive_meta.json'))
+        .writeAsString(prettyJson(const <String, dynamic>{}));
     final meta = <String, dynamic>{
       'id': id,
       'name': name,

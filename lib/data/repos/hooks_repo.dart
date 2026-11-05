@@ -3,8 +3,9 @@ import 'dart:convert';
 import 'package:fs_shim/fs_shim.dart';
 import 'package:path/path.dart' as p;
 
+import '../../util/json_format.dart';
 import '../hooks.dart';
-import '../models.dart';
+import '../models.dart';        // ← add this line
 
 class HooksRepository {
   final FileSystem fs;
@@ -86,7 +87,8 @@ class HooksRepository {
 
   Future<void> _write() async {
     await fs.directory(vaultPath).create(recursive: true);
-    await fs.file(_path).writeAsString(jsonEncode({
+    // Pretty-printed so `hooks.json` reads in git and in a text editor.
+    await fs.file(_path).writeAsString(prettyJson({
       'version': 1,
       'hooks': _cache.map((h) => h.toJson()).toList(),
     }));

@@ -4,6 +4,8 @@ import 'package:fs_shim/fs_shim.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../../util/json_format.dart';
+
 enum SyncProviderKind { github, gitlab }
 
 extension SyncProviderKindLabel on SyncProviderKind {
@@ -106,7 +108,8 @@ class SyncConfigStore {
 
   Future<void> save(SyncConfig config) async {
     await fs.directory(vaultPath).create(recursive: true);
-    await fs.file(_path).writeAsString(jsonEncode(config.toJson()));
+    // `sync.json` is user-editable (see SyncScreen), so pretty-print it.
+    await fs.file(_path).writeAsString(prettyJson(config.toJson()));
   }
 }
 
@@ -138,7 +141,9 @@ class SyncTokenStore {
   Future<void> _writeAll(Map<String, dynamic> data) async {
     final dir = await getApplicationSupportDirectory();
     await fs.directory(dir.path).create(recursive: true);
-    await fs.file(await _path()).writeAsString(jsonEncode(data));
+    // Pretty-printed so the user can open and edit it by hand (adding or
+    // removing a token without going through the UI).
+    await fs.file(await _path()).writeAsString(prettyJson(data));
   }
 
   Future<String?> load(String key) async => (await _readAll())[key] as String?;
@@ -195,6 +200,9 @@ class SyncCacheStore {
   ) async {
     final dir = await getApplicationSupportDirectory();
     await fs.directory(dir.path).create(recursive: true);
+    // Deliberately compact: this is a transient runtime cache of possibly
+    // 26K entries in the app support dir, never in git, and pretty-
+    // printing would roughly triple its size on disk and its load time.
     await fs.file(await _path(tokenKey)).writeAsString(jsonEncode({
       'files': files,
       'commitSha': commitSha,

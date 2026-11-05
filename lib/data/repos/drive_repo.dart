@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
+import '../../util/json_format.dart';
 import '../models.dart';
 
 /// Stores opaque file blobs under `drive/<id>.<ext>` (or `drive/<id>` for
@@ -218,8 +219,11 @@ class DriveRepository {
 
   Future<void> _writeMeta(
       String spaceId, Map<String, Map<String, dynamic>> meta) async {
+    // `jsonDecode` accepts any whitespace, so the pretty-printed form is
+    // read back identically. `prettyJson` ends with a trailing newline,
+    // which matters for git diffs.
     await fs
         .file(p.join(vaultPath, spaceId, 'drive_meta.json'))
-        .writeAsString(jsonEncode(meta));
+        .writeAsString(prettyJson(meta));
   }
 }
