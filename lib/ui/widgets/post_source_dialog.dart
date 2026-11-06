@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 
 import '../../data/models.dart';
 import '../../data/store.dart';
@@ -25,7 +26,14 @@ Future<void> showPostSourceDialog(
   }
   if (!context.mounted) return;
 
-  final path = '${store.vaultPath}/${space.id}/posts/${post.id}.html';
+  // Use the real path from the repository so legacy `posts/` (pre-rename)
+  // and current `entries/` both display correctly. Fall back to a
+  // constructed path if the file can't be located — shouldn't happen for
+  // a post loaded via VaultStore, but avoids a null in a cosmetic field.
+  final path = await store.postFilePath(space.id, post.id) ??
+      p.join(store.vaultPath, space.id, 'entries', '${post.id}.html');
+  if (!context.mounted) return;
+
   await showDialog<void>(
     context: context,
     builder: (ctx) => _PostSourceDialog(
@@ -92,11 +100,15 @@ class _PostSourceDialog extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            Text(
+            // Path is now selectable so the user can copy it and paste it
+            // into a terminal or file manager. No maxLines — a very long
+            // path wraps to a couple of lines, which is preferable to
+            // truncating at an ellipsis and hiding the end of the path.
+            SelectableText(
               path,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodySmall?.copyWith(
+                fontFamily: 'monospace',
+                fontSize: 11,
                 color: theme.colorScheme.onSurfaceVariant,
                 fontStyle: FontStyle.italic,
               ),

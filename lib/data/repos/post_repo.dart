@@ -99,8 +99,7 @@ class PostRepository {
       if (title != null && title.isNotEmpty) 'title': title,
       if (description != null && description.isNotEmpty)
         'description': description,
-      if (thumbnail != null && thumbnail.isNotEmpty)
-        'thumbnail': thumbnail,
+      if (thumbnail != null && thumbnail.isNotEmpty) 'thumbnail': thumbnail,
       if (quotedPostId != null) 'quotedPostId': quotedPostId,
       if (hookState.isNotEmpty)
         'hooks': hookState.map((k, v) => MapEntry(k, v.toJson())),
@@ -154,10 +153,8 @@ class PostRepository {
       if (title != null && title.isNotEmpty) 'title': title,
       if (description != null && description.isNotEmpty)
         'description': description,
-      if (thumbnail != null && thumbnail.isNotEmpty)
-        'thumbnail': thumbnail,
-      if (existing.quotedPostId != null)
-        'quotedPostId': existing.quotedPostId,
+      if (thumbnail != null && thumbnail.isNotEmpty) 'thumbnail': thumbnail,
+      if (existing.quotedPostId != null) 'quotedPostId': existing.quotedPostId,
       if (existing.hookState.isNotEmpty)
         'hooks': existing.hookState.map((k, v) => MapEntry(k, v.toJson())),
     };
@@ -200,6 +197,17 @@ class PostRepository {
       throw StateError('Entry $postId not found');
     }
     return f.readAsString();
+  }
+
+  /// Returns the on-disk path where [postId]'s source lives, or null if the
+  /// file isn't present under either `entries/` or the legacy `posts/`
+  /// directory. Used by the source dialog to display (and let the user
+  /// copy) the exact location rather than guessing it.
+  Future<String?> filePath(String spaceId, String postId) async {
+    final dir = await _entriesDir(spaceId);
+    final f = fs.file(p.join(dir.path, '$postId.html'));
+    if (await f.exists()) return f.path;
+    return null;
   }
 
   Future<Post> patchHookState(
@@ -246,8 +254,8 @@ class PostRepository {
     if (rawHooks is Map) {
       for (final e in rawHooks.entries) {
         try {
-          hookState[e.key as String] = PostHookState.fromJson(
-              (e.value as Map).cast<String, dynamic>());
+          hookState[e.key as String] =
+              PostHookState.fromJson((e.value as Map).cast<String, dynamic>());
         } catch (err) {
           debugPrint('Bad hook state ${e.key}: $err');
         }

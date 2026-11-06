@@ -194,7 +194,8 @@ class VaultStore extends ChangeNotifier {
 
   Future<void> reload() async {
     await _migratePostFolders();
-    await _spaces.migrateHtmlToJson(); // ← add this line
+    await _spaces.migrateHtmlToJson();
+    await _hooks.migrateSingleFileToFolder();
 
     _drive.clearCache();
     _spaceCache.clear();
@@ -399,6 +400,11 @@ class VaultStore extends ChangeNotifier {
   /// Returns the raw HTML + frontmatter for [postId].
   Future<String> readPostSource(String spaceId, String postId) =>
       _posts.readSource(spaceId, postId);
+
+  /// Returns the actual on-disk path for [postId]'s source file, or null
+  /// if it can't be located (should not happen for a loaded post).
+  Future<String?> postFilePath(String spaceId, String postId) =>
+      _posts.filePath(spaceId, postId);
 
   // ── Drive ──────────────────────────────────────────────────────────────
 

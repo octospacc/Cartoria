@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
 import '../../data/models.dart';
 import '../../data/store.dart';
@@ -51,6 +52,7 @@ class SpaceStatsDialog extends StatelessWidget {
             );
           }
           final s = snap.data!;
+          final theme = Theme.of(context);
           return SizedBox(
             width: 320,
             child: SingleChildScrollView(
@@ -59,7 +61,7 @@ class SpaceStatsDialog extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _Section(
-                    title: 'Posts',
+                    title: 'Content',
                     children: [
                       _StatRow(label: 'Total', value: '${s.totalPosts}'),
                       _StatRow(label: 'Notes', value: '${s.notes}'),
@@ -84,6 +86,25 @@ class SpaceStatsDialog extends StatelessWidget {
                       _StatRow(
                         label: 'Space size',
                         value: formatBytes(s.storageBytes),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 24),
+                  // Where this space actually lives on disk. Useful when
+                  // the vault is git-synced (paste into a terminal to
+                  // `cd` into the space, or open the folder in a file
+                  // manager) or when the user wants to back up manually.
+                  _Section(
+                    title: 'Location',
+                    children: [
+                      SelectableText(
+                        p.join(store.vaultPath, space.id),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                          color: theme.colorScheme.onSurfaceVariant,
+                          fontStyle: FontStyle.italic,
+                        ),
                       ),
                     ],
                   ),
