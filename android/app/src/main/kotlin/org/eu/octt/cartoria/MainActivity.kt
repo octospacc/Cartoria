@@ -1,4 +1,4 @@
-package com.example.notatore
+package org.eu.octt.cartoria
 
 import io.flutter.embedding.android.FlutterActivity
 

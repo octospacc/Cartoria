@@ -1,11 +1,11 @@
 {
-    "name": "notatore",
-    "short_name": "notatore",
+    "name": "Cartoria",
+    "short_name": "Cartoria",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "A personal archive for notes, bookmarks, and files.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

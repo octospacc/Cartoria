@@ -1,5 +1,5 @@
-name: vault_app
-description: A personal vault for notes, bookmarks, and files.
+name: Cartoria
+description: A personal archive for notes, bookmarks, and files.
 publish_to: 'none'
 version: 0.3.0
 environment:

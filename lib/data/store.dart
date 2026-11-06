@@ -176,14 +176,20 @@ class VaultStore extends ChangeNotifier {
 
   Future<void> init() async {
     fs = createFs();
+
+    // Step 1: resolve vaultPath. This is the only await that must succeed
+    // before we can assign the repositories.
     if (kIsWeb) {
-      vaultPath = '/vault';
+      vaultPath = '/Cartoria';
     } else {
       final docs = await getApplicationDocumentsDirectory();
-      vaultPath = p.join(docs.path, 'vault');
+      vaultPath = p.join(docs.path, 'Cartoria');
     }
-    await fs.directory(vaultPath).create(recursive: true);
 
+    // Step 2: assign every repository. This is deliberately before any
+    // filesystem work, so even if later steps throw (migration failure,
+    // corrupted hooks.json, disk full), the store is usable and createSpace
+    // / createPost / etc. don't throw LateInitializationError.
     _spaces = SpaceRepository(fs: fs, vaultPath: vaultPath);
     _posts = PostRepository(fs: fs, vaultPath: vaultPath);
     _drive = DriveRepository(fs: fs, vaultPath: vaultPath);
@@ -192,16 +198,53 @@ class VaultStore extends ChangeNotifier {
     _hooks = HooksRepository(fs: fs, vaultPath: vaultPath);
     _executor = HookExecutor(client: _httpClient);
     _bookmarksImporter = BookmarksImporter(posts: _posts);
+    _syncConfigsStore = SyncConfigsStore(fs: fs, vaultPath: vaultPath);
     _syncTokenStore = SyncTokenStore(fs: fs);
     _syncCacheStore = SyncCacheStore(fs: fs);
     _link = LinkMetadataService(
       proxyUrl: kIsWeb ? 'https://corsproxy.io/?url={url}' : null,
     );
 
-    _syncConfigsStore = SyncConfigsStore(fs: fs, vaultPath: vaultPath);
-    _syncConfigs = await _syncConfigsStore.load();
+    // Step 3: filesystem work. Failures here are non-fatal — the store is
+    // already usable, and reload() retries every migration on next launch.
 
-    await _hooks.load();
+    // Migrate the pre-rename `vault/` folder if this is the first launch
+    // after renaming the app. On macOS sandboxed this is a no-op (the new
+    // bundle ID has its own container; the old one is inaccessible), but
+    // it does run on Windows, Linux, and macOS unsandboxed.
+    if (!kIsWeb) {
+      try {
+        final docs = await getApplicationDocumentsDirectory();
+        final oldPath = p.join(docs.path, 'vault');
+        final newPath = p.join(docs.path, 'Cartoria');
+        if (!await fs.directory(newPath).exists() &&
+            await fs.directory(oldPath).exists()) {
+          await fs.directory(oldPath).rename(newPath);
+          debugPrint('Migrated vault/ → Cartoria/');
+        }
+      } catch (e) {
+        debugPrint('Vault folder migration failed (harmless): $e');
+      }
+    }
+
+    await fs.directory(vaultPath).create(recursive: true);
+
+    try {
+      await _hooks.load();
+    } catch (e) {
+      debugPrint('Hooks load failed: $e');
+    }
+
+    try {
+      _syncConfigs = await _syncConfigsStore.load();
+    } catch (e) {
+      debugPrint('Sync configs load failed: $e');
+      _syncConfigs = [];
+    }
+
+    // reload() runs the migrations and populates the caches. It has its
+    // own internal error handling per-space, so a corrupt entry doesn't
+    // stop the app.
     await reload();
   }
 
