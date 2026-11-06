@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../data/models.dart';
 import '../../../data/store.dart';
 import '../../../util/file_category.dart';
+import '../../../util/hook_outcome.dart';
 import '../../widgets/file_thumbnail.dart';
 import '../../widgets/hook_status_dialog.dart';
 import '../../widgets/post_source_dialog.dart';
@@ -88,13 +89,16 @@ class PostCard extends StatelessWidget {
                 children: [
                   _PostHeader(
                     post: post,
+                    hookOutcome: _hookOutcome(store, post),
                     onEdit: onEdit,
                     onDelete: () => _confirmDelete(context),
                     onShowSource: () =>
                         showPostSourceDialog(context, store, space, post),
-                    onHookStatus: post.hookState.isEmpty
-                        ? null
-                        : () => showHookStatusDialog(context, post, store),
+                    onHookStatus:
+                        (_hookOutcome(store, post) == HookOutcome.none)
+                            ? null
+                            : () => showHookStatusDialog(
+                                context, post, store, space.id),
                   ),
                   if (plaintext.isNotEmpty) ...[
                     const SizedBox(height: 4),
@@ -203,6 +207,13 @@ class PostCard extends StatelessWidget {
       ),
     );
     if (ok == true) onDelete();
+  }
+
+  HookOutcome _hookOutcome(VaultStore store, Post post) {
+    return hookOutcomeFor(
+      hasActive: store.hasActiveHooks(post.id),
+      states: post.hookState,
+    );
   }
 }
 
@@ -540,6 +551,7 @@ class _PostAvatar extends StatelessWidget {
 
 class _PostHeader extends StatelessWidget {
   final Post post;
+  final HookOutcome hookOutcome;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final VoidCallback onShowSource;
@@ -547,6 +559,7 @@ class _PostHeader extends StatelessWidget {
 
   const _PostHeader({
     required this.post,
+    required this.hookOutcome,
     required this.onEdit,
     required this.onDelete,
     required this.onShowSource,
@@ -585,6 +598,13 @@ class _PostHeader extends StatelessWidget {
             ],
           ),
         ),
+        if (hookOutcome != HookOutcome.none) ...[
+          const SizedBox(width: 4),
+          _HookIndicator(
+            outcome: hookOutcome,
+            onTap: onHookStatus,
+          ),
+        ],
         SizedBox(
           height: 24,
           width: 28,
@@ -614,6 +634,64 @@ class _PostHeader extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _HookIndicator extends StatelessWidget {
+  final HookOutcome outcome;
+  final VoidCallback? onTap;
+
+  const _HookIndicator({required this.outcome, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    final Widget visual;
+    final String tooltip;
+    switch (outcome) {
+      case HookOutcome.running:
+        visual = SizedBox(
+          width: 12,
+          height: 12,
+          child: CircularProgressIndicator(
+            strokeWidth: 1.5,
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        );
+        tooltip = 'Hooks running…';
+        break;
+      case HookOutcome.success:
+        visual = Icon(
+          Icons.check_circle,
+          size: 14,
+          color: Colors.green.shade600,
+        );
+        tooltip = 'Hooks succeeded';
+        break;
+      case HookOutcome.failure:
+        visual = Icon(
+          Icons.error,
+          size: 14,
+          color: theme.colorScheme.error,
+        );
+        tooltip = 'Hooks failed — tap for details';
+        break;
+      case HookOutcome.none:
+        return const SizedBox.shrink();
+    }
+
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: visual,
+        ),
+      ),
     );
   }
 }

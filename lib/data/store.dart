@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import '../platform/fs.dart';
 import '../util/fs_walk.dart';
 import '../util/mime.dart';
+import '../util/hook_outcome.dart';
 import 'bookmarks.dart';
 import 'hooks.dart';
 import 'models.dart';
@@ -78,6 +79,7 @@ class VaultStore extends ChangeNotifier {
 
   final Map<String, Future<void>> _postLocks = {};
   final Map<String, Future<void>> _hookChains = {};
+  final Set<String> _activeHookRuns = {};
 
   SyncConfig? _cachedSyncConfig;
   SyncConfig? get syncConfig => _cachedSyncConfig;
@@ -620,6 +622,128 @@ class VaultStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// True if at least one hook is currently running for [postId]. Used by
+  /// the post card to show a spinner.
+  bool hasActiveHooks(String postId) =>
+      _activeHookRuns.any((k) => k.startsWith('$postId:'));
+
+  /// Re-runs a specific hook on a post. Used by the "Re-run" button in the
+  /// hook status dialog — typically after a failure, but works on successful
+  /// hooks too (e.g. re-send to Telegram after manual changes on their end).
+  ///
+  /// `{{trigger}}` in templates resolves to `create` for never-edited posts
+  /// and `edit` otherwise. The exact original trigger isn't stored, so a
+  /// retried create-triggered hook on an edited post will see `edit`.
+  /// Templates that don't reference `{{trigger}}` are unaffected.
+  Future<void> retryHook(String spaceId, String postId, String hookKey) async {
+    // Snapshot the post + hook + space. If any is missing, nothing to do.
+    Post? post;
+    for (final p in _postCache[spaceId] ?? const <Post>[]) {
+      if (p.id == postId) {
+        post = p;
+        break;
+      }
+    }
+    if (post == null) return;
+
+    final hook = _hooks.byKey(hookKey);
+    if (hook == null) {
+      debugPrint('retryHook: hook "$hookKey" not found');
+      return;
+    }
+
+    final space = spaceById(spaceId);
+    if (space == null) return;
+
+    Post? parentPost;
+    if (post.parentId != null) {
+      for (final p in _postCache[spaceId] ?? const <Post>[]) {
+        if (p.id == post.parentId) {
+          parentPost = p;
+          break;
+        }
+      }
+    }
+
+    final files = post.fileIds
+        .map((id) => _fileIndex[spaceId]?[id])
+        .whereType<DriveFile>()
+        .toList();
+
+    final resolved = <String, ResolvedFile>{};
+    Future<ResolvedFile?> resolveFile(String fileId) async {
+      final cached = resolved[fileId];
+      if (cached != null) return cached;
+      final df = _fileIndex[spaceId]?[fileId];
+      if (df == null) return null;
+      final bytes = await _drive.readBytes(spaceId, fileId);
+      final r = ResolvedFile(
+        bytes: bytes,
+        name: df.name,
+        mimeType: mimeTypeForName(df.name),
+      );
+      resolved[fileId] = r;
+      return r;
+    }
+
+    final activeKey = '$postId:$hookKey';
+    _activeHookRuns.add(activeKey);
+    notifyListeners();
+
+    try {
+      final result = await _executor.execute(
+        hook: hook,
+        post: post,
+        original: null,
+        parent: parentPost,
+        space: space,
+        trigger: post.editedAt == null ? HookTrigger.create : HookTrigger.edit,
+        priorStates: post.hookState,
+        parentPriorStates: parentPost?.hookState ?? const {},
+        files: files,
+        resolveFile: resolveFile,
+      );
+
+      await _withPostLock(postId, () async {
+        final patched =
+            await _posts.patchHookState(spaceId, postId, {hookKey: result});
+        final idx =
+            _postCache[spaceId]?.indexWhere((x) => x.id == postId) ?? -1;
+        if (idx >= 0) _postCache[spaceId]![idx] = patched;
+      });
+    } catch (e) {
+      // Post could have been deleted during the network call, or the file
+      // write could have failed. Log without rethrowing so the dialog's
+      // caller doesn't need to handle it.
+      debugPrint('Retry failed for $hookKey on $postId: $e');
+    } finally {
+      _activeHookRuns.remove(activeKey);
+      notifyListeners();
+    }
+  }
+
+  /// Convenience: retries every failed hook on [postId] sequentially.
+  /// Each call to [retryHook] goes through its own `_withPostLock`, so
+  /// parallel calls would serialize on the file anyway.
+  Future<void> retryFailedHooks(String spaceId, String postId) async {
+    Post? post;
+    for (final p in _postCache[spaceId] ?? const <Post>[]) {
+      if (p.id == postId) {
+        post = p;
+        break;
+      }
+    }
+    if (post == null) return;
+
+    final failed = <String>[
+      for (final e in post.hookState.entries)
+        if (hookStateFailed(e.value)) e.key,
+    ];
+    for (final key in failed) {
+      await retryHook(spaceId, postId, key);
+    }
+  }
+
   // ── Hooks: execution ───────────────────────────────────────────────────
 
   Future<T> _withPostLock<T>(String postId, Future<T> Function() fn) {
@@ -673,7 +797,6 @@ class VaultStore extends ChangeNotifier {
     }
     if (post == null) return;
 
-    // Look up the parent for `parent.post.*` / `parent.previous.<key>.*`.
     Post? parentPost;
     if (post.parentId != null) {
       for (final p in _postCache[space.id] ?? const <Post>[]) {
@@ -713,30 +836,46 @@ class VaultStore extends ChangeNotifier {
       return r;
     }
 
-    final priorStates = post.hookState;
-    final results = <String, PostHookState>{};
+    // Mark the whole batch active up front so the card shows one continuous
+    // "running" state rather than flickering between individual hooks.
     for (final hook in active) {
-      results[hook.key] = await _executor.execute(
-        hook: hook,
-        post: post,
-        parent: parentPost,
-        original: originalSnapshot,
-        space: space,
-        trigger: trigger,
-        priorStates: priorStates,
-        parentPriorStates: parentPost?.hookState ?? const {},
-        files: files,
-        resolveFile: resolveFile,
-      );
+      _activeHookRuns.add('$postId:${hook.key}');
     }
-    if (results.isEmpty) return;
+    notifyListeners();
 
-    await _withPostLock(postId, () async {
-      final patched = await _posts.patchHookState(space.id, postId, results);
-      final idx = _postCache[space.id]?.indexWhere((x) => x.id == postId) ?? -1;
-      if (idx >= 0) _postCache[space.id]![idx] = patched;
+    try {
+      final priorStates = post.hookState;
+      final results = <String, PostHookState>{};
+      for (final hook in active) {
+        results[hook.key] = await _executor.execute(
+          hook: hook,
+          post: post,
+          original: originalSnapshot,
+          parent: parentPost,
+          space: space,
+          trigger: trigger,
+          priorStates: priorStates,
+          parentPriorStates: parentPost?.hookState ?? const {},
+          files: files,
+          resolveFile: resolveFile,
+        );
+      }
+      if (results.isEmpty) return;
+
+      await _withPostLock(postId, () async {
+        final patched = await _posts.patchHookState(space.id, postId, results);
+        final idx =
+            _postCache[space.id]?.indexWhere((x) => x.id == postId) ?? -1;
+        if (idx >= 0) _postCache[space.id]![idx] = patched;
+      });
+    } catch (e) {
+      debugPrint('Hook batch failed for $postId: $e');
+    } finally {
+      for (final hook in active) {
+        _activeHookRuns.remove('$postId:${hook.key}');
+      }
       notifyListeners();
-    });
+    }
   }
 
   // ── Sync ───────────────────────────────────────────────────────────────
