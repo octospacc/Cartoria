@@ -1,14 +1,16 @@
 import 'dart:convert';
 import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
+import '../../data/bookmarks.dart';
 import '../../data/models.dart';
 import '../../data/store.dart';
-import '../../data/bookmarks.dart';
-import '../../platform/file_save.dart';
 import '../../util/html_utils.dart';
 import '../bookmark_import_helpers.dart';
+import '../space_actions.dart';
+import '../space_dialogs.dart';
 import '../widgets/space_stats_dialog.dart';
 import 'drive.dart';
 import 'space_feed/attachment_picker.dart';
@@ -28,6 +30,14 @@ class SpaceFeedScreen extends StatefulWidget {
 }
 
 class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
+  /// Resolves the current version of this space from the store on every
+  /// read. `widget.space` is a snapshot from navigation time and becomes
+  /// stale as soon as the space is edited (rename, icon change).
+  ///
+  /// Falls back to `widget.space` when the space has just been deleted
+  /// (delete-space calls this in its dialog after `removeWhere`).
+  Space get _space => widget.store.spaceById(widget.space.id) ?? widget.space;
+
   final _bodyCtrl = TextEditingController();
   final _urlCtrl = TextEditingController();
   final _searchCtrl = TextEditingController();
@@ -37,17 +47,10 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   bool _sending = false;
   bool _searchActive = false;
 
-  // Separate controllers so scroll position is preserved when toggling
-  // search. Only one list is attached at a time, but each keeps its own
-  // position across the toggle.
   final ItemScrollController _feedScroll = ItemScrollController();
   final ItemScrollController _searchScroll = ItemScrollController();
 
-  // GlobalKeys on each rendered post so nested targets (inside a root's
-  // inline tree) can be located with Scrollable.ensureVisible.
   final Map<String, GlobalKey> _postKeys = {};
-
-  // Cancellation token: a new scroll-to request supersedes an in-flight one.
   int _scrollToken = 0;
 
   GlobalKey _keyFor(String postId) =>
@@ -67,8 +70,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   Future<void> _scrollToPost(String postId) async {
     final token = ++_scrollToken;
 
-    // Exit search first — the target may be filtered out of the search
-    // result tree, and scrollTo() needs the feed controller attached.
     if (_searchActive) {
       setState(() {
         _searchCtrl.clear();
@@ -78,7 +79,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       if (token != _scrollToken) return;
     }
 
-    // Locate the target's root and ancestor chain in the full tree.
     final roots = _buildTree();
     final chain = <String>[];
     int? rootIndex;
@@ -101,7 +101,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     if (rootIndex == null) return;
     if (token != _scrollToken) return;
 
-    // Expand every ancestor so the target is built and visible.
     var changed = false;
     setState(() {
       for (var i = 0; i < chain.length - 1; i++) {
@@ -116,7 +115,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       if (token != _scrollToken) return;
     }
 
-    // Precise jump: index of the top-level ancestor. No estimation.
     if (!_feedScroll.isAttached) return;
     try {
       await _feedScroll.scrollTo(
@@ -126,12 +124,10 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         alignment: 0.05,
       );
     } catch (_) {
-      // Controller detached mid-flight (e.g. tree swapped out).
       return;
     }
     if (token != _scrollToken) return;
 
-    // If the target is nested inside that root, ensure it's fully visible.
     if (postId != chain.first) {
       await WidgetsBinding.instance.endOfFrame;
       if (token != _scrollToken) return;
@@ -149,7 +145,126 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     }
   }
 
-  // ── Compose / edit / delete ────────────────────────────────────────────
+  // ── Space actions ──────────────────────────────────────────────────────
+
+  Future<void> _editSpace() async {
+    // was:
+    //   initialName: widget.space.name,
+    //   initialIcon: widget.space.icon,
+    final result = await showSpaceDialog(
+      context,
+      initialName: _space.name,
+      initialIcon: _space.icon,
+      title: 'Edit space',
+      confirmLabel: 'Save',
+    );
+    if (result == null) return;
+    await widget.store.updateSpace(
+      widget.space.id,
+      name: result.name,
+      icon: result.icon,
+    );
+  }
+
+  Future<void> _importFile() async {
+    final picked = await pickImportFile(context);
+    if (picked == null) return;
+    final lower = picked.name.toLowerCase();
+    if (lower.endsWith('.zip')) {
+      await _importZipIntoCurrent(picked.bytes);
+    } else if (lower.endsWith('.html') || lower.endsWith('.htm')) {
+      await _importBookmarksIntoCurrent(picked.bytes);
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unsupported file type')),
+      );
+    }
+  }
+
+  Future<void> _importZipIntoCurrent(Uint8List bytes) async {
+    try {
+      final r = await widget.store.importSpaceZipIntoExistingSpace(
+        targetSpaceId: widget.space.id,
+        zipBytes: bytes,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(spaceImportSummary(r))),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import failed: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _importBookmarksIntoCurrent(Uint8List bytes) async {
+    BookmarkFile file;
+    try {
+      file = BookmarkFileParser.parse(
+        utf8.decode(bytes, allowMalformed: true),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not parse file: $e')),
+        );
+      }
+      return;
+    }
+    if (file.bookmarks.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No bookmarks found in file')),
+        );
+      }
+      return;
+    }
+    try {
+      final r = await widget.store.importBookmarksIntoSpace(
+        spaceId: widget.space.id,
+        file: file,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(bookmarkImportSummary(r))),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import failed: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteSpace() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        // was: Text('Delete "${widget.space.name}"?')
+        title: Text('Delete "${_space.name}"?'),
+        content: const Text(
+            'This removes every post and file in this space. Cannot be undone.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await widget.store.deleteSpace(widget.space.id);
+      if (mounted) Navigator.pop(context);
+    }
+  }
+
+  // ── Compose / edit / delete posts ──────────────────────────────────────
 
   List<String> _extractTags(String body) {
     final re = RegExp(r'(?:^|\s)#([A-Za-z0-9_]+)');
@@ -278,119 +393,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       tags: _extractTags(result.body),
       fileIds: result.fileIds,
     );
-  }
-
-  Future<void> _exportSpace() async {
-    try {
-      final bytes = await widget.store.exportSpaceZip(widget.space.id);
-      final stamp = DateTime.now()
-          .toIso8601String()
-          .replaceAll(RegExp(r'[^0-9T]'), '')
-          .substring(0, 15);
-      await saveOrShareFile(bytes, 'space-${widget.space.name}-$stamp.zip');
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Export failed: $e')));
-      }
-    }
-  }
-
-  Future<void> _importFile() async {
-    final picked = await pickImportFile(context);
-    if (picked == null) return;
-    final lower = picked.name.toLowerCase();
-    if (lower.endsWith('.zip')) {
-      await _importZipIntoCurrent(picked.bytes);
-    } else if (lower.endsWith('.html') || lower.endsWith('.htm')) {
-      await _importBookmarksIntoCurrent(picked.bytes);
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unsupported file type')),
-      );
-    }
-  }
-
-  Future<void> _importZipIntoCurrent(Uint8List bytes) async {
-    try {
-      final r = await widget.store.importSpaceZipIntoExistingSpace(
-        targetSpaceId: widget.space.id,
-        zipBytes: bytes,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(spaceImportSummary(r))),
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Import failed: $e')),
-        );
-      }
-    }
-  }
-
-  Future<void> _importBookmarksIntoCurrent(Uint8List bytes) async {
-    BookmarkFile file;
-    try {
-      file = BookmarkFileParser.parse(
-        utf8.decode(bytes, allowMalformed: true),
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not parse file: $e')),
-        );
-      }
-      return;
-    }
-    if (file.bookmarks.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No bookmarks found in file')),
-        );
-      }
-      return;
-    }
-    try {
-      final r = await widget.store.importBookmarksIntoSpace(
-        spaceId: widget.space.id,
-        file: file,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(bookmarkImportSummary(r))),
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Import failed: $e')),
-        );
-      }
-    }
-  }
-
-  Future<void> _deleteSpace() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Delete "${widget.space.name}"?'),
-        content: const Text(
-            'This removes every post and file in this space. Cannot be undone.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Delete')),
-        ],
-      ),
-    );
-    if (ok == true) {
-      await widget.store.deleteSpace(widget.space.id);
-      if (mounted) Navigator.pop(context);
-    }
   }
 
   // ── Search / tree ──────────────────────────────────────────────────────
@@ -600,10 +602,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     return SelectionArea(
       child: ScrollablePositionedList.builder(
         itemScrollController: searchMode ? _searchScroll : _feedScroll,
-        // Clamping physics eliminates the overshoot bounce that reads as
-        // "up-and-down jitter" near viewport edges. `ScrollablePositioned
-        // List` is more sensitive to bounce than plain `ListView` because
-        // it re-anchors item offsets during overscroll.
         physics: const ClampingScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
         itemCount: roots.length,
@@ -661,7 +659,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
               ),
               onChanged: (_) => setState(() {}),
             )
-          : Text('${widget.space.icon} ${widget.space.name}'),
+          : Text('${_space.icon} ${_space.name}'),
       actions: _searchActive
           ? [
               if (_searchCtrl.text.isNotEmpty)
@@ -695,17 +693,19 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                   if (v == 'stats') {
                     SpaceStatsDialog.show(context, widget.store, widget.space);
                   }
+                  if (v == 'edit') _editSpace();
                   if (v == 'import') _importFile();
-                  if (v == 'export') _exportSpace();
+                  if (v == 'export') {
+                    exportSpaceZip(context, widget.store, _space);
+                  }
                   if (v == 'delete') _deleteSpace();
                 },
                 itemBuilder: (_) => const [
                   PopupMenuItem(value: 'stats', child: Text('Statistics')),
+                  PopupMenuItem(value: 'edit', child: Text('Edit space…')),
                   PopupMenuItem(value: 'import', child: Text('Import…')),
-                  PopupMenuItem(
-                      value: 'export', child: Text('Export this space…')),
-                  PopupMenuItem(
-                      value: 'delete', child: Text('Delete this space…')),
+                  PopupMenuItem(value: 'export', child: Text('Export space…')),
+                  PopupMenuItem(value: 'delete', child: Text('Delete space…')),
                 ],
               ),
             ],

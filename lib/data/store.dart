@@ -194,6 +194,8 @@ class VaultStore extends ChangeNotifier {
 
   Future<void> reload() async {
     await _migratePostFolders();
+    await _spaces.migrateHtmlToJson(); // ← add this line
+
     _drive.clearCache();
     _spaceCache.clear();
     _postCache.clear();

@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../util/fs_walk.dart';
 import '../../util/html_utils.dart';
+import '../../util/json_format.dart';
 import '../models.dart';
 import '../space_archive.dart';
 import 'post_repo.dart';
@@ -16,10 +17,12 @@ import 'post_repo.dart';
 /// Zips a whole space directory (or extracts one from a zip).
 ///
 /// Imports are id-preserving where possible. If the target id already
-/// exists on disk, the incoming space is given a fresh UUID and its
-/// `space.html` frontmatter is rewritten to match. Reply parents that
-/// pointed at the old id are *not* rewritten — matches the pre-refactor
-/// behavior.
+/// exists on disk, the incoming space is given a fresh UUID.
+///
+/// Both `space.json` (current) and `space.html` (legacy zips) are
+/// recognised. On extraction the space metadata is always written as
+/// `space.json`, regardless of the source format. Legacy `posts/`
+/// directories are normalised to `entries/` on the way in.
 class ArchiveService {
   final FileSystem fs;
   final String vaultPath;
@@ -47,38 +50,29 @@ class ArchiveService {
   Future<String> importSpace(Uint8List zipBytes) async {
     final archive = ZipDecoder().decodeBytes(zipBytes);
 
-    // Locate the shallowest `space.html` in the zip — that marks the space
-    // root. Zips created by this app contain exactly one; hand-edited ones
-    // might contain nested copies, and we pick the shortest path.
-    ArchiveFile? spaceFile;
-    for (final f in archive.files) {
-      if (!f.isFile) continue;
-      if (f.name == 'space.html' || f.name.endsWith('/space.html')) {
-        if (spaceFile == null || f.name.length < spaceFile.name.length) {
-          spaceFile = f;
-        }
-      }
-    }
+    final (spaceFile, spaceFilename) = _findSpaceMetadata(archive);
     if (spaceFile == null) {
-      throw const FormatException('Zip does not contain space.html');
+      throw const FormatException(
+          'Zip does not contain space.json or space.html');
     }
 
-    final content = utf8.decode(spaceFile.content as List<int>);
-    final meta = parseFrontmatterMeta(content);
+    final meta = _parseSpaceMeta(spaceFile, spaceFilename!);
     var newId = (meta['id'] as String?) ?? const Uuid().v7();
     final conflict = await fs.directory(p.join(vaultPath, newId)).exists();
     if (conflict) newId = const Uuid().v7();
 
     final spaceDir = p.dirname(spaceFile.name);
     final prefix = (spaceDir.isEmpty || spaceDir == '.') ? '' : '$spaceDir/';
+
     for (final f in archive.files) {
       if (!f.isFile || !f.name.startsWith(prefix)) continue;
       final rel = f.name.substring(prefix.length);
       if (rel.isEmpty) continue;
 
-      // Normalise legacy `posts/` entries into `entries/` on the way in,
-      // so a vault that imports an old zip ends up with the current
-      // layout. The content is identical; only the directory name differs.
+      // The space metadata is written separately, below, in JSON form.
+      if (rel == 'space.json' || rel == 'space.html') continue;
+
+      // Normalise legacy posts/ → entries/ on the way in.
       final normalisedRel = rel.startsWith('posts/')
           ? 'entries/${rel.substring('posts/'.length)}'
           : rel;
@@ -90,13 +84,10 @@ class ArchiveService {
           .writeAsBytes(Uint8List.fromList(f.content as List<int>));
     }
 
-    if (conflict) {
-      final updated = {...meta, 'id': newId};
-      final body = bodyAfterFrontmatter(content);
-      await fs
-          .file(p.join(vaultPath, newId, 'space.html'))
-          .writeAsString(makeDocument(updated, body));
-    }
+    // Always write space.json, with the resolved id.
+    await fs
+        .file(p.join(vaultPath, newId, 'space.json'))
+        .writeAsString(prettyJson({...meta, 'id': newId}));
 
     return newId;
   }
@@ -106,21 +97,13 @@ class ArchiveService {
   Future<ExtractedSpace> readSpaceArchive(Uint8List zipBytes) async {
     final archive = ZipDecoder().decodeBytes(zipBytes);
 
-    ArchiveFile? spaceFile;
-    for (final f in archive.files) {
-      if (!f.isFile) continue;
-      if (f.name == 'space.html' || f.name.endsWith('/space.html')) {
-        if (spaceFile == null || f.name.length < spaceFile.name.length) {
-          spaceFile = f;
-        }
-      }
-    }
+    final (spaceFile, spaceFilename) = _findSpaceMetadata(archive);
     if (spaceFile == null) {
-      throw const FormatException('Zip does not contain space.html');
+      throw const FormatException(
+          'Zip does not contain space.json or space.html');
     }
 
-    final content = utf8.decode(spaceFile.content as List<int>);
-    final meta = parseFrontmatterMeta(content);
+    final meta = _parseSpaceMeta(spaceFile, spaceFilename!);
     final name = (meta['name'] as String?) ?? 'Imported space';
     final icon = (meta['icon'] as String?) ?? '📓';
     final createdAtStr = meta['created'] as String?;
@@ -143,8 +126,7 @@ class ArchiveService {
       break;
     }
 
-    // Entries. Accept both `entries/` (current) and `posts/` (legacy zips)
-    // so imports from pre-rename exports still work.
+    // Entries — accept both entries/ (current) and posts/ (legacy zips).
     final posts = <Post>[];
     for (final f in archive.files) {
       if (!f.isFile) continue;
@@ -190,5 +172,51 @@ class ArchiveService {
       posts: posts,
       files: files,
     );
+  }
+
+  // ── Shared helpers ─────────────────────────────────────────────────────
+
+  /// Locates the space metadata file in the archive.
+  ///
+  /// Prefers `space.json`; falls back to `space.html` for zips created
+  /// before the JSON migration. When multiple candidates exist, the
+  /// shallowest one wins (matches the previous behaviour).
+  (ArchiveFile?, String?) _findSpaceMetadata(Archive archive) {
+    ArchiveFile? jsonFile;
+    ArchiveFile? htmlFile;
+
+    for (final f in archive.files) {
+      if (!f.isFile) continue;
+      final isJson =
+          f.name == 'space.json' || f.name.endsWith('/space.json');
+      final isHtml =
+          f.name == 'space.html' || f.name.endsWith('/space.html');
+      if (isJson) {
+        if (jsonFile == null || f.name.length < jsonFile.name.length) {
+          jsonFile = f;
+        }
+      } else if (isHtml) {
+        if (htmlFile == null || f.name.length < htmlFile.name.length) {
+          htmlFile = f;
+        }
+      }
+    }
+
+    if (jsonFile != null) return (jsonFile, 'space.json');
+    if (htmlFile != null) return (htmlFile, 'space.html');
+    return (null, null);
+  }
+
+  /// Parses the metadata map from either format. Never returns null.
+  Map<String, dynamic> _parseSpaceMeta(ArchiveFile f, String filename) {
+    final raw = utf8.decode(f.content as List<int>);
+    if (filename == 'space.json') {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        throw const FormatException('space.json must contain an object');
+      }
+      return decoded.cast<String, dynamic>();
+    }
+    return parseFrontmatterMeta(raw);
   }
 }
