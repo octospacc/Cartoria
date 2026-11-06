@@ -8,6 +8,9 @@ import 'package:uuid/uuid.dart';
 
 import '../../util/json_format.dart';
 
+export 'sync_cache_store.dart';
+export 'sync_token_store.dart';
+
 enum SyncProviderKind { github, gitlab }
 
 extension SyncProviderKindLabel on SyncProviderKind {
@@ -273,95 +276,5 @@ class SyncConfigsStore {
       'version': 2,
       'remotes': configs.map((c) => c.toJson()).toList(),
     }));
-  }
-}
-
-/// Provider tokens, stored outside the vault in the app support dir.
-/// Keyed by `provider[:host]:owner/repo`.
-class SyncTokenStore {
-  final FileSystem fs;
-  const SyncTokenStore({required this.fs});
-
-  Future<String> _path() async {
-    final dir = await getApplicationSupportDirectory();
-    return p.join(dir.path, 'sync_tokens.json');
-  }
-
-  Future<Map<String, dynamic>> _readAll() async {
-    final f = fs.file(await _path());
-    if (!await f.exists()) return {};
-    try {
-      return (jsonDecode(await f.readAsString()) as Map)
-          .cast<String, dynamic>();
-    } catch (_) {
-      return {};
-    }
-  }
-
-  Future<void> _writeAll(Map<String, dynamic> data) async {
-    final dir = await getApplicationSupportDirectory();
-    await fs.directory(dir.path).create(recursive: true);
-    await fs.file(await _path()).writeAsString(prettyJson(data));
-  }
-
-  Future<String?> load(String key) async => (await _readAll())[key] as String?;
-
-  Future<void> save(String key, String token) async {
-    final data = await _readAll();
-    data[key] = token;
-    await _writeAll(data);
-  }
-
-  Future<void> delete(String key) async {
-    final data = await _readAll();
-    data.remove(key);
-    await _writeAll(data);
-  }
-}
-
-/// Caches the last-seen remote file listing.
-class SyncCacheStore {
-  final FileSystem fs;
-  const SyncCacheStore({required this.fs});
-
-  Future<String> _path(String cacheKey) async {
-    final dir = await getApplicationSupportDirectory();
-    final safe = cacheKey.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
-    return p.join(dir.path, 'sync_cache_$safe.json');
-  }
-
-  Future<({Map<String, String> files, String? commitSha})?> load(
-    String cacheKey,
-  ) async {
-    final f = fs.file(await _path(cacheKey));
-    if (!await f.exists()) return null;
-    try {
-      final data =
-          (jsonDecode(await f.readAsString()) as Map).cast<String, dynamic>();
-      final files =
-          ((data['files'] as Map?) ?? const {}).cast<String, String>();
-      return (files: files, commitSha: data['commitSha'] as String?);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<void> save(
-    String cacheKey,
-    Map<String, String> files,
-    String? commitSha,
-  ) async {
-    final dir = await getApplicationSupportDirectory();
-    await fs.directory(dir.path).create(recursive: true);
-    await fs.file(await _path(cacheKey)).writeAsString(jsonEncode({
-      'files': files,
-      'commitSha': commitSha,
-      'savedAt': DateTime.now().toUtc().toIso8601String(),
-    }));
-  }
-
-  Future<void> clear(String cacheKey) async {
-    final f = fs.file(await _path(cacheKey));
-    if (await f.exists()) await f.delete();
   }
 }

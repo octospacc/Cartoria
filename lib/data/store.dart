@@ -1142,9 +1142,6 @@ class VaultStore extends ChangeNotifier {
   }
 
   Future<void> _backupVault() async {
-    if (kIsWeb) {
-      throw UnsupportedError('Vault backup is not supported on web.');
-    }
     final archive = Archive();
     final root = fs.directory(vaultPath);
     if (!await root.exists()) return;
@@ -1156,15 +1153,48 @@ class VaultStore extends ChangeNotifier {
         archive.addFile(ArchiveFile(rel, bytes.length, bytes));
       } catch (_) {}
     }
-    final supportDir = await getApplicationSupportDirectory();
-    final backupDir = fs.directory(p.join(supportDir.path, 'vault_backups'));
-    await backupDir.create(recursive: true);
     final stamp = DateTime.now()
         .toIso8601String()
         .replaceAll(RegExp(r'[^0-9T]'), '')
         .substring(0, 15);
-    await fs
-        .file(p.join(backupDir.path, 'pre-pull-$stamp.zip'))
-        .writeAsBytes(Uint8List.fromList(ZipEncoder().encode(archive)!));
+    final zipBytes = Uint8List.fromList(ZipEncoder().encode(archive)!);
+
+    // Resolve backup dir explicitly. Two code paths with no shared helper
+    // that could accidentally call the wrong one:
+    final Directory backupDir;
+    if (kIsWeb) {
+      backupDir = fs.directory('/pre-pull-backups');
+    } else {
+      final supportDir = await getApplicationSupportDirectory();
+      backupDir = fs.directory(p.join(supportDir.path, 'vault_backups'));
+    }
+
+    await backupDir.create(recursive: true);
+    final backupFile = fs.file(
+      p.join(backupDir.path, 'pre-pull-$stamp.zip'),
+    );
+    await backupFile.writeAsBytes(zipBytes);
+    debugPrint('Pre-pull backup saved: ${backupFile.path}');
+
+    await _pruneOldBackups(backupDir, keep: kIsWeb ? 3 : 10);
+  }
+
+  Future<void> _pruneOldBackups(Directory dir, {required int keep}) async {
+    try {
+      final entries = <File>[];
+      await for (final e in dir.list(followLinks: false)) {
+        if (e is File && e.path.endsWith('.zip')) entries.add(e);
+      }
+      if (entries.length <= keep) return;
+      entries.sort((a, b) => a.path.compareTo(b.path));
+      final toDelete = entries.sublist(0, entries.length - keep);
+      for (final f in toDelete) {
+        try {
+          await f.delete();
+        } catch (_) {}
+      }
+    } catch (e) {
+      debugPrint('Backup pruning failed (non-fatal): $e');
+    }
   }
 }

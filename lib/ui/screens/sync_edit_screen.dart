@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../data/sync/sync_config.dart';
 import '../../data/sync/sync_provider.dart';
@@ -238,10 +239,11 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Pull from remote?'),
         content: const Text(
-          'This overwrites local files in the selected spaces (and vault-'
-          'level data if this is the primary) with the remote version. '
-          'A backup of the vault is saved before pulling.',
-        ),
+            'This overwrites local files in the selected spaces (and vault-'
+            'level data if this is the primary) with the remote version. '
+            'A backup of the vault is saved before pulling.'
+            '\n\nOn web, the backup is stored in the browser\'s local storage '
+            'and keeps only the 3 most recent backups.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -344,8 +346,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
               border: OutlineInputBorder(),
             ),
             items: SyncProviderKind.values
-                .map((p) =>
-                    DropdownMenuItem(value: p, child: Text(p.label)))
+                .map((p) => DropdownMenuItem(value: p, child: Text(p.label)))
                 .toList(),
             onChanged: _busy
                 ? null
@@ -433,9 +434,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
             title: const Text('All spaces (including future ones)'),
             value: true,
             groupValue: _spaceIds == null,
-            onChanged: _busy
-                ? null
-                : (_) => setState(() => _spaceIds = null),
+            onChanged: _busy ? null : (_) => setState(() => _spaceIds = null),
           ),
           RadioListTile<bool>(
             contentPadding: EdgeInsets.zero,
@@ -560,8 +559,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
             if (_progress != null) ...[
               LinearProgressIndicator(value: _progress!.fraction),
               const SizedBox(height: 6),
-              Text(_progress!.message ?? '',
-                  style: theme.textTheme.bodySmall),
+              Text(_progress!.message ?? '', style: theme.textTheme.bodySmall),
             ] else
               const LinearProgressIndicator(),
           ],
