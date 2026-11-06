@@ -117,6 +117,31 @@ class DriveRepository {
     await _writeMeta(spaceId, meta);
   }
 
+  /// Deletes multiple files with one metadata read/write. The individual
+  /// blob deletes are still one per file, but the expensive
+  /// `drive_meta.json` round-trip happens once for the whole batch.
+  Future<void> deleteMultiple(String spaceId, Set<String> fileIds) async {
+    if (fileIds.isEmpty) return;
+
+    final index = await _driveIndex(spaceId);
+    for (final id in fileIds) {
+      final path = index.remove(id);
+      if (path == null) continue;
+      try {
+        final f = fs.file(path);
+        if (await f.exists()) await f.delete();
+      } catch (e) {
+        debugPrint('Failed to delete drive file $id: $e');
+      }
+    }
+
+    final meta = await _readMeta(spaceId);
+    for (final id in fileIds) {
+      meta.remove(id);
+    }
+    await _writeMeta(spaceId, meta);
+  }
+
   /// Drops the path cache for all spaces. Called from `VaultStore.reload`
   /// so external changes (imports, pulls, manual edits) are picked up.
   void clearCache() {

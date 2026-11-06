@@ -187,6 +187,22 @@ class PostRepository {
     if (await f.exists()) await f.delete();
   }
 
+  /// Deletes multiple entries in a single pass. One directory listing,
+  /// N deletes. Skips missing files silently so a double-delete or a
+  /// manually-removed file doesn't abort the batch.
+  Future<void> deleteMultiple(String spaceId, Set<String> postIds) async {
+    if (postIds.isEmpty) return;
+    final dir = await _entriesDir(spaceId);
+    for (final id in postIds) {
+      try {
+        final f = fs.file(p.join(dir.path, '$id.html'));
+        if (await f.exists()) await f.delete();
+      } catch (e) {
+        debugPrint('Failed to delete entry $id: $e');
+      }
+    }
+  }
+
   /// Returns the raw on-disk representation of an entry: frontmatter block
   /// (`<!--- … --->`) followed by HTML body. Used by the "Show source" menu
   /// entry to display the exact file content.

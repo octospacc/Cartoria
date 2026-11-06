@@ -110,6 +110,20 @@ class VaultStore extends ChangeNotifier {
   List<DriveFile> filesForSpace(String spaceId) =>
       List.unmodifiable(_fileCache[spaceId] ?? const <DriveFile>[]);
 
+  /// File IDs referenced by at least one post in [spaceId].
+  ///
+  /// Recomputed on every call so it stays in sync with the post cache;
+  /// `DriveScreen` calls it once per build. Scan is O(posts × avg fileIds),
+  /// which for a typical vault is well under a millisecond — the drive
+  /// re-renders on store notifications, not every frame.
+  Set<String> usedFileIds(String spaceId) {
+    final used = <String>{};
+    for (final post in _postCache[spaceId] ?? const <Post>[]) {
+      if (post.fileIds.isNotEmpty) used.addAll(post.fileIds);
+    }
+    return used;
+  }
+
   List<Hook> get hooks => _hooks.all;
 
   Space? spaceById(String id) {
@@ -459,6 +473,15 @@ class VaultStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Deletes multiple posts in one batch. Updates the cache once.
+  Future<void> deletePosts(String spaceId, Set<String> postIds) async {
+    if (postIds.isEmpty) return;
+    await _posts.deleteMultiple(spaceId, postIds);
+    _postCache[spaceId]?.removeWhere((p) => postIds.contains(p.id));
+    _resortSpacesByUsage();
+    notifyListeners();
+  }
+
   /// Returns the raw HTML + frontmatter for [postId].
   Future<String> readPostSource(String spaceId, String postId) =>
       _posts.readSource(spaceId, postId);
@@ -504,6 +527,20 @@ class VaultStore extends ChangeNotifier {
     _fileIndex[spaceId]?.remove(fileId);
     _imageCache.remove('$spaceId:$fileId');
     _imageAspectCache.remove('$spaceId:$fileId'); // ← add
+    notifyListeners();
+  }
+
+  /// Deletes multiple drive files in one batch. Updates all three
+  /// file-related caches (list, index, byte/image caches) once.
+  Future<void> deleteFiles(String spaceId, Set<String> fileIds) async {
+    if (fileIds.isEmpty) return;
+    await _drive.deleteMultiple(spaceId, fileIds);
+    _fileCache[spaceId]?.removeWhere((f) => fileIds.contains(f.id));
+    for (final id in fileIds) {
+      _fileIndex[spaceId]?.remove(id);
+      _imageCache.remove('$spaceId:$id');
+      _imageAspectCache.remove('$spaceId:$id');
+    }
     notifyListeners();
   }
 

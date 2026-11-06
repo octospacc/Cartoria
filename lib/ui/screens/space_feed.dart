@@ -56,6 +56,72 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   GlobalKey _keyFor(String postId) =>
       _postKeys.putIfAbsent(postId, () => GlobalKey());
 
+  bool _selectionMode = false;
+  final Set<String> _selectedPostIds = {};
+
+  void _enterSelectionMode([String? initialId]) {
+    setState(() {
+      _selectionMode = true;
+      if (initialId != null) _selectedPostIds.add(initialId);
+    });
+  }
+
+  void _exitSelectionMode() {
+    setState(() {
+      _selectionMode = false;
+      _selectedPostIds.clear();
+    });
+  }
+
+  void _toggleSelection(String postId) {
+    setState(() {
+      if (_selectedPostIds.contains(postId)) {
+        _selectedPostIds.remove(postId);
+      } else {
+        _selectedPostIds.add(postId);
+      }
+    });
+  }
+
+  Future<void> _deleteSelectedPosts() async {
+    final selected = Set<String>.from(_selectedPostIds);
+    if (selected.isEmpty) return;
+
+    final posts = widget.store.postsForSpace(widget.space.id);
+    final orphaned = posts
+        .where((p) =>
+            p.parentId != null &&
+            selected.contains(p.parentId) &&
+            !selected.contains(p.id))
+        .length;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          'Delete ${selected.length} '
+          '${selected.length == 1 ? "post" : "posts"}?',
+        ),
+        content: Text(
+          'This cannot be undone.'
+          '${orphaned > 0 ? "\n\n$orphaned ${orphaned == 1 ? "reply" : "replies"} will become top-level." : ""}',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    await widget.store.deletePosts(widget.space.id, selected);
+    if (mounted) _exitSelectionMode();
+  }
+
   @override
   void dispose() {
     _bodyCtrl.dispose();
@@ -537,7 +603,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       childCount: totalChildren,
       previewCount: previewCount,
       expanded: isExpanded,
-      hideReplyToggle: searchMode,
+      hideReplyToggle: searchMode || _selectionMode,
       onToggleReplies: () => setState(() {
         if (_expanded.contains(post.id)) {
           _expanded.remove(post.id);
@@ -548,7 +614,14 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       onReply: () => _reply(post),
       onEdit: () => _edit(post),
       onDelete: () => widget.store.deletePost(widget.space.id, post.id),
-      onQuoteTap: searchMode ? null : _scrollToPost,
+      onQuoteTap: (searchMode || _selectionMode) ? null : _scrollToPost,
+      // New:
+      selectionMode: _selectionMode,
+      isSelected: _selectedPostIds.contains(post.id),
+      onCardTap: _selectionMode ? () => _toggleSelection(post.id) : null,
+      onCardLongPress: (_selectionMode || searchMode)
+          ? null
+          : () => _enterSelectionMode(post.id),
     );
 
     Widget result;
@@ -599,22 +672,24 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
           ? 'No results for "${_searchCtrl.text.trim()}"'
           : 'Nothing here yet. Write a note or save a link.');
     }
-    return SelectionArea(
-      child: ScrollablePositionedList.builder(
-        itemScrollController: searchMode ? _searchScroll : _feedScroll,
-        physics: const ClampingScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-        itemCount: roots.length,
-        itemBuilder: (context, i) {
-          return RepaintBoundary(
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: _buildNode(roots[i], searchMode: searchMode),
-            ),
-          );
-        },
-      ),
+    final list = ScrollablePositionedList.builder(
+      itemScrollController: searchMode ? _searchScroll : _feedScroll,
+      physics: const ClampingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+      itemCount: roots.length,
+      itemBuilder: (context, i) {
+        return RepaintBoundary(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _buildNode(roots[i], searchMode: searchMode),
+          ),
+        );
+      },
     );
+    // Text selection and post selection are mutually exclusive: when the
+    // user is selecting posts, drag-to-select-text must not compete with
+    // tap-to-toggle.
+    return _selectionMode ? list : SelectionArea(child: list);
   }
 
   Widget _buildContent() {
@@ -637,6 +712,28 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   }
 
   PreferredSizeWidget _buildAppBar() {
+    if (_selectionMode) {
+      return AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.close),
+          tooltip: 'Exit selection',
+          onPressed: _exitSelectionMode,
+        ),
+        title: Text(
+          _selectedPostIds.isEmpty
+              ? 'Select posts'
+              : '${_selectedPostIds.length} selected',
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: 'Delete selected',
+            onPressed: _selectedPostIds.isEmpty ? null : _deleteSelectedPosts,
+          ),
+        ],
+      );
+    }
+
     return AppBar(
       leading: _searchActive
           ? IconButton(
@@ -671,6 +768,11 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
             ]
           : [
               IconButton(
+                icon: const Icon(Icons.checklist),
+                tooltip: 'Select',
+                onPressed: () => _enterSelectionMode(),
+              ),
+              IconButton(
                 icon: const Icon(Icons.search),
                 tooltip: 'Search',
                 onPressed: () => setState(() => _searchActive = true),
@@ -683,7 +785,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                   MaterialPageRoute(
                     builder: (_) => DriveScreen(
                       store: widget.store,
-                      space: widget.space,
+                      space: _space,
                     ),
                   ),
                 ),
@@ -691,7 +793,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
               PopupMenuButton<String>(
                 onSelected: (v) {
                   if (v == 'stats') {
-                    SpaceStatsDialog.show(context, widget.store, widget.space);
+                    SpaceStatsDialog.show(context, widget.store, _space);
                   }
                   if (v == 'edit') _editSpace();
                   if (v == 'import') _importFile();
@@ -729,7 +831,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                   ),
                 ),
               ),
-              if (!_searchActive)
+              if (!_searchActive && !_selectionMode)
                 _ComposerFooter(
                   child: InlineComposer(
                     kind: _kind,

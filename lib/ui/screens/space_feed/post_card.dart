@@ -8,7 +8,6 @@ import '../../../util/hook_outcome.dart';
 import '../../widgets/file_thumbnail.dart';
 import '../../widgets/hook_status_dialog.dart';
 import '../../widgets/post_source_dialog.dart';
-import '../../widgets/post_body.dart';
 import 'inline_media.dart';
 import 'link_preview_card.dart';
 import 'media_widgets.dart';
@@ -27,6 +26,22 @@ class PostCard extends StatelessWidget {
   final VoidCallback onDelete;
   final void Function(String quotedPostId)? onQuoteTap;
 
+  /// When true, internal interactive controls are disabled and the whole
+  /// card becomes a tap target for toggling selection.
+  final bool selectionMode;
+  final bool isSelected;
+
+  /// Tap handler for the whole card. In selection mode, the caller
+  /// should pass a toggle-selection callback; outside selection mode,
+  /// the caller may pass null (taps do nothing) or a handler for a
+  /// future single-tap action.
+  final VoidCallback? onCardTap;
+
+  /// Long-press handler for the whole card. Outside selection mode, the
+  /// caller passes a handler to *enter* selection mode with this post
+  /// pre-selected. In selection mode, pass null (already in mode).
+  final VoidCallback? onCardLongPress;
+
   const PostCard({
     super.key,
     required this.store,
@@ -41,6 +56,10 @@ class PostCard extends StatelessWidget {
     required this.onEdit,
     required this.onDelete,
     this.onQuoteTap,
+    this.selectionMode = false,
+    this.isSelected = false,
+    this.onCardTap,
+    this.onCardLongPress,
   });
 
   @override
@@ -67,121 +86,162 @@ class PostCard extends StatelessWidget {
       }
     }
 
-    return Container(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLow,
+    // Border + background for the selection state.
+    final borderColor = isSelected
+        ? theme.colorScheme.primary
+        : theme.colorScheme.outlineVariant.withValues(alpha: 0.6);
+    final backgroundColor = isSelected
+        ? Color.alphaBlend(
+            theme.colorScheme.primary.withValues(alpha: 0.08),
+            theme.colorScheme.surfaceContainerLow,
+          )
+        : theme.colorScheme.surfaceContainerLow;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onCardTap,
+        onLongPress: onCardLongPress,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
-          width: 1,
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _PostAvatar(isBookmark: isBookmark, theme: theme),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
+        child: IgnorePointer(
+          // In selection mode, taps on the whole card toggle selection;
+          // internal buttons, links, quote cards, media are all disabled
+          // so nothing competes with the toggle.
+          ignoring: selectionMode,
+          child: Container(
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: borderColor,
+                width: isSelected ? 2 : 1,
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _PostHeader(
-                    post: post,
-                    hookOutcome: _hookOutcome(store, post),
-                    onEdit: onEdit,
-                    onDelete: () => _confirmDelete(context),
-                    onShowSource: () =>
-                        showPostSourceDialog(context, store, space, post),
-                    onHookStatus:
-                        (_hookOutcome(store, post) == HookOutcome.none)
-                            ? null
-                            : () => showHookStatusDialog(
-                                context, post, store, space.id),
-                  ),
-                  if (plaintext.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    PostBodyText(
-                      html: post.body,
-                      style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
+                  _PostAvatar(isBookmark: isBookmark, theme: theme),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _PostHeader(
+                          post: post,
+                          selectionMode: selectionMode,
+                          isSelected: isSelected,
+                          hookOutcome: _hookOutcome(store, post),
+                          onEdit: onEdit,
+                          onDelete: () => _confirmDelete(context),
+                          onShowSource: () =>
+                              showPostSourceDialog(context, store, space, post),
+                          onHookStatus:
+                              (_hookOutcome(store, post) == HookOutcome.none)
+                                  ? null
+                                  : () => showHookStatusDialog(
+                                      context, post, store, space.id),
+                        ),
+                        if (plaintext.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            plaintext,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              height: 1.4,
+                            ),
+                          ),
+                        ],
+                        if (isBookmark && post.url != null) ...[
+                          const SizedBox(height: 8),
+                          LinkPreviewCard(post: post),
+                        ],
+                        if (visualFiles.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: visualFiles
+                                  .map((f) => Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 6),
+                                        child: InlineMedia(
+                                          key: ValueKey('${post.id}-${f.id}'),
+                                          store: store,
+                                          spaceId: space.id,
+                                          file: f,
+                                        ),
+                                      ))
+                                  .toList(),
+                            ),
+                          ),
+                        if (attachmentFiles.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Column(
+                              children: attachmentFiles
+                                  .map((f) => FileRow(
+                                      store: store,
+                                      space: space,
+                                      file: f))
+                                  .toList(),
+                            ),
+                          ),
+                        if (post.tags.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 4,
+                            runSpacing: 4,
+                            children:
+                                post.tags.map((t) => _TagChip(tag: t)).toList(),
+                          ),
+                        ],
+                        if (post.quotedPostId != null) ...[
+                          const SizedBox(height: 8),
+                          _QuotedOwnCard(
+                            store: store,
+                            space: space,
+                            quotedPostId: post.quotedPostId!,
+                            onTap: onQuoteTap == null
+                                ? null
+                                : () => onQuoteTap!(post.quotedPostId!),
+                          ),
+                        ],
+                        if (post.quotedExternals.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          ...post.quotedExternals
+                              .map((q) => Padding(
+                                    padding:
+                                        const EdgeInsets.only(bottom: 6),
+                                    child: _QuotedExternalCard(quote: q),
+                                  ))
+                              .toList(),
+                        ],
+                        const SizedBox(height: 2),
+                        _PostActions(
+                          childCount: childCount,
+                          previewCount: previewCount,
+                          expanded: expanded,
+                          hideReplyToggle: hideReplyToggle,
+                          onToggleReplies: onToggleReplies,
+                          onReply: onReply,
+                        ),
+                      ],
                     ),
-                  ],
-                  if (isBookmark && post.url != null) ...[
-                    const SizedBox(height: 8),
-                    LinkPreviewCard(post: post),
-                  ],
-                  if (visualFiles.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: visualFiles
-                            .map((f) => Padding(
-                                  padding: const EdgeInsets.only(bottom: 6),
-                                  child: InlineMedia(
-                                    key: ValueKey('${post.id}-${f.id}'),
-                                    store: store,
-                                    spaceId: space.id,
-                                    file: f,
-                                  ),
-                                ))
-                            .toList(),
-                      ),
-                    ),
-                  if (attachmentFiles.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Column(
-                        children: attachmentFiles
-                            .map((f) =>
-                                FileRow(store: store, space: space, file: f))
-                            .toList(),
-                      ),
-                    ),
-                  if (post.tags.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 4,
-                      runSpacing: 4,
-                      children: post.tags.map((t) => _TagChip(tag: t)).toList(),
-                    ),
-                  ],
-                  if (post.quotedPostId != null) ...[
-                    const SizedBox(height: 8),
-                    _QuotedOwnCard(
-                      store: store,
-                      space: space,
-                      quotedPostId: post.quotedPostId!,
-                      onTap: onQuoteTap == null
-                          ? null
-                          : () => onQuoteTap!(post.quotedPostId!),
-                    ),
-                  ],
-                  if (post.quotedExternals.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    ...post.quotedExternals
-                        .map((q) => Padding(
-                              padding: const EdgeInsets.only(bottom: 6),
-                              child: _QuotedExternalCard(quote: q),
-                            ))
-                        .toList(),
-                  ],
-                  const SizedBox(height: 2),
-                  _PostActions(
-                    childCount: childCount,
-                    previewCount: previewCount,
-                    expanded: expanded,
-                    hideReplyToggle: hideReplyToggle,
-                    onToggleReplies: onToggleReplies,
-                    onReply: onReply,
                   ),
                 ],
               ),
             ),
-          ],
+          ),
         ),
       ),
+    );
+  }
+
+  HookOutcome _hookOutcome(VaultStore store, Post post) {
+    return hookOutcomeFor(
+      hasActive: store.hasActiveHooks(post.id),
+      states: post.hookState,
     );
   }
 
@@ -208,16 +268,9 @@ class PostCard extends StatelessWidget {
     );
     if (ok == true) onDelete();
   }
-
-  HookOutcome _hookOutcome(VaultStore store, Post post) {
-    return hookOutcomeFor(
-      hasActive: store.hasActiveHooks(post.id),
-      states: post.hookState,
-    );
-  }
 }
 
-// ── Quote cards ────────────────────────────────────────────────────────────
+// ── Quote cards (unchanged) ────────────────────────────────────────────────
 
 class _QuotedOwnCard extends StatelessWidget {
   final VaultStore store;
@@ -261,8 +314,8 @@ class _QuotedOwnCard extends StatelessWidget {
       decoration: BoxDecoration(
         border: Border.all(color: theme.colorScheme.outlineVariant),
         borderRadius: BorderRadius.circular(8),
-        color:
-            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.25),
+        color: theme.colorScheme.surfaceContainerHighest
+            .withValues(alpha: 0.25),
       ),
       clipBehavior: Clip.antiAlias,
       child: inner,
@@ -280,8 +333,9 @@ class _QuotedOwnCard extends StatelessWidget {
   }
 
   Widget _quotedContent(BuildContext context, ThemeData theme, Post quoted) {
-    final icon =
-        quoted.kind == PostKind.bookmark ? Icons.bookmark_outline : Icons.notes;
+    final icon = quoted.kind == PostKind.bookmark
+        ? Icons.bookmark_outline
+        : Icons.notes;
     final preview = _previewOf(quoted);
     final media = _mediaPreview(context, quoted);
     final mediaFiles = _mediaFiles(quoted);
@@ -463,7 +517,8 @@ class _QuotedExternalCard extends StatelessWidget {
                   ),
                   if (hasUri)
                     Icon(Icons.open_in_new,
-                        size: 12, color: theme.colorScheme.onSurfaceVariant),
+                        size: 12,
+                        color: theme.colorScheme.onSurfaceVariant),
                 ],
               ),
               if (content.isNotEmpty) ...[
@@ -552,6 +607,8 @@ class _PostAvatar extends StatelessWidget {
 class _PostHeader extends StatelessWidget {
   final Post post;
   final HookOutcome hookOutcome;
+  final bool selectionMode;
+  final bool isSelected;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final VoidCallback onShowSource;
@@ -560,6 +617,8 @@ class _PostHeader extends StatelessWidget {
   const _PostHeader({
     required this.post,
     required this.hookOutcome,
+    required this.selectionMode,
+    required this.isSelected,
     required this.onEdit,
     required this.onDelete,
     required this.onShowSource,
@@ -598,41 +657,50 @@ class _PostHeader extends StatelessWidget {
             ],
           ),
         ),
-        if (hookOutcome != HookOutcome.none) ...[
+        if (hookOutcome != HookOutcome.none && !selectionMode) ...[
           const SizedBox(width: 4),
-          _HookIndicator(
-            outcome: hookOutcome,
-            onTap: onHookStatus,
-          ),
+          _HookIndicator(outcome: hookOutcome, onTap: onHookStatus),
         ],
-        SizedBox(
-          height: 24,
-          width: 28,
-          child: PopupMenuButton<String>(
-            padding: EdgeInsets.zero,
-            iconSize: 18,
-            tooltip: 'More',
-            onSelected: (v) {
-              if (v == 'edit') onEdit();
-              if (v == 'source') onShowSource();
-              if (v == 'delete') onDelete();
-              if (v == 'hook-status') onHookStatus?.call();
-            },
-            itemBuilder: (_) => [
-              const PopupMenuItem(value: 'edit', child: Text('Edit')),
-              const PopupMenuItem(
-                value: 'source',
-                child: Text('Show source…'),
-              ),
-              if (onHookStatus != null)
+        if (selectionMode)
+          Padding(
+            padding: const EdgeInsets.only(left: 4),
+            child: Icon(
+              isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+              size: 20,
+              color: isSelected
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.onSurfaceVariant,
+            ),
+          )
+        else
+          SizedBox(
+            height: 24,
+            width: 28,
+            child: PopupMenuButton<String>(
+              padding: EdgeInsets.zero,
+              iconSize: 18,
+              tooltip: 'More',
+              onSelected: (v) {
+                if (v == 'edit') onEdit();
+                if (v == 'source') onShowSource();
+                if (v == 'delete') onDelete();
+                if (v == 'hook-status') onHookStatus?.call();
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(value: 'edit', child: Text('Edit')),
                 const PopupMenuItem(
-                  value: 'hook-status',
-                  child: Text('Hook status…'),
+                  value: 'source',
+                  child: Text('Show source…'),
                 ),
-              const PopupMenuItem(value: 'delete', child: Text('Delete')),
-            ],
+                if (onHookStatus != null)
+                  const PopupMenuItem(
+                    value: 'hook-status',
+                    child: Text('Hook status…'),
+                  ),
+                const PopupMenuItem(value: 'delete', child: Text('Delete')),
+              ],
+            ),
           ),
-        ),
       ],
     );
   }
