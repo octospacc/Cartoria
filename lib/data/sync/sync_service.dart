@@ -7,6 +7,7 @@ import '../../util/fs_walk.dart';
 import 'git_blob.dart';
 import 'sync_config.dart';
 import 'sync_provider.dart';
+import 'sync_scope.dart';
 
 class SyncPushResult {
   final int pushed;
@@ -33,6 +34,7 @@ class SyncService {
   final SyncConfig config;
   final SyncProvider provider;
   final SyncCacheStore? cacheStore;
+  final SyncScope scope;
 
   const SyncService({
     required this.fs,
@@ -40,13 +42,11 @@ class SyncService {
     required this.config,
     required this.provider,
     this.cacheStore,
+    required this.scope,
   });
 
-  // Config is excluded so it doesn't overwrite another device's setup.
   static const _excludedFiles = {'sync.json', '.DS_Store', 'Thumbs.db'};
-  static const _maxFileBytes = 20 * 1024 * 1024; // 20 MB
-
-  // ── Push ────────────────────────────────────────────────────────────────
+  static const _maxFileBytes = 20 * 1024 * 1024;
 
   Future<SyncPushResult> push({
     required String token,
@@ -77,6 +77,7 @@ class SyncService {
     var skippedLarge = 0;
     for (final entry in localFiles.entries) {
       final path = entry.key;
+      if (!scope.includes(path)) continue;
       final bytes = entry.value;
       if (bytes.length > _maxFileBytes) {
         skippedLarge++;
@@ -93,6 +94,7 @@ class SyncService {
       }
     }
     for (final path in remoteMap.keys) {
+      if (!scope.includes(path)) continue;
       if (!localShas.containsKey(path)) {
         changes.add(FileChange.delete(path));
       }
@@ -130,8 +132,17 @@ class SyncService {
       onProgress: onProgress,
     );
 
-    // Cache the new state so the next push skips the listing.
-    await cacheStore?.save(config.tokenKey, localShas, newSha);
+    // Cache is the FULL remote state, so scoping changes on this config
+    // don't accidentally treat still-existing out-of-scope files as new.
+    final newCacheFiles = <String, String>{...remoteMap};
+    for (final c in changes) {
+      if (c.kind == FileChangeKind.delete) {
+        newCacheFiles.remove(c.path);
+      } else {
+        newCacheFiles[c.path] = gitBlobSha(c.content!);
+      }
+    }
+    await cacheStore?.save(config.cacheKey, newCacheFiles, newSha);
 
     final created =
         changes.where((c) => c.kind == FileChangeKind.create).length;
@@ -155,8 +166,6 @@ class SyncService {
     );
   }
 
-  // ── Pull ────────────────────────────────────────────────────────────────
-
   Future<SyncPullResult> pull({
     required String token,
     SyncProgressCallback? onProgress,
@@ -172,23 +181,25 @@ class SyncService {
       isPush: false,
       onProgress: onProgress,
     );
-    if (remoteMap.isEmpty) {
+    final inScopeCount = remoteMap.keys.where(scope.includes).length;
+    if (inScopeCount == 0) {
       onProgress?.call(const SyncProgress(
         totalFiles: 0,
         completedFiles: 0,
         isPush: false,
-        message: 'Remote is empty; nothing to pull.',
+        message: 'Nothing in scope on the remote; nothing to pull.',
       ));
       return const SyncPullResult(pulled: 0, deleted: 0);
     }
 
     final localFiles = await _collectLocalFiles();
-    final total = remoteMap.length;
+    final total = inScopeCount;
     var done = 0;
     var pulled = 0;
 
     for (final entry in remoteMap.entries) {
       final path = entry.key;
+      if (!scope.includes(path)) continue;
       final remoteSha = entry.value;
       final localBytes = localFiles[path];
       if (localBytes != null && gitBlobSha(localBytes) == remoteSha) {
@@ -221,6 +232,7 @@ class SyncService {
 
     var deleted = 0;
     for (final path in localFiles.keys) {
+      if (!scope.includes(path)) continue;
       if (remoteMap.containsKey(path)) continue;
       if (_isExcluded(path)) continue;
       final file = fs.file(p.join(vaultPath, path));
@@ -230,12 +242,11 @@ class SyncService {
       }
     }
 
-    // Cache the state we just pulled so the next push doesn't re-list.
     final head = await provider.currentHeadSha(
       config: config,
       token: token,
     );
-    await cacheStore?.save(config.tokenKey, remoteMap, head);
+    await cacheStore?.save(config.cacheKey, remoteMap, head);
 
     onProgress?.call(SyncProgress(
       totalFiles: total,
@@ -246,7 +257,35 @@ class SyncService {
     return SyncPullResult(pulled: pulled, deleted: deleted);
   }
 
-  // ── Helpers ─────────────────────────────────────────────────────────────
+  // ── Internals ─────────────────────────────────────────────────────────
+
+  Future<Map<String, String>> _remoteListing({
+    required String token,
+    required bool isPush,
+    SyncProgressCallback? onProgress,
+  }) async {
+    final head = await provider.currentHeadSha(
+      config: config,
+      token: token,
+    );
+    final cache = await cacheStore?.load(config.cacheKey);
+    if (head != null && cache != null && cache.commitSha == head) {
+      onProgress?.call(SyncProgress(
+        totalFiles: cache.files.length,
+        completedFiles: cache.files.length,
+        isPush: isPush,
+        message:
+            'Using cached remote listing (${cache.files.length} files)',
+      ));
+      return cache.files;
+    }
+    return provider.listRemoteFiles(
+      config: config,
+      token: token,
+      isPush: isPush,
+      onProgress: onProgress,
+    );
+  }
 
   Future<Map<String, Uint8List>> _collectLocalFiles() async {
     final out = <String, Uint8List>{};
@@ -258,9 +297,7 @@ class SyncService {
       if (_isExcluded(rel)) continue;
       try {
         out[rel] = await f.readAsBytes();
-      } catch (_) {
-        // Skip unreadable file.
-      }
+      } catch (_) {}
     }
     return out;
   }
@@ -269,34 +306,5 @@ class SyncService {
     if (_excludedFiles.contains(relPath)) return true;
     final first = relPath.split('/').first;
     return first == '.git';
-  }
-
-  Future<Map<String, String>> _remoteListing({
-    required String token,
-    required bool isPush,
-    SyncProgressCallback? onProgress,
-  }) async {
-    // Cheap HEAD check first. If it matches the cached commit, reuse the
-    // cached file map — saves 264 API calls on every push after the first.
-    final head = await provider.currentHeadSha(
-      config: config,
-      token: token,
-    );
-    final cache = await cacheStore?.load(config.tokenKey);
-    if (head != null && cache != null && cache.commitSha == head) {
-      onProgress?.call(SyncProgress(
-        totalFiles: cache.files.length,
-        completedFiles: cache.files.length,
-        isPush: isPush,
-        message: 'Using cached remote listing (${cache.files.length} files)',
-      ));
-      return cache.files;
-    }
-    return provider.listRemoteFiles(
-      config: config,
-      token: token,
-      isPush: isPush,
-      onProgress: onProgress,
-    );
   }
 }

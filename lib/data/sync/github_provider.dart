@@ -12,8 +12,20 @@ class GitHubProvider extends SyncProvider {
   @override
   SyncProviderKind get kind => SyncProviderKind.github;
 
-  Uri _api(SyncConfig c, String path, [Map<String, String>? query]) =>
-      Uri.https('api.github.com', path, query);
+  Uri _api(SyncConfig c, String path, [Map<String, String>? query]) {
+    // Public GitHub uses a different host for the REST API than for the
+    // web UI. GitHub Enterprise Server is served at /api/v3 on the same
+    // host as the web UI. A `host` with a path prefix (e.g.
+    // `example.com/gh`) survives intact because `path` starts with `/` and
+    // Uri.parse treats `example.com/gh/api/v3/...` as host=example.com,
+    // path=/gh/api/v3/..., which is exactly what GHES expects.
+    final host = c.host?.trim() ?? '';
+    final base = (host.isEmpty)
+        ? 'https://api.github.com$path'
+        : 'https://$host/api/v3$path';
+    final uri = Uri.parse(base);
+    return query == null ? uri : uri.replace(queryParameters: query);
+  }
 
   Map<String, String> _headers(String token) => {
         'Authorization': 'token $token',

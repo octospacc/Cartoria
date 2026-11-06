@@ -12,6 +12,7 @@ import '../platform/fs.dart';
 import '../util/fs_walk.dart';
 import '../util/mime.dart';
 import '../util/hook_outcome.dart';
+import 'sync/sync_scope.dart';
 import 'bookmarks.dart';
 import 'hooks.dart';
 import 'models.dart';
@@ -65,7 +66,6 @@ class VaultStore extends ChangeNotifier {
   late final HooksRepository _hooks;
   late final HookExecutor _executor;
   late final BookmarksImporter _bookmarksImporter;
-  late final SyncConfigStore _syncConfigStore;
   late final SyncTokenStore _syncTokenStore;
   late final SyncCacheStore _syncCacheStore;
 
@@ -81,8 +81,24 @@ class VaultStore extends ChangeNotifier {
   final Map<String, Future<void>> _hookChains = {};
   final Set<String> _activeHookRuns = {};
 
-  SyncConfig? _cachedSyncConfig;
-  SyncConfig? get syncConfig => _cachedSyncConfig;
+  late final SyncConfigsStore _syncConfigsStore;
+  List<SyncConfig> _syncConfigs = [];
+
+  List<SyncConfig> get syncConfigs => List.unmodifiable(_syncConfigs);
+
+  SyncConfig? get primarySyncConfig {
+    for (final c in _syncConfigs) {
+      if (c.isPrimary) return c;
+    }
+    return null;
+  }
+
+  SyncConfig? syncConfigById(String id) {
+    for (final c in _syncConfigs) {
+      if (c.id == id) return c;
+    }
+    return null;
+  }
 
   // ── Read accessors ─────────────────────────────────────────────────────
 
@@ -176,15 +192,16 @@ class VaultStore extends ChangeNotifier {
     _hooks = HooksRepository(fs: fs, vaultPath: vaultPath);
     _executor = HookExecutor(client: _httpClient);
     _bookmarksImporter = BookmarksImporter(posts: _posts);
-    _syncConfigStore = SyncConfigStore(fs: fs, vaultPath: vaultPath);
     _syncTokenStore = SyncTokenStore(fs: fs);
     _syncCacheStore = SyncCacheStore(fs: fs);
     _link = LinkMetadataService(
       proxyUrl: kIsWeb ? 'https://corsproxy.io/?url={url}' : null,
     );
 
+    _syncConfigsStore = SyncConfigsStore(fs: fs, vaultPath: vaultPath);
+    _syncConfigs = await _syncConfigsStore.load();
+
     await _hooks.load();
-    _cachedSyncConfig = await _syncConfigStore.load();
     await reload();
   }
 
@@ -878,36 +895,80 @@ class VaultStore extends ChangeNotifier {
     }
   }
 
-  // ── Sync ───────────────────────────────────────────────────────────────
+// ── Sync ───────────────────────────────────────────────────────────────
 
+  /// Saves a config (new or updated). Enforces the exactly-one-primary
+  /// invariant. If the config's cache key changed, clears the stale cache.
   Future<void> saveSyncConfig(SyncConfig config) async {
-    final old = _cachedSyncConfig;
-    if (old != null &&
-        (old.provider != config.provider ||
-            old.owner != config.owner ||
-            old.repo != config.repo ||
-            old.branch != config.branch)) {
-      await _syncCacheStore.clear(old.tokenKey);
+    final old = syncConfigById(config.id);
+    if (old != null && old.cacheKey != config.cacheKey) {
+      try {
+        await _syncCacheStore.clear(old.cacheKey);
+      } catch (_) {}
     }
-    await _syncConfigStore.save(config);
-    _cachedSyncConfig = config;
+
+    // First config is always primary.
+    if (_syncConfigs.isEmpty) {
+      config = config.copyWith(isPrimary: true);
+    }
+
+    final idx = _syncConfigs.indexWhere((c) => c.id == config.id);
+    if (idx >= 0) {
+      _syncConfigs[idx] = config;
+    } else {
+      _syncConfigs.add(config);
+    }
+
+    if (config.isPrimary) {
+      // Demote any other config that was primary.
+      for (var i = 0; i < _syncConfigs.length; i++) {
+        if (_syncConfigs[i].id != config.id && _syncConfigs[i].isPrimary) {
+          _syncConfigs[i] = _syncConfigs[i].copyWith(isPrimary: false);
+        }
+      }
+    } else if (!_syncConfigs.any((c) => c.isPrimary)) {
+      // Safety net: never leave the list with no primary.
+      _syncConfigs[0] = _syncConfigs[0].copyWith(isPrimary: true);
+    }
+
+    await _syncConfigsStore.save(_syncConfigs);
     notifyListeners();
   }
 
-  Future<String?> loadSyncToken() async {
-    final c = _cachedSyncConfig;
+  Future<void> removeSyncConfig(String id) async {
+    final config = syncConfigById(id);
+    if (config == null) return;
+    final wasPrimary = config.isPrimary;
+
+    _syncConfigs.removeWhere((c) => c.id == id);
+
+    if (wasPrimary && _syncConfigs.isNotEmpty) {
+      _syncConfigs[0] = _syncConfigs[0].copyWith(isPrimary: true);
+    }
+
+    await _syncConfigsStore.save(_syncConfigs);
+
+    try {
+      await _syncCacheStore.clear(config.cacheKey);
+    } catch (_) {}
+
+    notifyListeners();
+  }
+
+  Future<String?> loadSyncToken(String configId) async {
+    final c = syncConfigById(configId);
     if (c == null) return null;
     return _syncTokenStore.load(c.tokenKey);
   }
 
-  Future<void> saveSyncToken(String token) async {
-    final c = _cachedSyncConfig;
-    if (c == null) throw StateError('Sync not configured');
+  Future<void> saveSyncToken(String configId, String token) async {
+    final c = syncConfigById(configId);
+    if (c == null) throw StateError('Sync config not found');
     await _syncTokenStore.save(c.tokenKey, token);
   }
 
-  Future<void> clearSyncToken() async {
-    final c = _cachedSyncConfig;
+  Future<void> clearSyncToken(String configId) async {
+    final c = syncConfigById(configId);
     if (c == null) return;
     await _syncTokenStore.delete(c.tokenKey);
   }
@@ -921,9 +982,9 @@ class VaultStore extends ChangeNotifier {
     }
   }
 
-  Future<void> verifySyncAccess() async {
-    final config = _cachedSyncConfig;
-    if (config == null) throw StateError('Sync not configured');
+  Future<void> verifySyncAccess(String configId) async {
+    final config = syncConfigById(configId);
+    if (config == null) throw StateError('Sync config not found');
     final token = await _syncTokenStore.load(config.tokenKey);
     if (token == null) throw StateError('Sync token not set');
     final client = http.Client();
@@ -935,40 +996,43 @@ class VaultStore extends ChangeNotifier {
     }
   }
 
-  Future<SyncPushResult> syncPush({
+  Future<SyncPushResult> syncPush(
+    String configId, {
     SyncProgressCallback? onProgress,
   }) async {
-    final config = _cachedSyncConfig;
-    if (config == null) throw StateError('Sync not configured');
+    final config = syncConfigById(configId);
+    if (config == null) throw StateError('Sync config not found');
     final token = await _syncTokenStore.load(config.tokenKey);
     if (token == null) throw StateError('Sync token not set');
     final client = http.Client();
     try {
       final provider = _makeProvider(client, config);
+      final scope = SyncScope.forConfig(config);
       final service = SyncService(
         fs: fs,
         vaultPath: vaultPath,
         config: config,
         provider: provider,
         cacheStore: _syncCacheStore,
+        scope: scope,
       );
       final result = await service.push(token: token, onProgress: onProgress);
       await saveSyncConfig(config.copyWith(
         lastSyncedAt: DateTime.now().toUtc(),
         lastCommitSha: result.commitSha,
       ));
-      await reload();
       return result;
     } finally {
       client.close();
     }
   }
 
-  Future<SyncPullResult> syncPull({
+  Future<SyncPullResult> syncPull(
+    String configId, {
     SyncProgressCallback? onProgress,
   }) async {
-    final config = _cachedSyncConfig;
-    if (config == null) throw StateError('Sync not configured');
+    final config = syncConfigById(configId);
+    if (config == null) throw StateError('Sync config not found');
     final token = await _syncTokenStore.load(config.tokenKey);
     if (token == null) throw StateError('Sync token not set');
 
@@ -977,12 +1041,14 @@ class VaultStore extends ChangeNotifier {
     final client = http.Client();
     try {
       final provider = _makeProvider(client, config);
+      final scope = SyncScope.forConfig(config);
       final service = SyncService(
         fs: fs,
         vaultPath: vaultPath,
         config: config,
         provider: provider,
         cacheStore: _syncCacheStore,
+        scope: scope,
       );
       final result = await service.pull(token: token, onProgress: onProgress);
       await saveSyncConfig(config.copyWith(

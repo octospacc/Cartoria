@@ -17,11 +17,15 @@ class GitLabProvider extends SyncProvider {
 
   // AFTER — preserves the already-encoded project ID
   Uri _api(SyncConfig c, String path, [Map<String, String>? query]) {
-    // Uri.https re-encodes the path, turning %2F into %252F. The project
-    // ID in `path` is already percent-encoded, so parse the full string
-    // instead of letting the constructor re-encode it.
-    final base = Uri.parse('https://gitlab.com/api/v4$path');
-    return query == null ? base : base.replace(queryParameters: query);
+    // Same shape as GitHub, but GitLab self-hosted and GitLab.com both
+    // serve the API at /api/v4 — no separate API host, no subpath quirk
+    // beyond the optional mount prefix the customer configured.
+    final host = c.host?.trim() ?? '';
+    final base = (host.isEmpty)
+        ? 'https://gitlab.com/api/v4$path'
+        : 'https://$host/api/v4$path';
+    final uri = Uri.parse(base);
+    return query == null ? uri : uri.replace(queryParameters: query);
   }
 
   Map<String, String> _headers(String token) => {
