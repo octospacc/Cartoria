@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="1024" height="1024">
+  <g transform="translate(256 256) scale(0.75) translate(-256 -256)">
+    <path d="M 96 128
+             Q 96 96 128 96
+             L 336 96
+             L 416 176
+             L 416 384
+             Q 416 416 384 416
+             L 128 416
+             Q 96 416 96 384
+             Z
+             M 340 368
+             A 20 20 0 1 0 380 368
+             A 20 20 0 1 0 340 368
+             Z"
+          fill="#000000"
+          fill-rule="evenodd"/>
+  </g>
+</svg>

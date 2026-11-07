@@ -1,7 +1,7 @@
 name: Cartoria
 description: A personal archive for notes, bookmarks, and files.
 publish_to: 'none'
-version: 0.3.2
+version: 1.0.0+1
 environment:
   sdk: '>=3.4.0 <4.0.0'
   flutter: '>=3.22.0'
@@ -32,6 +32,30 @@ dev_dependencies:
   flutter_lints: ^4.0.0
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.14.1
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/icon.png"
+  remove_alpha_ios: true
+
+  web:
+    generate: true
+    image_path: "assets/icon/icon.png"
+    background_color: "#A0432B"
+    theme_color: "#A0432B"
+
+  macos:
+    generate: true
+    image_path: "assets/icon/icon.png"
+
+  windows:
+    generate: true
+    image_path: "assets/icon/icon.png"
+
+  adaptive_icon_background: "#A0432B"
+  adaptive_icon_foreground: "assets/icon/icon-foreground.png"
 
 flutter:
   uses-material-design: true

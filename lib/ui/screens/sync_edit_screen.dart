@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
+import 'dart:async';
 
 import '../../data/sync/sync_config.dart';
 import '../../data/sync/sync_provider.dart';
@@ -26,14 +27,23 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
   late TextEditingController _keepLocal;
   late TextEditingController _token;
   late Set<String>? _spaceIds;
-  bool _isPrimary = false;
 
+  bool _isPrimary = false;
   bool _tokenStored = false;
   bool _showTokenInput = false;
   bool _busy = false;
   String? _status;
   String? _error;
   SyncProgress? _progress;
+
+  /// Remote spaces fetched from the config's repository. Null = not yet
+  /// loaded (user hasn't verified or tapped "Load remote spaces").
+  Map<String, String?>? _remoteSpaces;
+  // Set<String>? _remoteSpaces;
+
+  /// True while a remote-space fetch is in flight (spinner next to the
+  /// button).
+  bool _loadingRemoteSpaces = false;
 
   @override
   void initState() {
@@ -47,8 +57,8 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
     _repo = TextEditingController(text: e?.repo ?? '');
     _branch = TextEditingController(text: e?.branch ?? 'main');
     _prefix = TextEditingController(text: e?.pathPrefix ?? '');
-    _keepLocal = TextEditingController(
-        text: e?.keepLocalFileCount?.toString() ?? '');
+    _keepLocal =
+        TextEditingController(text: e?.keepLocalFileCount?.toString() ?? '');
     _spaceIds = e?.spaceIds != null ? {...e!.spaceIds!} : null;
     _isPrimary = e?.isPrimary ?? widget.store.syncConfigs.isEmpty;
     _token = TextEditingController();
@@ -158,14 +168,70 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
       setState(() => _error = 'Enter a token first');
       return;
     }
-    setState(() { _busy = true; _error = null; _status = null; });
+    setState(() {
+      _busy = true;
+      _error = null;
+      _status = null;
+    });
+
     try {
       await widget.store.verifySyncAccess(_id);
-      if (mounted) setState(() => _status = 'Access verified');
+      if (!mounted) return;
+      setState(() {
+        _status = 'Access verified';
+        // Free the UI immediately — the form should be usable while the
+        // remote-space list loads in the background.
+        _busy = false;
+      });
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _busy = false;
+        });
+      }
+      return;
+    }
+
+    // Fire-and-forget. `_loadRemoteSpaces` has its own timeout, its own
+    // loading state on the button, and its own error handling; it must
+    // not extend `_busy` or the whole form freezes for the duration of
+    // the (potentially slow) name fetches.
+    unawaited(_loadRemoteSpaces());
+  }
+
+  Future<void> _loadRemoteSpaces() async {
+    if (_loadingRemoteSpaces) return;
+    setState(() => _loadingRemoteSpaces = true);
+    try {
+      final spaces = await widget.store
+          .listRemoteSpaces(_id)
+          .timeout(const Duration(seconds: 25));
+      if (mounted) {
+        setState(() => _remoteSpaces = spaces);
+        debugPrint('Loaded ${spaces.length} remote spaces');
+      }
+    } on TimeoutException {
+      debugPrint('Timed out loading remote spaces');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Timed out loading remote spaces. Tap "Load remote spaces" '
+              'to retry.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Could not load remote spaces: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load remote spaces: $e')),
+        );
+      }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _loadingRemoteSpaces = false);
     }
   }
 
@@ -197,7 +263,10 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
     if (ok != true) return;
 
     setState(() {
-      _busy = true; _error = null; _status = null; _progress = null;
+      _busy = true;
+      _error = null;
+      _status = null;
+      _progress = null;
     });
     try {
       final r = await widget.store.syncPush(_id, onProgress: (p) {
@@ -247,7 +316,10 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
     if (ok != true) return;
 
     setState(() {
-      _busy = true; _error = null; _status = null; _progress = null;
+      _busy = true;
+      _error = null;
+      _status = null;
+      _progress = null;
     });
     try {
       final r = await widget.store.syncPull(_id, onProgress: (p) {
@@ -297,8 +369,9 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                 ),
                 child: SelectableText(_error!,
                     style: TextStyle(
-                      color: theme.colorScheme.onErrorContainer,
-                      fontFamily: 'monospace', fontSize: 12)),
+                        color: theme.colorScheme.onErrorContainer,
+                        fontFamily: 'monospace',
+                        fontSize: 12)),
               ),
             ),
           if (_status != null)
@@ -323,7 +396,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
           DropdownButtonFormField<SyncProviderKind>(
             value: _provider,
             decoration: const InputDecoration(
-              labelText: 'Provider', border: OutlineInputBorder()),
+                labelText: 'Provider', border: OutlineInputBorder()),
             items: SyncProviderKind.values
                 .map((p) => DropdownMenuItem(value: p, child: Text(p.label)))
                 .toList(),
@@ -348,14 +421,14 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
             controller: _owner,
             enabled: !_busy,
             decoration: const InputDecoration(
-              labelText: 'Owner / group', border: OutlineInputBorder()),
+                labelText: 'Owner / group', border: OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _repo,
             enabled: !_busy,
             decoration: const InputDecoration(
-              labelText: 'Repository', border: OutlineInputBorder()),
+                labelText: 'Repository', border: OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
           Row(
@@ -365,7 +438,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                   controller: _branch,
                   enabled: !_busy,
                   decoration: const InputDecoration(
-                    labelText: 'Branch', border: OutlineInputBorder()),
+                      labelText: 'Branch', border: OutlineInputBorder()),
                 ),
               ),
               const SizedBox(width: 12),
@@ -374,8 +447,8 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                   controller: _prefix,
                   enabled: !_busy,
                   decoration: const InputDecoration(
-                    labelText: 'Path prefix (optional)',
-                    border: OutlineInputBorder()),
+                      labelText: 'Path prefix (optional)',
+                      border: OutlineInputBorder()),
                 ),
               ),
             ],
@@ -405,9 +478,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
             title: const Text('All spaces (including future ones)'),
             value: true,
             groupValue: _spaceIds == null,
-            onChanged: _busy
-                ? null
-                : (_) => setState(() => _spaceIds = null),
+            onChanged: _busy ? null : (_) => setState(() => _spaceIds = null),
           ),
           RadioListTile<bool>(
             contentPadding: EdgeInsets.zero,
@@ -415,36 +486,69 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
             title: const Text('Selected spaces'),
             value: true,
             groupValue: _spaceIds != null,
-            onChanged: _busy
-                ? null
-                : (_) => setState(() => _spaceIds ??= {}),
+            onChanged: _busy ? null : (_) => setState(() => _spaceIds ??= {}),
           ),
           if (_spaceIds != null) ...[
             const SizedBox(height: 6),
-            ...spaces.map((s) {
-              final checked = _spaceIds!.contains(s.id);
-              return CheckboxListTile(
-                contentPadding: const EdgeInsets.only(left: 32, right: 0),
-                dense: true,
-                value: checked,
-                title: Text('${s.icon} ${s.name}'),
-                onChanged: _busy
-                    ? null
-                    : (v) => setState(() {
-                          if (v == true) _spaceIds!.add(s.id);
-                          else _spaceIds!.remove(s.id);
-                        }),
-              );
-            }),
-            if (spaces.isEmpty)
-              const Padding(
-                padding: EdgeInsets.only(left: 32, top: 4),
-                child: Text(
-                  'No spaces yet. Create a space first, or choose '
-                  '"All spaces" to include future ones.',
-                  style: TextStyle(fontSize: 12),
+            // Local spaces first, remote-only after.
+            ..._buildSpaceCheckboxes(theme),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _remoteSpaces == null
+                        ? 'Tap "Load remote spaces" to see spaces that exist on the '
+                            'remote but haven\'t been pulled yet.'
+                        : '${_remoteSpaces!.length} space(s) on the remote. '
+                            'Remote-only spaces are marked.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  onPressed:
+                      _busy || _loadingRemoteSpaces ? null : _loadRemoteSpaces,
+                  icon: _loadingRemoteSpaces
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.cloud_download_outlined, size: 16),
+                  label: const Text('Load remote spaces'),
+                ),
+              ],
+            ),
+            if (_remoteSpaces != null)
+              Builder(builder: (ctx) {
+                final local = widget.store.spaces.map((s) => s.id).toSet();
+                final remoteOnly = _remoteSpaces!.keys
+                    .where((id) => !local.contains(id))
+                    .toList();
+                final missing =
+                    remoteOnly.where((id) => !_spaceIds!.contains(id)).length;
+                if (missing == 0) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      '$missing space(s) exist on the remote but are not '
+                      'selected. They will not be pulled by this config until added.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                );
+              }),
           ],
           const SizedBox(height: 20),
           _section(theme, 'Drive offloading'),
@@ -541,8 +645,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
             if (_progress != null) ...[
               LinearProgressIndicator(value: _progress!.fraction),
               const SizedBox(height: 6),
-              Text(_progress!.message ?? '',
-                  style: theme.textTheme.bodySmall),
+              Text(_progress!.message ?? '', style: theme.textTheme.bodySmall),
             ] else
               const LinearProgressIndicator(),
           ],
@@ -556,4 +659,113 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(text, style: theme.textTheme.titleSmall),
       );
+
+  List<Widget> _buildSpaceCheckboxes(ThemeData theme) {
+    final localIds = <String>{};
+    final localWidgets = <Widget>[];
+    for (final s in widget.store.spaces) {
+      localIds.add(s.id);
+      final checked = _spaceIds!.contains(s.id);
+      localWidgets.add(CheckboxListTile(
+        contentPadding: const EdgeInsets.only(left: 32, right: 0),
+        dense: true,
+        value: checked,
+        title: Text('${s.icon} ${s.name}'),
+        onChanged: _busy
+            ? null
+            : (v) => setState(() {
+                  if (v == true) {
+                    _spaceIds!.add(s.id);
+                  } else {
+                    _spaceIds!.remove(s.id);
+                  }
+                }),
+      ));
+    }
+
+    // Remote-only spaces: not present locally. Show display name if we
+    // could fetch it, fall back to the bare id otherwise. Sort by name
+    // so the list stays stable when spaces have names.
+    final remoteOnly = <({String id, String? name})>[];
+    if (_remoteSpaces != null) {
+      for (final entry in _remoteSpaces!.entries) {
+        if (localIds.contains(entry.key)) continue;
+        remoteOnly.add((id: entry.key, name: entry.value));
+      }
+      remoteOnly.sort((a, b) {
+        final an = (a.name ?? a.id).toLowerCase();
+        final bn = (b.name ?? b.id).toLowerCase();
+        return an.compareTo(bn);
+      });
+    }
+
+    final remoteWidgets = <Widget>[];
+    for (final r in remoteOnly) {
+      final checked = _spaceIds!.contains(r.id);
+      remoteWidgets.add(CheckboxListTile(
+        contentPadding: const EdgeInsets.only(left: 32, right: 0),
+        dense: true,
+        value: checked,
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                r.name ?? r.id,
+                overflow: TextOverflow.ellipsis,
+                style: r.name == null
+                    ? theme.textTheme.bodyMedium?.copyWith(
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                      )
+                    : null,
+              ),
+            ),
+            Container(
+              margin: const EdgeInsets.only(left: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.tertiaryContainer,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                'remote only',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onTertiaryContainer,
+                ),
+              ),
+            ),
+          ],
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (r.name != null)
+              Text(
+                'id: ${r.id}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            Text(
+              'Not on this device yet — will be pulled on next sync',
+              style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+            ),
+          ],
+        ),
+        onChanged: _busy
+            ? null
+            : (v) => setState(() {
+                  if (v == true) {
+                    _spaceIds!.add(r.id);
+                  } else {
+                    _spaceIds!.remove(r.id);
+                  }
+                }),
+      ));
+    }
+
+    return [...localWidgets, ...remoteWidgets];
+  }
 }

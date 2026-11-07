@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="1024" height="1024">
+  <!-- Field: iron oxide -->
+  <rect width="512" height="512" fill="#A0432B"/>
+
+  <!-- Cream page with dog-eared top-right corner -->
+  <path d="M 96 128
+           Q 96 96 128 96
+           L 336 96
+           L 416 176
+           L 416 384
+           Q 416 416 384 416
+           L 128 416
+           Q 96 416 96 384
+           Z"
+        fill="#F4E8D4"/>
+
+  <!-- Fold flap (paper backside, shadowed) -->
+  <path d="M 336 96 L 416 176 L 336 176 Z" fill="#C9B99A"/>
+
+  <!-- Ledger margin rule (red, left third) -->
+  <rect x="144" y="176" width="3" height="208" fill="#A0432B" opacity="0.55"/>
+
+  <!-- Filing stamp (small oxide-red circle, bottom-right) -->
+  <circle cx="360" cy="368" r="20" fill="#A0432B"/>
+</svg>

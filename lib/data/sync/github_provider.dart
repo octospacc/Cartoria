@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'sync_config.dart';
 import 'sync_provider.dart';
+import '../../util/html_utils.dart';
 
 class GitHubProvider extends SyncProvider {
   GitHubProvider({required super.client});
@@ -67,6 +69,169 @@ class GitHubProvider extends SyncProvider {
         remoteBody: resp.body,
       );
     }
+  }
+
+  @override
+  Future<Map<String, String?>> listRemoteSpaces({
+    required SyncConfig config,
+    required String token,
+  }) async {
+    final dirs = await _listRootDirs(config: config, token: token);
+    if (dirs.isEmpty) return {};
+
+    final entries = await Future.wait(dirs.map((id) async {
+      try {
+        final name = await _fetchSpaceName(
+          config: config,
+          token: token,
+          spaceId: id,
+        );
+        return MapEntry<String, String?>(id, name);
+      } catch (e) {
+        // One failed name lookup shouldn't take down the whole list.
+        // The space still appears in the picker, just with its id as
+        // the label.
+        debugPrint('Could not fetch name for $id: $e');
+        return MapEntry<String, String?>(id, null);
+      }
+    }));
+    return Map.fromEntries(entries);
+  }
+
+  Future<Set<String>> _listRootDirs({
+    required SyncConfig config,
+    required String token,
+  }) async {
+    final uri = _api(
+      config,
+      '/repos/${config.owner}/${config.repo}/contents',
+      {'ref': config.branch},
+    );
+    final resp = await client.get(uri, headers: _headers(token));
+    _checkAuth(resp);
+    if (resp.statusCode == 404) return {};
+    if (resp.statusCode != 200) {
+      throw SyncException(
+        'Failed to list root: HTTP ${resp.statusCode}',
+        statusCode: resp.statusCode,
+        remoteBody: resp.body,
+      );
+    }
+    final data = jsonDecode(resp.body);
+    if (data is! List) return {};
+    final out = <String>{};
+    for (final entry in data) {
+      final e = entry as Map<String, dynamic>;
+      if (e['type'] != 'dir') continue;
+      final name = e['name'] as String?;
+      if (name == null || name == 'hooks') continue;
+      out.add(name);
+    }
+    return out;
+  }
+
+  /// Reads `<spaceId>/space.json` for the space's display name. Falls back
+  /// to `space.html` for legacy zips created before the JSON migration.
+  Future<String?> _fetchSpaceName({
+    required SyncConfig config,
+    required String token,
+    required String spaceId,
+  }) async {
+    final json = await _fetchFileBytes(
+      config: config,
+      token: token,
+      path: '$spaceId/space.json',
+    );
+    if (json != null) {
+      try {
+        final meta = jsonDecode(utf8.decode(json)) as Map<String, dynamic>;
+        final name = meta['name'] as String?;
+        if (name != null && name.isNotEmpty) return name;
+      } catch (_) {}
+    }
+    final html = await _fetchFileBytes(
+      config: config,
+      token: token,
+      path: '$spaceId/space.html',
+    );
+    if (html != null) {
+      try {
+        final meta = parseFrontmatterMeta(utf8.decode(html));
+        final name = meta['name'] as String?;
+        if (name != null && name.isNotEmpty) return name;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  /// Returns file bytes, or null if not present / not readable.
+  Future<Uint8List?> _fetchFileBytes({
+    required SyncConfig config,
+    required String token,
+    required String path,
+  }) async {
+    final uri = _api(
+      config,
+      '/repos/${config.owner}/${config.repo}/contents/${Uri.encodeFull(path)}',
+      {'ref': config.branch},
+    );
+    // 15s is generous for a tiny JSON/HTML file; without it, a stalled
+    // connection hangs the whole Future.wait indefinitely.
+    final resp = await client
+        .get(uri, headers: _headers(token))
+        .timeout(const Duration(seconds: 15));
+    if (resp.statusCode == 404) return null;
+    _checkAuth(resp);
+    if (resp.statusCode != 200) return null;
+    try {
+      final data = jsonDecode(resp.body) as Map<String, dynamic>;
+      final content = data['content'] as String?;
+      if (content != null) {
+        return base64Decode(content.replaceAll('\n', ''));
+      }
+      final downloadUrl = data['download_url'] as String?;
+      if (downloadUrl == null) return null;
+      final raw = await client
+          .get(Uri.parse(downloadUrl))
+          .timeout(const Duration(seconds: 15));
+      if (raw.statusCode != 200) return null;
+      return raw.bodyBytes;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<Set<String>> listRemoteTopLevelDirs({
+    required SyncConfig config,
+    required String token,
+  }) async {
+    final uri = _api(
+      config,
+      '/repos/${config.owner}/${config.repo}/contents',
+      {'ref': config.branch},
+    );
+    final resp = await client.get(uri, headers: _headers(token));
+    _checkAuth(resp);
+    if (resp.statusCode == 404) return {};
+    if (resp.statusCode != 200) {
+      throw SyncException(
+        'Failed to list root: HTTP ${resp.statusCode}',
+        statusCode: resp.statusCode,
+        remoteBody: resp.body,
+      );
+    }
+    final data = jsonDecode(resp.body);
+    if (data is! List) return {};
+    final out = <String>{};
+    for (final entry in data) {
+      final e = entry as Map<String, dynamic>;
+      if (e['type'] != 'dir') continue;
+      final name = e['name'] as String?;
+      if (name == null || name == 'hooks') continue;
+      out.add(name);
+    }
+    return out;
   }
 
   @override

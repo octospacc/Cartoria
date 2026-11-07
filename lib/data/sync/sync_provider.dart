@@ -42,8 +42,7 @@ class SyncProgress {
     required this.isPush,
     this.message,
   });
-  double get fraction =>
-      totalFiles > 0 ? completedFiles / totalFiles : 0.0;
+  double get fraction => totalFiles > 0 ? completedFiles / totalFiles : 0.0;
 }
 
 typedef SyncProgressCallback = void Function(SyncProgress);
@@ -62,11 +61,38 @@ abstract class SyncProvider {
     required String token,
   });
 
+  /// Top-level directory names at the repo root (one per space), minus
+  /// `hooks` which is vault-level and not user-selectable. Cheap:
+  /// single API call, non-recursive.
+  ///
+  /// Used by the config editor to show remote spaces that don't yet exist
+  /// locally — otherwise a user setting up a scoped sync config has no way
+  /// to add a space they haven't pulled yet.
+  Future<Set<String>> listRemoteTopLevelDirs({
+    required SyncConfig config,
+    required String token,
+  });
+
+  /// Lists the spaces present at the repo root with their display names.
+  ///
+  /// Returns a map of `spaceId → displayName`. `displayName` is null when
+  /// the metadata file can't be read (rare — permissions, corrupt JSON,
+  /// or a space directory that has no `space.json`/`space.html` yet).
+  ///
+  /// Names are best-effort: callers should fall back to the ID for
+  /// display. Used by the sync config editor to show remote-only spaces
+  /// that don't exist locally — without a name, the picker is just a list
+  /// of UUIDs, which is unhelpful.
+  Future<Map<String, String?>> listRemoteSpaces({
+    required SyncConfig config,
+    required String token,
+  });
+
   /// Map of repo-relative path → git blob SHA.
   Future<Map<String, String>> listRemoteFiles({
     required SyncConfig config,
     required String token,
-    required bool isPush,             // for progress display
+    required bool isPush, // for progress display
     SyncProgressCallback? onProgress,
   });
 

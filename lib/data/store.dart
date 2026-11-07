@@ -1125,6 +1125,23 @@ class VaultStore extends ChangeNotifier {
     }
   }
 
+  /// Fetches the set of spaces that exist in [configId]'s remote
+  /// repository, keyed by space ID, with each space's display name
+  /// (nullable when the metadata file couldn't be read).
+  Future<Map<String, String?>> listRemoteSpaces(String configId) async {
+    final config = syncConfigById(configId);
+    if (config == null) throw StateError('Sync config not found');
+    final token = await _syncTokenStore.load(config.tokenKey);
+    if (token == null) throw StateError('Sync token not set');
+    final client = http.Client();
+    try {
+      return await _makeProvider(client, config)
+          .listRemoteSpaces(config: config, token: token);
+    } finally {
+      client.close();
+    }
+  }
+
   Future<void> verifySyncAccess(String configId) async {
     final config = syncConfigById(configId);
     if (config == null) throw StateError('Sync config not found');

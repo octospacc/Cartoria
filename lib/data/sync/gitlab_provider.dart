@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'sync_config.dart';
 import 'sync_provider.dart';
+import '../../util/html_utils.dart';
 
 class GitLabProvider extends SyncProvider {
   GitLabProvider({required super.client});
@@ -101,6 +103,150 @@ class GitLabProvider extends SyncProvider {
         remoteBody: resp.body,
       );
     }
+  }
+
+  @override
+  Future<Map<String, String?>> listRemoteSpaces({
+    required SyncConfig config,
+    required String token,
+  }) async {
+    final dirs = await _listRootDirs(config: config, token: token);
+    if (dirs.isEmpty) return {};
+
+    final entries = await Future.wait(dirs.map((id) async {
+      try {
+        final name = await _fetchSpaceName(
+          config: config,
+          token: token,
+          spaceId: id,
+        );
+        return MapEntry<String, String?>(id, name);
+      } catch (e) {
+        debugPrint('Could not fetch name for $id: $e');
+        return MapEntry<String, String?>(id, null);
+      }
+    }));
+    return Map.fromEntries(entries);
+  }
+
+  Future<Set<String>> _listRootDirs({
+    required SyncConfig config,
+    required String token,
+  }) async {
+    final uri = _api(
+      config,
+      '/projects/${_projectId(config)}/repository/tree',
+      {'ref': config.branch, 'per_page': '100', 'page': '1'},
+    );
+    final resp = await client.get(uri, headers: _headers(token));
+    _checkAuth(resp);
+    if (resp.statusCode == 404) return {};
+    if (resp.statusCode != 200) {
+      throw SyncException(
+        'Failed to list root: HTTP ${resp.statusCode}',
+        statusCode: resp.statusCode,
+        remoteBody: resp.body,
+      );
+    }
+    final items = jsonDecode(resp.body);
+    if (items is! List) return {};
+    final out = <String>{};
+    for (final item in items) {
+      final m = item as Map<String, dynamic>;
+      if (m['type'] != 'tree') continue;
+      final name = m['name'] as String?;
+      if (name == null || name == 'hooks') continue;
+      out.add(name);
+    }
+    return out;
+  }
+
+  Future<String?> _fetchSpaceName({
+    required SyncConfig config,
+    required String token,
+    required String spaceId,
+  }) async {
+    final json = await _fetchFileBytes(
+      config: config,
+      token: token,
+      path: '$spaceId/space.json',
+    );
+    if (json != null) {
+      try {
+        final meta = jsonDecode(utf8.decode(json)) as Map<String, dynamic>;
+        final name = meta['name'] as String?;
+        if (name != null && name.isNotEmpty) return name;
+      } catch (_) {}
+    }
+    final html = await _fetchFileBytes(
+      config: config,
+      token: token,
+      path: '$spaceId/space.html',
+    );
+    if (html != null) {
+      try {
+        final meta = parseFrontmatterMeta(utf8.decode(html));
+        final name = meta['name'] as String?;
+        if (name != null && name.isNotEmpty) return name;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  Future<Uint8List?> _fetchFileBytes({
+    required SyncConfig config,
+    required String token,
+    required String path,
+  }) async {
+    final encoded = Uri.encodeComponent(path);
+    final uri = _api(
+      config,
+      '/projects/${_projectId(config)}/repository/files/$encoded/raw',
+      {'ref': config.branch},
+    );
+    final resp = await client
+        .get(uri, headers: _headers(token))
+        .timeout(const Duration(seconds: 15));
+    if (resp.statusCode == 404) return null;
+    _checkAuth(resp);
+    if (resp.statusCode != 200) return null;
+    return resp.bodyBytes;
+  }
+
+  @override
+  Future<Set<String>> listRemoteTopLevelDirs({
+    required SyncConfig config,
+    required String token,
+  }) async {
+    // No `recursive=true` — one page suffices unless the repo has >100
+    // root-level entries, which would mean >100 spaces, in which case
+    // pagination handling is a reasonable follow-up.
+    final uri = _api(
+      config,
+      '/projects/${_projectId(config)}/repository/tree',
+      {'ref': config.branch, 'per_page': '100', 'page': '1'},
+    );
+    final resp = await client.get(uri, headers: _headers(token));
+    _checkAuth(resp);
+    if (resp.statusCode == 404) return {};
+    if (resp.statusCode != 200) {
+      throw SyncException(
+        'Failed to list root: HTTP ${resp.statusCode}',
+        statusCode: resp.statusCode,
+        remoteBody: resp.body,
+      );
+    }
+    final items = jsonDecode(resp.body);
+    if (items is! List) return {};
+    final out = <String>{};
+    for (final item in items) {
+      final m = item as Map<String, dynamic>;
+      if (m['type'] != 'tree') continue;
+      final name = m['name'] as String?;
+      if (name == null || name == 'hooks') continue;
+      out.add(name);
+    }
+    return out;
   }
 
   @override
