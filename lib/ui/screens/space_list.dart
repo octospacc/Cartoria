@@ -54,44 +54,50 @@ class SpaceListScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: ListView.separated(
-        itemCount: store.spaces.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
-        itemBuilder: (context, i) {
-          final space = store.spaces[i];
-          return ListTile(
-            leading: CircleAvatar(
-              child: Text(space.icon, style: const TextStyle(fontSize: 20)),
-            ),
-            title: Text(space.name),
-            subtitle: Text(_subtitleFor(store, space)),
-            trailing: PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert),
-              onSelected: (v) {
-                if (v == 'stats') {
-                  SpaceStatsDialog.show(context, store, space);
-                }
-                if (v == 'edit') _editSpace(context, space);
-                if (v == 'export') exportSpaceZip(context, store, space);
-                if (v == 'delete') _confirmDelete(context, space);
+      body: store.spaces.isEmpty
+          ? const _EmptyState()
+          : ListView.separated(
+              itemCount: store.spaces.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (context, i) {
+                final space = store.spaces[i];
+                return ListTile(
+                  leading: CircleAvatar(
+                    child:
+                        Text(space.icon, style: const TextStyle(fontSize: 20)),
+                  ),
+                  title: Text(space.name),
+                  subtitle: Text(_subtitleFor(store, space)),
+                  trailing: PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert),
+                    onSelected: (v) {
+                      if (v == 'stats') {
+                        SpaceStatsDialog.show(context, store, space);
+                      }
+                      if (v == 'edit') _editSpace(context, space);
+                      if (v == 'export') exportSpaceZip(context, store, space);
+                      if (v == 'delete') _confirmDelete(context, space);
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'stats', child: Text('Statistics')),
+                      PopupMenuItem(value: 'edit', child: Text('Edit space…')),
+                      PopupMenuItem(
+                          value: 'export', child: Text('Export space…')),
+                      PopupMenuItem(
+                          value: 'delete', child: Text('Delete space…')),
+                    ],
+                  ),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          SpaceFeedScreen(store: store, space: space),
+                    ),
+                  ),
+                  onLongPress: () => _confirmDelete(context, space),
+                );
               },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'stats', child: Text('Statistics')),
-                PopupMenuItem(value: 'edit', child: Text('Edit space…')),
-                PopupMenuItem(value: 'export', child: Text('Export space…')),
-                PopupMenuItem(value: 'delete', child: Text('Delete space…')),
-              ],
             ),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => SpaceFeedScreen(store: store, space: space),
-              ),
-            ),
-            onLongPress: () => _confirmDelete(context, space),
-          );
-        },
-      ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _newSpace(context),
         child: const Icon(Icons.add),
@@ -267,5 +273,40 @@ class SpaceListScreen extends StatelessWidget {
     }
     if (parts.isEmpty) return 'Empty';
     return parts.join(' · ');
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.inbox_outlined,
+              size: 64,
+              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+            ),
+            const SizedBox(height: 16),
+            Text('No spaces yet', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              'Tap + to create your first space, or import from a file '
+              'using the icon at the top.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

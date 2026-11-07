@@ -14,6 +14,7 @@ import '../platform/fs.dart';
 import '../util/fs_walk.dart';
 import '../util/hook_outcome.dart';
 import '../util/mime.dart';
+import 'app_settings.dart';
 import 'bookmarks.dart';
 import 'hooks.dart';
 import 'models.dart';
@@ -80,6 +81,9 @@ class VaultStore extends ChangeNotifier {
   late final ThumbnailCache _thumbnailCache;
   late final ContentFetcher _contentFetcher;
 
+  late final AppSettingsStore _settingsStore;
+  AppSettings _settings = const AppSettings();
+
   final http.Client _httpClient = http.Client();
 
   final List<Space> _spaceCache = [];
@@ -97,6 +101,11 @@ class VaultStore extends ChangeNotifier {
   List<SyncConfig> _syncConfigs = [];
 
   // ── Read accessors ─────────────────────────────────────────────────────
+
+  /// True once the user has either created a space or explicitly skipped
+  /// the welcome screen. When true, the welcome screen never shows again,
+  /// even if every space is deleted.
+  bool get isOnboarded => _settings.onboarded;
 
   List<Space> get spaces => List.unmodifiable(_spaceCache);
   List<Post> postsForSpace(String spaceId) =>
@@ -187,11 +196,20 @@ class VaultStore extends ChangeNotifier {
     } catch (e) {
       debugPrint('Hooks load failed: $e');
     }
+
     try {
       _syncConfigs = await _syncConfigsStore.load();
     } catch (e) {
       debugPrint('Sync configs load failed: $e');
       _syncConfigs = [];
+    }
+
+    _settingsStore = AppSettingsStore(fs: fs, vaultPath: vaultPath);
+    try {
+      _settings = await _settingsStore.load();
+    } catch (e) {
+      debugPrint('Settings load failed: $e');
+      _settings = const AppSettings();
     }
 
     await reload();
@@ -233,6 +251,18 @@ class VaultStore extends ChangeNotifier {
         _fileIndex[space.id] = {};
       }
     }
+
+    // Backfill the onboarding flag for users upgrading from a version that
+    // predates it. Anyone with at least one space has clearly used the app.
+    if (_spaceCache.isNotEmpty && !_settings.onboarded) {
+      _settings = const AppSettings(onboarded: true);
+      try {
+        await _settingsStore.save(_settings);
+      } catch (e) {
+        debugPrint('Could not persist onboarding flag: $e');
+      }
+    }
+
     _resortSpacesByUsage();
     notifyListeners();
   }
@@ -247,6 +277,17 @@ class VaultStore extends ChangeNotifier {
     _fileIndex[space.id] = {};
     _offloadedIdsBySpace[space.id] = {};
     _resortSpacesByUsage();
+
+    // Creating a space is an implicit "I'm done with onboarding" signal.
+    if (!_settings.onboarded) {
+      _settings = const AppSettings(onboarded: true);
+      try {
+        await _settingsStore.save(_settings);
+      } catch (e) {
+        debugPrint('Could not persist onboarding flag: $e');
+      }
+    }
+
     notifyListeners();
     return space;
   }
@@ -770,6 +811,19 @@ class VaultStore extends ChangeNotifier {
 
   Future<void> deleteHook(String id) async {
     await _hooks.delete(id);
+    notifyListeners();
+  }
+
+  /// Marks the user as having completed onboarding. Called by the Skip
+  /// button on the welcome screen. Idempotent.
+  Future<void> markOnboarded() async {
+    if (_settings.onboarded) return;
+    _settings = const AppSettings(onboarded: true);
+    try {
+      await _settingsStore.save(_settings);
+    } catch (e) {
+      debugPrint('Could not persist onboarding flag: $e');
+    }
     notifyListeners();
   }
 

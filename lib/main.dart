@@ -49,7 +49,10 @@ class VaultApp extends StatelessWidget {
           : AnimatedBuilder(
               animation: store,
               builder: (_, __) {
-                if (store.spaces.isEmpty) {
+                // Show onboarding only for genuinely new installs. A user who
+                // has created spaces (or explicitly skipped) never sees it
+                // again, even after deleting every space.
+                if (!store.isOnboarded && store.spaces.isEmpty) {
                   return OnboardingScreen(store: store);
                 }
                 return SpaceListScreen(store: store);

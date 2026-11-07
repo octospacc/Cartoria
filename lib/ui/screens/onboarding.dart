@@ -33,10 +33,23 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
   }
 
+  Future<void> _skip() async {
+    if (_busy) return;
+    await widget.store.markOnboarded();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Welcome')),
+      appBar: AppBar(
+        title: const Text('Welcome'),
+        actions: [
+          TextButton(
+            onPressed: _busy ? null : _skip,
+            child: const Text('Skip'),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -48,7 +61,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   style: Theme.of(context).textTheme.headlineSmall),
               const SizedBox(height: 8),
               const Text(
-                  'A space holds its own notes, bookmarks, and files. Spaces are independent — you can add more later.'),
+                  'A space holds its own notes, bookmarks, and files. '
+                  'Spaces are independent — you can add more later.'),
               const SizedBox(height: 24),
               TextField(
                 controller: _name,
@@ -68,6 +82,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     .map((i) => ChoiceChip(
                           label: Text(i, style: const TextStyle(fontSize: 22)),
                           selected: _icon == i,
+                          showCheckmark: false,
                           onSelected: (_) => setState(() => _icon = i),
                         ))
                     .toList(),
