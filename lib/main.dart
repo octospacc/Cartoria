@@ -40,24 +40,37 @@ class VaultApp extends StatelessWidget {
     return MaterialApp(
       title: 'Cartoria',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        useMaterial3: true,
-      ),
+      theme: _buildTheme(Brightness.light),
+      darkTheme: _buildTheme(Brightness.dark),
+      // Follows the OS on every platform: NSAppearance on macOS, UIUserInterfaceStyle
+      // on iOS, UiModeManager on Android, the app theme on Windows, and
+      // prefers-color-scheme on Linux and web.
+      themeMode: ThemeMode.system,
       home: initError != null
           ? _InitErrorScreen(error: initError!, stack: initStack)
           : AnimatedBuilder(
               animation: store,
               builder: (_, __) {
-                // Show onboarding only for genuinely new installs. A user who
-                // has created spaces (or explicitly skipped) never sees it
-                // again, even after deleting every space.
                 if (!store.isOnboarded && store.spaces.isEmpty) {
                   return OnboardingScreen(store: store);
                 }
                 return SpaceListScreen(store: store);
               },
             ),
+    );
+  }
+
+  /// Both themes derive from the same seed so accents stay recognisably
+  /// Cartoria across appearances. `ColorScheme.fromSeed` produces a
+  /// properly graded tonal palette for each brightness — no manual
+  /// contrast tuning needed.
+  ThemeData _buildTheme(Brightness brightness) {
+    return ThemeData(
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: const Color(0xFFA0432B),
+        brightness: brightness,
+      ),
+      useMaterial3: true,
     );
   }
 }

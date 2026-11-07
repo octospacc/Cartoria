@@ -220,8 +220,8 @@ class _HookStateBlock extends StatelessWidget {
                   onPressed: onRetry,
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                      minWidth: 28, minHeight: 28),
+                  constraints:
+                      const BoxConstraints(minWidth: 28, minHeight: 28),
                 ),
             ],
           ),
@@ -279,11 +279,14 @@ class _StatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final successColor = theme.brightness == Brightness.dark
+        ? Colors.green.shade400
+        : Colors.green.shade700;
     final (color, label) = isRunning
         ? (theme.colorScheme.onSurfaceVariant, 'Running')
         : failed
             ? (theme.colorScheme.error, 'Failed')
-            : (Colors.green.shade600, 'Success');
+            : (successColor, 'Success');
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(

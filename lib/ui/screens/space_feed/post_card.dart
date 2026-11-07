@@ -728,11 +728,10 @@ class _HookIndicator extends StatelessWidget {
         tooltip = 'Hooks running…';
         break;
       case HookOutcome.success:
-        visual = Icon(
-          Icons.check_circle,
-          size: 14,
-          color: Colors.green.shade600,
-        );
+        final successColor = theme.brightness == Brightness.dark
+            ? Colors.green.shade400
+            : Colors.green.shade700;
+        visual = Icon(Icons.check_circle, size: 14, color: successColor);
         tooltip = 'Hooks succeeded';
         break;
       case HookOutcome.failure:
