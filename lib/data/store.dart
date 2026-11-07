@@ -449,6 +449,36 @@ class VaultStore extends ChangeNotifier {
     return used;
   }
 
+  /// Fills in a missing file's slot with bytes picked by the user.
+  /// See [DriveRepository.restoreMissingFile] for the semantics.
+  Future<void> restoreMissingFile({
+    required String spaceId,
+    required String fileId,
+    required Uint8List bytes,
+    required String name,
+  }) async {
+    final restored = await _drive.restoreMissingFile(
+      spaceId: spaceId,
+      fileId: fileId,
+      bytes: bytes,
+      name: name,
+    );
+
+    // Update the file cache and index with the new DriveFile (isMissing
+    // becomes false because the default constructor sets it false).
+    final idx = _fileCache[spaceId]?.indexWhere((f) => f.id == fileId) ?? -1;
+    if (idx >= 0) {
+      _fileCache[spaceId]![idx] = restored;
+    }
+    _fileIndex[spaceId]?[fileId] = restored;
+
+    // Any stale caches from failed loads must be cleared.
+    _imageCache.remove('$spaceId:$fileId');
+    _imageAspectCache.remove('$spaceId:$fileId');
+
+    notifyListeners();
+  }
+
   Future<void> fetchOffloadedFile(String spaceId, String fileId) async {
     // 1. Fetch bytes (via `_drive.readBytes`, which delegates to
     //    ContentFetcher because the file is offloaded).

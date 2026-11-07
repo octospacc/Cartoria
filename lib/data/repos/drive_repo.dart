@@ -312,6 +312,51 @@ class DriveRepository {
     await unoffloadFile(spaceId, fileId);
   }
 
+  /// Writes bytes into the slot for an existing file that is currently
+  /// missing (in `drive_meta.json` but no blob on disk, not offloaded).
+  /// Preserves the file's id and creation time; updates the display name
+  /// to [name] so the on-disk extension matches the picked file's content.
+  Future<DriveFile> restoreMissingFile({
+    required String spaceId,
+    required String fileId,
+    required Uint8List bytes,
+    required String name,
+  }) async {
+    final meta = await _readMeta(spaceId);
+    final existing = meta[fileId];
+    if (existing == null) {
+      throw StateError('File $fileId not in drive_meta.json');
+    }
+    final createdAt = DateTime.parse(existing['created'] as String);
+
+    // Update meta first — this is the source of truth for what exists.
+    meta[fileId] = {
+      'name': name,
+      'created': createdAt.toIso8601String(),
+    };
+    await _writeMeta(spaceId, meta);
+
+    // Write the blob under the new extension.
+    final ext = _sanitizedExtension(name);
+    final diskName = ext.isEmpty ? fileId : '$fileId.$ext';
+    final path = p.join(vaultPath, spaceId, 'drive', diskName);
+    await fs
+        .directory(p.join(vaultPath, spaceId, 'drive'))
+        .create(recursive: true);
+    await fs.file(path).writeAsBytes(bytes);
+
+    // Update the path cache so subsequent reads find the file.
+    final index = await _driveIndex(spaceId);
+    index[fileId] = path;
+
+    return DriveFile(
+      id: fileId,
+      name: name,
+      sizeBytes: bytes.length,
+      createdAt: createdAt,
+    );
+  }
+
   /// Drops the path cache for all spaces.
   void clearCache() {
     _pathCache.clear();

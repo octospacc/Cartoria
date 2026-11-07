@@ -329,23 +329,31 @@ class _DriveScreenState extends State<DriveScreen> {
 
   Future<void> _openViewer(DriveFile f) async {
     if (f.isMissing) {
-      await showDialog<void>(
+      final action = await showDialog<String>(
         context: context,
         builder: (ctx) => AlertDialog(
           title: Text('"${f.name}" is missing'),
           content: const Text(
             'This file is referenced by one or more posts, but its content '
             'isn\'t stored anywhere on this device or the sync remote.\n\n'
-            'To restore it, re-import the full export of the space it came '
-            'from, or pull from the sync remote if it still has the file.',
+            'You can restore it by re-importing the full export it came '
+            'from, pulling from the sync remote if it still has the file, '
+            'or by picking a replacement file from this device.',
           ),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('Close')),
+                child: const Text('Cancel')),
+            FilledButton.icon(
+                onPressed: () => Navigator.pop(ctx, 'upload'),
+                icon: const Icon(Icons.upload_file),
+                label: const Text('Upload replacement…')),
           ],
         ),
       );
+      if (action == 'upload' && mounted) {
+        await _uploadReplacement(f);
+      }
       return;
     }
 
@@ -428,6 +436,33 @@ class _DriveScreenState extends State<DriveScreen> {
       ),
     );
     if (ok == true) await widget.store.deleteFile(widget.space.id, f.id);
+  }
+
+  Future<void> _uploadReplacement(DriveFile f) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(withData: true);
+      final picked = result?.files.single;
+      final bytes = picked?.bytes;
+      if (bytes == null || picked == null) return;
+
+      await widget.store.restoreMissingFile(
+        spaceId: widget.space.id,
+        fileId: f.id,
+        bytes: bytes,
+        name: picked.name,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Restored "${picked.name}"')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Restore failed: $e')),
+        );
+      }
+    }
   }
 }
 
