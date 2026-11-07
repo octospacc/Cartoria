@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -11,12 +11,9 @@ Future<void> saveOrShareFile(Uint8List bytes, String filename) async {
   // inside their container or to user-selected paths, so a save dialog
   // is the correct primitive.
   if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
-    final path = await FilePicker.platform.saveFile(
-      dialogTitle: 'Save $filename',
-      fileName: filename,
-    );
-    if (path == null) return;
-    await File(path).writeAsBytes(bytes, flush: true);
+    final location = await getSaveLocation(suggestedName: filename);
+    if (location == null) return;
+    await File(location.path).writeAsBytes(bytes, flush: true);
     return;
   }
 

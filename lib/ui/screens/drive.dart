@@ -1,4 +1,4 @@
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../data/models.dart';
@@ -404,12 +404,15 @@ class _DriveScreenState extends State<DriveScreen> {
 
   Future<void> _upload(BuildContext context) async {
     try {
-      final result = await FilePicker.platform.pickFiles(withData: true);
-      final picked = result?.files.single;
-      final bytes = picked?.bytes;
-      if (bytes == null || picked == null) return;
+      final file = await openFile();
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) return;
       await widget.store.addFileFromBytes(
-          spaceId: widget.space.id, bytes: bytes, name: picked.name);
+        spaceId: widget.space.id,
+        bytes: bytes,
+        name: file.name,
+      );
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
@@ -440,21 +443,21 @@ class _DriveScreenState extends State<DriveScreen> {
 
   Future<void> _uploadReplacement(DriveFile f) async {
     try {
-      final result = await FilePicker.platform.pickFiles(withData: true);
-      final picked = result?.files.single;
-      final bytes = picked?.bytes;
-      if (bytes == null || picked == null) return;
+      final file = await openFile();
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) return;
 
       await widget.store.restoreMissingFile(
         spaceId: widget.space.id,
         fileId: f.id,
         bytes: bytes,
-        name: picked.name,
+        name: file.name,
       );
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Restored "${picked.name}"')),
+        SnackBar(content: Text('Restored "${file.name}"')),
       );
     } catch (e) {
       if (mounted) {

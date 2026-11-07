@@ -1,4 +1,4 @@
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../../data/models.dart';
@@ -35,16 +35,25 @@ Future<List<String>> pickOrRecallFiles(
   if (choice == null) return const [];
 
   if (choice == 'new') {
-    final result = await FilePicker.platform.pickFiles(withData: true);
-    final picked = result?.files.single;
-    final bytes = picked?.bytes;
-    if (bytes == null || picked == null) return const [];
-    final f = await store.addFileFromBytes(
-      spaceId: space.id,
-      bytes: bytes,
-      name: picked.name,
-    );
-    return [f.id];
+    try {
+      final file = await openFile();
+      if (file == null) return const [];
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) return const [];
+      final f = await store.addFileFromBytes(
+        spaceId: space.id,
+        bytes: bytes,
+        name: file.name,
+      );
+      return [f.id];
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Upload failed: $e')),
+        );
+      }
+      return const [];
+    }
   }
 
   if (choice == 'existing') {
