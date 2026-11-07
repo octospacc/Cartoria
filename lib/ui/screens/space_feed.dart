@@ -43,6 +43,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   final _searchCtrl = TextEditingController();
   PostKind _kind = PostKind.note;
   final List<String> _pendingFileIds = [];
+  DateTime? _postDateTime;
   final Set<String> _expanded = {};
   bool _sending = false;
   bool _searchActive = false;
@@ -372,11 +373,15 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         thumbnail: fetchedThumbnail,
         tags: _extractTags(body),
         fileIds: List.of(_pendingFileIds),
+        createdAt: _postDateTime,
       );
       if (!mounted) return;
       _bodyCtrl.clear();
       _urlCtrl.clear();
-      setState(() => _pendingFileIds.clear());
+      setState(() {
+        _pendingFileIds.clear();
+        _postDateTime = null;
+      });
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -432,6 +437,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       parentId: parent.id,
       tags: _extractTags(result.body),
       fileIds: result.fileIds,
+      createdAt: result.createdAt,
     );
     if (mounted) setState(() => _expanded.add(parent.id));
   }
@@ -831,7 +837,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                   ),
                 ),
               ),
-              if (!_searchActive && !_selectionMode)
+              if (!_searchActive)
                 _ComposerFooter(
                   child: InlineComposer(
                     kind: _kind,
@@ -845,6 +851,9 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                     onSend: _sending ? null : _send,
                     onRemoveFile: (id) =>
                         setState(() => _pendingFileIds.remove(id)),
+                    postDateTime: _postDateTime, // ← new
+                    onPostDateTimeChanged: (v) =>
+                        setState(() => _postDateTime = v), // ← new
                   ),
                 ),
             ],

@@ -325,6 +325,7 @@ class VaultStore extends ChangeNotifier {
     String? parentId,
     List<String> tags = const [],
     List<String> fileIds = const [],
+    DateTime? createdAt,
   }) async {
     final post = await _posts.create(
       spaceId: spaceId,
@@ -337,8 +338,10 @@ class VaultStore extends ChangeNotifier {
       parentId: parentId,
       tags: tags,
       fileIds: fileIds,
+      createdAt: createdAt,
     );
     _postCache.putIfAbsent(spaceId, () => []).add(post);
+    _postCache[spaceId]!.sort((a, b) => a.createdAt.compareTo(b.createdAt));
     _resortSpacesByUsage();
     notifyListeners();
 

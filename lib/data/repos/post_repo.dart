@@ -86,7 +86,10 @@ class PostRepository {
     Map<String, PostHookState> hookState = const {},
   }) async {
     final id = const Uuid().v7();
-    final now = createdAt ?? DateTime.now().toUtc();
+    // Normalise: caller may pass a local DateTime (from the picker), which
+    // must be stored as UTC to compare correctly against DateTime.now().toUtc()
+    // and to render back through .toLocal().
+    final now = (createdAt ?? DateTime.now()).toUtc();
     final html = _appendBlockquotes(bodyToHtml(plaintextBody), quotedExternals);
     final meta = <String, dynamic>{
       'id': id,

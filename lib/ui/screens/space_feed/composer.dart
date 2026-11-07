@@ -5,8 +5,50 @@ import '../../../data/store.dart';
 import '../../../util/html_utils.dart';
 import 'attachment_picker.dart';
 
-/// Result of the [ComposerSheet] — handed back to the feed screen, which
-/// then persists it via [VaultStore.createPost] / [VaultStore.updatePost].
+// ── Shared: date/time picker + formatter ──────────────────────────────────
+
+Future<DateTime?> _pickPostDateTime(
+  BuildContext context, {
+  DateTime? initial,
+}) async {
+  final now = DateTime.now();
+  final base = initial ?? now;
+  final date = await showDatePicker(
+    context: context,
+    initialDate: base,
+    firstDate: DateTime(2000),
+    lastDate: DateTime.now().add(const Duration(days: 365 * 100)),
+    helpText: 'Post date',
+  );
+  if (date == null || !context.mounted) return null;
+  final time = await showTimePicker(
+    context: context,
+    initialTime: TimeOfDay.fromDateTime(base),
+    helpText: 'Post time',
+  );
+  if (time == null || !context.mounted) return null;
+  return DateTime(date.year, date.month, date.day, time.hour, time.minute);
+}
+
+const _monthsShort = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+String _formatPostDateTime(DateTime dt) {
+  final local = dt.toLocal();
+  final now = DateTime.now();
+  final hh = local.hour.toString().padLeft(2, '0');
+  final mm = local.minute.toString().padLeft(2, '0');
+  final month = _monthsShort[local.month - 1];
+  if (local.year == now.year) {
+    return '$month ${local.day}, $hh:$mm';
+  }
+  return '$month ${local.day} ${local.year}, $hh:$mm';
+}
+
+// ── Compose result ────────────────────────────────────────────────────────
+
 class ComposerResult {
   final PostKind kind;
   final String body;
@@ -16,6 +58,10 @@ class ComposerResult {
   final String? thumbnail;
   final List<String> fileIds;
 
+  /// Only meaningful for new posts (reply or top-level). Null means
+  /// "use now at send time"; ignored for edits.
+  final DateTime? createdAt;
+
   const ComposerResult({
     required this.kind,
     required this.body,
@@ -24,10 +70,12 @@ class ComposerResult {
     required this.description,
     required this.thumbnail,
     required this.fileIds,
+    this.createdAt,
   });
 }
 
-/// The inline composer at the bottom of the feed screen.
+// ── Inline composer ───────────────────────────────────────────────────────
+
 class InlineComposer extends StatelessWidget {
   final PostKind kind;
   final ValueChanged<PostKind> onKindChanged;
@@ -39,6 +87,10 @@ class InlineComposer extends StatelessWidget {
   final VoidCallback onAttach;
   final VoidCallback? onSend;
   final ValueChanged<String> onRemoveFile;
+
+  /// Post datetime override. Null = "now at send time".
+  final DateTime? postDateTime;
+  final ValueChanged<DateTime?> onPostDateTimeChanged;
 
   const InlineComposer({
     super.key,
@@ -52,6 +104,8 @@ class InlineComposer extends StatelessWidget {
     required this.onAttach,
     required this.onSend,
     required this.onRemoveFile,
+    this.postDateTime,
+    required this.onPostDateTimeChanged,
   });
 
   @override
@@ -123,6 +177,10 @@ class InlineComposer extends StatelessWidget {
               ),
             ),
             const Spacer(),
+            _DateTimeChip(
+              value: postDateTime,
+              onChanged: onPostDateTimeChanged,
+            ),
             IconButton(
               icon: const Icon(Icons.attach_file),
               tooltip: 'Attach',
@@ -139,7 +197,81 @@ class InlineComposer extends StatelessWidget {
   }
 }
 
-/// The bottom-sheet used to edit an existing post or reply to a post.
+// ── Compact datetime chip (inline composer) ───────────────────────────────
+
+class _DateTimeChip extends StatelessWidget {
+  final DateTime? value;
+  final ValueChanged<DateTime?> onChanged;
+
+  const _DateTimeChip({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final v = value;
+
+    if (v == null) {
+      return IconButton(
+        icon: const Icon(Icons.schedule),
+        tooltip: 'Set post date/time',
+        onPressed: () async {
+          final picked = await _pickPostDateTime(context);
+          if (picked != null) onChanged(picked);
+        },
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () async {
+            final picked = await _pickPostDateTime(context, initial: v);
+            if (picked != null) onChanged(picked);
+          },
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.secondaryContainer,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.schedule,
+                    size: 14,
+                    color: theme.colorScheme.onSecondaryContainer),
+                const SizedBox(width: 4),
+                Text(
+                  _formatPostDateTime(v),
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSecondaryContainer,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                InkWell(
+                  onTap: () => onChanged(null),
+                  customBorder: const CircleBorder(),
+                  child: Padding(
+                    padding: const EdgeInsets.all(2),
+                    child: Icon(Icons.close,
+                        size: 12,
+                        color: theme.colorScheme.onSecondaryContainer),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Composer sheet (edit + reply) ─────────────────────────────────────────
+
 class ComposerSheet extends StatefulWidget {
   final VaultStore store;
   final Space space;
@@ -167,6 +299,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
   late List<String> _fileIds;
   String? _thumbnail;
   bool _fetching = false;
+  DateTime? _postDateTime;
 
   @override
   void initState() {
@@ -181,6 +314,9 @@ class _ComposerSheetState extends State<ComposerSheet> {
     _description = TextEditingController(text: existing?.description ?? '');
     _fileIds = existing != null ? List.of(existing.fileIds) : [];
     _thumbnail = existing?.thumbnail;
+    // No datetime for edits: creation time is preserved by updatePost,
+    // and there's no way to change it without stranding the UUIDv7 order.
+    _postDateTime = null;
   }
 
   @override
@@ -269,6 +405,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
             _kind == PostKind.bookmark ? _description.text.trim() : null,
         thumbnail: _kind == PostKind.bookmark ? _thumbnail : null,
         fileIds: List.of(_fileIds),
+        createdAt: widget.editing == null ? _postDateTime : null,
       ),
     );
   }
@@ -404,6 +541,13 @@ class _ComposerSheetState extends State<ComposerSheet> {
                   border: OutlineInputBorder(),
                 ),
               ),
+              if (widget.editing == null) ...[
+                const SizedBox(height: 12),
+                _DateTimeRow(
+                  value: _postDateTime,
+                  onChanged: (v) => setState(() => _postDateTime = v),
+                ),
+              ],
               const SizedBox(height: 12),
               if (_fileIds.isNotEmpty)
                 Wrap(
@@ -430,6 +574,66 @@ class _ComposerSheetState extends State<ComposerSheet> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ── Datetime row (composer sheet) ─────────────────────────────────────────
+
+class _DateTimeRow extends StatelessWidget {
+  final DateTime? value;
+  final ValueChanged<DateTime?> onChanged;
+
+  const _DateTimeRow({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final v = value;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.schedule,
+              size: 18, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Posted at',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                Text(
+                  v == null ? 'Now (default)' : _formatPostDateTime(v),
+                  style: theme.textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          if (v != null)
+            IconButton(
+              icon: const Icon(Icons.close, size: 18),
+              tooltip: 'Reset to now',
+              onPressed: () => onChanged(null),
+            ),
+          TextButton(
+            onPressed: () async {
+              final picked =
+                  await _pickPostDateTime(context, initial: v);
+              if (picked != null) onChanged(picked);
+            },
+            child: Text(v == null ? 'Set…' : 'Change'),
+          ),
+        ],
       ),
     );
   }
