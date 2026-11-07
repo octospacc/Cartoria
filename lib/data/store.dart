@@ -554,8 +554,32 @@ class VaultStore extends ChangeNotifier {
 
   // ── Archive (zip export / import) ──────────────────────────────────────
 
-  Future<Uint8List> exportSpaceZip(String spaceId) =>
-      _archive.exportSpace(spaceId);
+  Future<Uint8List> exportSpaceZip(
+    String spaceId, {
+    ExportMediaMode mode = ExportMediaMode.full,
+  }) async {
+    final offloadedBlobs = <String, Uint8List>{};
+
+    if (mode == ExportMediaMode.full) {
+      final offloaded = _offloadedIdsBySpace[spaceId] ?? const <String>{};
+      for (final fileId in offloaded) {
+        try {
+          offloadedBlobs[fileId] = await _drive.readBytes(spaceId, fileId);
+        } catch (e) {
+          throw StateError(
+              'Could not fetch offloaded file $fileId for full export. '
+              'Check the sync config and token, or export with a mode '
+              'that skips offloaded files.');
+        }
+      }
+    }
+
+    return _archive.exportSpace(
+      spaceId,
+      mode: mode,
+      offloadedBlobs: offloadedBlobs,
+    );
+  }
 
   Future<String> importSpaceZip(Uint8List zipBytes) async {
     final id = await _archive.importSpace(zipBytes);
@@ -575,9 +599,13 @@ class VaultStore extends ChangeNotifier {
       for (final p in existingPosts)
         if (p.kind == PostKind.bookmark && p.url != null) p.url!,
     };
-    final existingFileIds = (_fileCache[targetSpaceId] ?? const <DriveFile>[])
-        .map((f) => f.id)
-        .toSet();
+    // Missing files aren't considered existing — re-importing a full zip
+    // must be able to fill in their blobs. Only truly-present files
+    // (on-disk or offloaded) are skipped.
+    final existingFileIds = <String>{
+      for (final f in _fileCache[targetSpaceId] ?? const <DriveFile>[])
+        if (!f.isMissing) f.id,
+    };
 
     final referencedParents = <String>{
       for (final p in extracted.posts)
@@ -604,6 +632,7 @@ class VaultStore extends ChangeNotifier {
     final importedFiles = await _drive.importExistingFiles(
       spaceId: targetSpaceId,
       files: extracted.files,
+      driveMeta: extracted.driveMeta, // ← add this line
       existingIds: existingFileIds,
     );
     final filesSkipped = extracted.files.length - importedFiles.length;

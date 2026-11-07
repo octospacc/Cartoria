@@ -58,7 +58,19 @@ class DriveRepository {
           continue;
         }
         final path = index[id];
-        if (path == null) continue;
+        if (path == null) {
+          // In meta but no blob and not offloaded — a dangling reference
+          // from a partial import. Surface it so the user can re-import
+          // the full zip to fill it back in.
+          result.add(DriveFile(
+            id: id,
+            name: (m['name'] as String?) ?? id,
+            sizeBytes: 0,
+            createdAt: DateTime.parse(m['created'] as String),
+            isMissing: true,
+          ));
+          continue;
+        }
         final stat = await fs.file(path).stat();
         result.add(DriveFile(
           id: id,
@@ -184,14 +196,24 @@ class DriveRepository {
   Future<List<DriveFile>> importExistingFiles({
     required String spaceId,
     required Map<String, ExtractedFile> files,
+    required Map<String, Map<String, dynamic>> driveMeta,
     required Set<String> existingIds,
   }) async {
-    if (files.isEmpty) return const [];
+    if (files.isEmpty && driveMeta.isEmpty) return const [];
     await fs
         .directory(p.join(vaultPath, spaceId, 'drive'))
         .create(recursive: true);
 
     final meta = await _readMeta(spaceId);
+
+    // Add all meta entries from the zip. This preserves references to
+    // files that weren't in the zip (offloaded on the source or excluded
+    // by the export mode). Files already in the target keep their
+    // existing meta (putIfAbsent), so re-imports don't overwrite.
+    for (final entry in driveMeta.entries) {
+      meta.putIfAbsent(entry.key, () => entry.value);
+    }
+
     final index = await _driveIndex(spaceId);
     final result = <DriveFile>[];
 

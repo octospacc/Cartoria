@@ -29,19 +29,70 @@ class ArchiveService {
 
   const ArchiveService({required this.fs, required this.vaultPath});
 
-  Future<Uint8List> exportSpace(String spaceId) async {
+  Future<Uint8List> exportSpace(
+    String spaceId, {
+    ExportMediaMode mode = ExportMediaMode.onDiskOnly,
+    Map<String, Uint8List> offloadedBlobs = const {},
+  }) async {
     final archive = Archive();
     final dirPath = p.join(vaultPath, spaceId);
     final files = await walkFiles(fs.directory(dirPath));
+
+    final onDiskDriveIds = <String>{};
+
     for (final f in files) {
       try {
         final rel = p.relative(f.path, from: dirPath);
+
+        // Skip drive blobs for lite export.
+        if (mode == ExportMediaMode.noMedia && rel.startsWith('drive/')) {
+          continue;
+        }
+
+        if (rel.startsWith('drive/')) {
+          final base = p.basename(f.path);
+          final dot = base.indexOf('.');
+          onDiskDriveIds.add(dot < 0 ? base : base.substring(0, dot));
+        }
+
         final bytes = await f.readAsBytes();
         archive.addFile(ArchiveFile('$spaceId/$rel', bytes.length, bytes));
       } catch (e) {
         debugPrint('Skipping unreadable file ${f.path}: $e');
       }
     }
+
+    // Add offloaded blobs provided by the caller. Only meaningful for
+    // ExportMediaMode.full — the caller fetches them from the remote.
+    if (mode == ExportMediaMode.full && offloadedBlobs.isNotEmpty) {
+      final metaFile = fs.file(p.join(dirPath, 'drive_meta.json'));
+      var meta = <String, dynamic>{};
+      if (await metaFile.exists()) {
+        try {
+          meta = (jsonDecode(await metaFile.readAsString()) as Map)
+              .cast<String, dynamic>();
+        } catch (_) {}
+      }
+
+      for (final entry in offloadedBlobs.entries) {
+        final id = entry.key;
+        if (onDiskDriveIds.contains(id)) continue;
+        final bytes = entry.value;
+        final m = meta[id];
+        final name = (m is Map ? m['name'] as String? : null) ?? id;
+        final dot = name.lastIndexOf('.');
+        final ext = (dot < 0 || dot == 0)
+            ? ''
+            : name
+                .substring(dot + 1)
+                .toLowerCase()
+                .replaceAll(RegExp(r'[^a-z0-9]'), '');
+        final diskName = ext.isEmpty ? id : '$id.$ext';
+        archive.addFile(
+            ArchiveFile('$spaceId/drive/$diskName', bytes.length, bytes));
+      }
+    }
+
     return Uint8List.fromList(ZipEncoder().encode(archive)!);
   }
 
@@ -114,7 +165,9 @@ class ArchiveService {
     final spaceDir = p.dirname(spaceFile.name);
     final prefix = (spaceDir.isEmpty || spaceDir == '.') ? '' : '$spaceDir/';
 
-    // drive_meta.json (optional)
+    // drive_meta.json — read as-is. If it references files that aren't in
+    // the zip (offloaded on source, or excluded during export), those
+    // entries are still preserved so the target space knows what's missing.
     var driveMeta = <String, Map<String, dynamic>>{};
     for (final f in archive.files) {
       if (!f.isFile || f.name != '${prefix}drive_meta.json') continue;
@@ -126,14 +179,13 @@ class ArchiveService {
       break;
     }
 
-    // Entries — accept both entries/ (current) and posts/ (legacy zips).
+    // Entries — full parse, no reference trimming.
     final posts = <Post>[];
     for (final f in archive.files) {
       if (!f.isFile) continue;
       if (!f.name.endsWith('.html')) continue;
-      final rel = f.name.startsWith(prefix)
-          ? f.name.substring(prefix.length)
-          : f.name;
+      final rel =
+          f.name.startsWith(prefix) ? f.name.substring(prefix.length) : f.name;
       if (!rel.startsWith('entries/') && !rel.startsWith('posts/')) continue;
       try {
         posts.add(PostRepository.parseContent(
@@ -146,7 +198,7 @@ class ArchiveService {
     }
     posts.sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
-    // Drive files
+    // Drive blobs present in the zip.
     final files = <String, ExtractedFile>{};
     for (final f in archive.files) {
       if (!f.isFile) continue;
@@ -171,6 +223,7 @@ class ArchiveService {
       createdAt: createdAt,
       posts: posts,
       files: files,
+      driveMeta: driveMeta,
     );
   }
 
@@ -187,10 +240,8 @@ class ArchiveService {
 
     for (final f in archive.files) {
       if (!f.isFile) continue;
-      final isJson =
-          f.name == 'space.json' || f.name.endsWith('/space.json');
-      final isHtml =
-          f.name == 'space.html' || f.name.endsWith('/space.html');
+      final isJson = f.name == 'space.json' || f.name.endsWith('/space.json');
+      final isHtml = f.name == 'space.html' || f.name.endsWith('/space.html');
       if (isJson) {
         if (jsonFile == null || f.name.length < jsonFile.name.length) {
           jsonFile = f;

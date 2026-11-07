@@ -193,10 +193,17 @@ class DriveFile {
   final int sizeBytes;
   final DateTime createdAt;
 
+  /// True when the file is in `drive_meta.json` but has no blob on disk
+  /// and no offloaded record — typically the result of importing a
+  /// partial export. Re-importing the full zip (or syncing from a remote
+  /// that has the blob) will resolve it.
+  final bool isMissing;
+
   const DriveFile({
     required this.id,
     required this.name,
     required this.sizeBytes,
     required this.createdAt,
+    this.isMissing = false,
   });
 }

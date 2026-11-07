@@ -8,12 +8,12 @@ import '../../util/file_category.dart';
 
 IconData iconForCategory(FileCategory c) {
   switch (c) {
-    case FileCategory.image: return Icons.image;
-    case FileCategory.video: return Icons.videocam;
-    case FileCategory.audio: return Icons.audio_file;
-    case FileCategory.text: return Icons.description;
-    case FileCategory.pdf: return Icons.picture_as_pdf;
-    case FileCategory.other: return Icons.insert_drive_file;
+    case FileCategory.image:   return Icons.image;
+    case FileCategory.video:   return Icons.videocam;
+    case FileCategory.audio:   return Icons.audio_file;
+    case FileCategory.text:    return Icons.description;
+    case FileCategory.pdf:     return Icons.picture_as_pdf;
+    case FileCategory.other:   return Icons.insert_drive_file;
   }
 }
 
@@ -56,15 +56,15 @@ class _FileThumbnailState extends State<FileThumbnail> {
   }
 
   Future<void> _load() async {
+    if (widget.file.isMissing) return;
     final cat = categoryFor(widget.file.name);
     if (cat != FileCategory.image) return;
     final offloaded =
         widget.store.offloadedFileIds(widget.spaceId).contains(widget.file.id);
 
     if (offloaded) {
-      // Try the thumbnail cache first — if hit, no network fetch.
-      final info = await widget.store.offloadedInfoFor(
-          widget.spaceId, widget.file.id);
+      final info = await widget.store
+          .offloadedInfoFor(widget.spaceId, widget.file.id);
       if (info != null) {
         final cached = await widget.store.thumbnailCache.get(info.remoteSha);
         if (cached != null && mounted) {
@@ -77,16 +77,16 @@ class _FileThumbnailState extends State<FileThumbnail> {
     setState(() => _loading = true);
     try {
       final bytes = offloaded
-          ? await widget.store.fetchThumbnailForOffloaded(
-              widget.spaceId, widget.file.id)
-          : await widget.store.readImageBytes(
-              widget.spaceId, widget.file.id);
+          ? await widget.store
+              .fetchThumbnailForOffloaded(widget.spaceId, widget.file.id)
+          : await widget.store
+              .readImageBytes(widget.spaceId, widget.file.id);
       if (!mounted) return;
       setState(() {
         _bytes = bytes;
         _loading = false;
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _loading = false;
@@ -101,15 +101,21 @@ class _FileThumbnailState extends State<FileThumbnail> {
     final cat = categoryFor(widget.file.name);
     final offloaded =
         widget.store.offloadedFileIds(widget.spaceId).contains(widget.file.id);
+    final missing = widget.file.isMissing;
 
     Widget content;
-    if (cat == FileCategory.image) {
+    if (missing) {
+      content = Center(
+        child: Icon(Icons.cloud_off, size: widget.iconSize,
+            color: theme.colorScheme.error),
+      );
+    } else if (cat == FileCategory.image) {
       if (_bytes != null) {
-        content = Image.memory(_bytes!, fit: BoxFit.cover,
-            width: double.infinity, height: double.infinity);
+        content = Image.memory(_bytes!,
+            fit: BoxFit.cover, width: double.infinity, height: double.infinity);
       } else if (_error) {
         content = Center(
-          child: Icon(Icons.cloud_off, size: widget.iconSize,
+          child: Icon(Icons.broken_image_outlined, size: widget.iconSize,
               color: theme.colorScheme.error),
         );
       } else if (_loading) {
@@ -126,18 +132,21 @@ class _FileThumbnailState extends State<FileThumbnail> {
       fit: StackFit.expand,
       children: [
         content,
-        if (offloaded)
+        if (offloaded || missing)
           Positioned(
             top: 4,
             right: 4,
             child: Container(
               padding: const EdgeInsets.all(2),
               decoration: BoxDecoration(
-                color: Colors.black54,
+                color: missing ? theme.colorScheme.error : Colors.black54,
                 borderRadius: BorderRadius.circular(4),
               ),
-              child: const Icon(Icons.cloud,
-                  size: 12, color: Colors.white),
+              child: Icon(
+                missing ? Icons.cloud_off : Icons.cloud,
+                size: 12,
+                color: Colors.white,
+              ),
             ),
           ),
       ],
