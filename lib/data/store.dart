@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
@@ -10,9 +12,8 @@ import 'package:path_provider/path_provider.dart';
 
 import '../platform/fs.dart';
 import '../util/fs_walk.dart';
-import '../util/mime.dart';
 import '../util/hook_outcome.dart';
-import 'sync/sync_scope.dart';
+import '../util/mime.dart';
 import 'bookmarks.dart';
 import 'hooks.dart';
 import 'models.dart';
@@ -25,17 +26,23 @@ import 'repos/space_repo.dart';
 import 'services/hook_executor.dart';
 import 'services/link_metadata.dart';
 import 'services/space_stats.dart';
+import 'space_archive.dart';
+import 'sync/content_fetcher.dart';
+import 'sync/offloaded_store.dart';
 import 'sync/sync_config.dart';
 import 'sync/github_provider.dart';
 import 'sync/gitlab_provider.dart';
 import 'sync/sync_provider.dart';
+import 'sync/sync_scope.dart';
 import 'sync/sync_service.dart';
-import 'space_archive.dart';
+import 'thumbnail_cache.dart';
 
 export 'repos/bookmarks_importer.dart' show BookmarkImportResult;
 export 'services/link_metadata.dart' show LinkMetadata;
 export 'services/space_stats.dart' show SpaceStats;
 export 'space_archive.dart' show ExtractedFile, ExtractedSpace;
+export 'sync/sync_provider.dart' show SyncProgress, SyncProgressCallback;
+export 'sync/sync_service.dart' show SyncPushResult, SyncPullResult;
 
 class SpaceImportResult {
   final int total;
@@ -66,8 +73,12 @@ class VaultStore extends ChangeNotifier {
   late final HooksRepository _hooks;
   late final HookExecutor _executor;
   late final BookmarksImporter _bookmarksImporter;
+  late final SyncConfigsStore _syncConfigsStore;
   late final SyncTokenStore _syncTokenStore;
   late final SyncCacheStore _syncCacheStore;
+  late final OffloadedStore _offloadedStore;
+  late final ThumbnailCache _thumbnailCache;
+  late final ContentFetcher _contentFetcher;
 
   final http.Client _httpClient = http.Client();
 
@@ -76,16 +87,25 @@ class VaultStore extends ChangeNotifier {
   final Map<String, List<DriveFile>> _fileCache = {};
   final Map<String, Map<String, DriveFile>> _fileIndex = {};
   final Map<String, Uint8List> _imageCache = {};
+  final Map<String, double> _imageAspectCache = {};
+  final Map<String, Set<String>> _offloadedIdsBySpace = {};
 
   final Map<String, Future<void>> _postLocks = {};
   final Map<String, Future<void>> _hookChains = {};
   final Set<String> _activeHookRuns = {};
 
-  late final SyncConfigsStore _syncConfigsStore;
   List<SyncConfig> _syncConfigs = [];
 
-  List<SyncConfig> get syncConfigs => List.unmodifiable(_syncConfigs);
+  // ── Read accessors ─────────────────────────────────────────────────────
 
+  List<Space> get spaces => List.unmodifiable(_spaceCache);
+  List<Post> postsForSpace(String spaceId) =>
+      List.unmodifiable(_postCache[spaceId] ?? const <Post>[]);
+  List<DriveFile> filesForSpace(String spaceId) =>
+      List.unmodifiable(_fileCache[spaceId] ?? const <DriveFile>[]);
+  List<Hook> get hooks => _hooks.all;
+
+  List<SyncConfig> get syncConfigs => List.unmodifiable(_syncConfigs);
   SyncConfig? get primarySyncConfig {
     for (final c in _syncConfigs) {
       if (c.isPrimary) return c;
@@ -100,32 +120,6 @@ class VaultStore extends ChangeNotifier {
     return null;
   }
 
-  // ── Read accessors ─────────────────────────────────────────────────────
-
-  List<Space> get spaces => List.unmodifiable(_spaceCache);
-
-  List<Post> postsForSpace(String spaceId) =>
-      List.unmodifiable(_postCache[spaceId] ?? const <Post>[]);
-
-  List<DriveFile> filesForSpace(String spaceId) =>
-      List.unmodifiable(_fileCache[spaceId] ?? const <DriveFile>[]);
-
-  /// File IDs referenced by at least one post in [spaceId].
-  ///
-  /// Recomputed on every call so it stays in sync with the post cache;
-  /// `DriveScreen` calls it once per build. Scan is O(posts × avg fileIds),
-  /// which for a typical vault is well under a millisecond — the drive
-  /// re-renders on store notifications, not every frame.
-  Set<String> usedFileIds(String spaceId) {
-    final used = <String>{};
-    for (final post in _postCache[spaceId] ?? const <Post>[]) {
-      if (post.fileIds.isNotEmpty) used.addAll(post.fileIds);
-    }
-    return used;
-  }
-
-  List<Hook> get hooks => _hooks.all;
-
   Space? spaceById(String id) {
     for (final s in _spaceCache) {
       if (s.id == id) return s;
@@ -136,63 +130,27 @@ class VaultStore extends ChangeNotifier {
   DriveFile? fileById(String spaceId, String fileId) =>
       _fileIndex[spaceId]?[fileId];
 
+  Set<String> offloadedFileIds(String spaceId) =>
+      _offloadedIdsBySpace[spaceId] ?? const {};
+
+  Future<OffloadedFileInfo?> offloadedInfoFor(String spaceId, String fileId) =>
+      _offloadedStore.get(spaceId, fileId);
+
+  ThumbnailCache get thumbnailCache => _thumbnailCache;
+
+  bool hasActiveHooks(String postId) =>
+      _activeHookRuns.any((k) => k.startsWith('$postId:'));
+
   void _rebuildFileIndex(String spaceId) {
     _fileIndex[spaceId] = {
       for (final f in _fileCache[spaceId] ?? const <DriveFile>[]) f.id: f,
     };
   }
 
-  final Map<String, double> _imageAspectCache = {};
-
-  /// Aspect ratio (width / height) for a drive image, cached after first
-  /// decode. Used by inline media rendering to reserve the correct space
-  /// before the image loads, eliminating layout jumps during scroll.
-  double? imageAspectRatio(String spaceId, String fileId) =>
-      _imageAspectCache['$spaceId:$fileId'];
-
-  void cacheImageAspect(String spaceId, String fileId, double ratio) {
-    if (ratio <= 0 || !ratio.isFinite) return;
-    _imageAspectCache['$spaceId:$fileId'] = ratio;
-  }
-
-  // ── Usage ordering ─────────────────────────────────────────────────────
-
-  /// Reorders [_spaceCache] so the most recently used spaces come first.
-  ///
-  /// "Last used" for a space is
-  /// `max(space.createdAt, max post.createdAt)`. Posts include replies
-  /// (they're stored in the same `_postCache[spaceId]`). Using the
-  /// space's own creation time as a floor keeps freshly created or
-  /// freshly imported spaces near the top even when every imported post
-  /// carries a backdated `ADD_DATE`.
-  ///
-  /// Called on load and after any mutation that changes a space's newest
-  /// post. Edits do **not** trigger a re-sort: they don't change
-  /// `createdAt`, so they don't count as "posting".
-  void _resortSpacesByUsage() {
-    _spaceCache.sort((a, b) {
-      final aKey = _lastUsedAt(a);
-      final bKey = _lastUsedAt(b);
-      return bKey.compareTo(aKey);
-    });
-  }
-
-  DateTime _lastUsedAt(Space space) {
-    var max = space.createdAt;
-    final posts = _postCache[space.id] ?? const <Post>[];
-    for (final p in posts) {
-      if (p.createdAt.isAfter(max)) max = p.createdAt;
-    }
-    return max;
-  }
-
   // ── Lifecycle ──────────────────────────────────────────────────────────
 
   Future<void> init() async {
     fs = createFs();
-
-    // Step 1: resolve vaultPath. This is the only await that must succeed
-    // before we can assign the repositories.
     if (kIsWeb) {
       vaultPath = '/Cartoria';
     } else {
@@ -200,10 +158,6 @@ class VaultStore extends ChangeNotifier {
       vaultPath = p.join(docs.path, 'Cartoria');
     }
 
-    // Step 2: assign every repository. This is deliberately before any
-    // filesystem work, so even if later steps throw (migration failure,
-    // corrupted hooks.json, disk full), the store is usable and createSpace
-    // / createPost / etc. don't throw LateInitializationError.
     _spaces = SpaceRepository(fs: fs, vaultPath: vaultPath);
     _posts = PostRepository(fs: fs, vaultPath: vaultPath);
     _drive = DriveRepository(fs: fs, vaultPath: vaultPath);
@@ -215,31 +169,16 @@ class VaultStore extends ChangeNotifier {
     _syncConfigsStore = SyncConfigsStore(fs: fs, vaultPath: vaultPath);
     _syncTokenStore = SyncTokenStore(fs: fs);
     _syncCacheStore = SyncCacheStore(fs: fs);
+    _offloadedStore = const OffloadedStore();
+    _thumbnailCache = const ThumbnailCache();
     _link = LinkMetadataService(
       proxyUrl: kIsWeb ? 'https://corsproxy.io/?url={url}' : null,
     );
 
-    // Step 3: filesystem work. Failures here are non-fatal — the store is
-    // already usable, and reload() retries every migration on next launch.
-
-    // Migrate the pre-rename `vault/` folder if this is the first launch
-    // after renaming the app. On macOS sandboxed this is a no-op (the new
-    // bundle ID has its own container; the old one is inaccessible), but
-    // it does run on Windows, Linux, and macOS unsandboxed.
-    if (!kIsWeb) {
-      try {
-        final docs = await getApplicationDocumentsDirectory();
-        final oldPath = p.join(docs.path, 'vault');
-        final newPath = p.join(docs.path, 'Cartoria');
-        if (!await fs.directory(newPath).exists() &&
-            await fs.directory(oldPath).exists()) {
-          await fs.directory(oldPath).rename(newPath);
-          debugPrint('Migrated vault/ → Cartoria/');
-        }
-      } catch (e) {
-        debugPrint('Vault folder migration failed (harmless): $e');
-      }
-    }
+    _drive.offloadedStore = _offloadedStore;
+    _contentFetcher = ContentFetcher(this);
+    _drive.onFetchBytes =
+        (spaceId, fileId) => _contentFetcher.fetch(spaceId, fileId);
 
     await fs.directory(vaultPath).create(recursive: true);
 
@@ -248,7 +187,6 @@ class VaultStore extends ChangeNotifier {
     } catch (e) {
       debugPrint('Hooks load failed: $e');
     }
-
     try {
       _syncConfigs = await _syncConfigsStore.load();
     } catch (e) {
@@ -256,14 +194,12 @@ class VaultStore extends ChangeNotifier {
       _syncConfigs = [];
     }
 
-    // reload() runs the migrations and populates the caches. It has its
-    // own internal error handling per-space, so a corrupt entry doesn't
-    // stop the app.
     await reload();
   }
 
   @override
   void dispose() {
+    _contentFetcher.dispose();
     _httpClient.close();
     super.dispose();
   }
@@ -279,6 +215,7 @@ class VaultStore extends ChangeNotifier {
     _fileCache.clear();
     _fileIndex.clear();
     _imageAspectCache.clear();
+    _offloadedIdsBySpace.clear();
 
     final spaces = await _spaces.list();
     for (final space in spaces) {
@@ -287,6 +224,8 @@ class VaultStore extends ChangeNotifier {
         _postCache[space.id] = await _posts.list(space.id);
         _fileCache[space.id] = await _drive.list(space.id);
         _rebuildFileIndex(space.id);
+        _offloadedIdsBySpace[space.id] =
+            (await _offloadedStore.load(space.id)).keys.toSet();
       } catch (e) {
         debugPrint('Failed to load space ${space.id}: $e');
         _postCache[space.id] = [];
@@ -298,45 +237,6 @@ class VaultStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// One-shot migration of legacy `posts/` directories into `entries/`.
-  ///
-  /// Runs at every reload, but is a no-op after the first successful pass
-  /// per space. Failures are logged and *do not* block the reload — the
-  /// [PostRepository] falls back to `posts/` at read time, so a space whose
-  /// migration failed still functions; it just stays on the old folder
-  /// name until the underlying issue is resolved.
-  Future<void> _migratePostFolders() async {
-    final root = fs.directory(vaultPath);
-    if (!await root.exists()) return;
-
-    final pending = <Directory>[];
-    await for (final e in root.list(followLinks: false)) {
-      if (e is! Directory) continue;
-      final oldDir = fs.directory(p.join(e.path, 'posts'));
-      if (!await oldDir.exists()) continue;
-
-      final newDir = fs.directory(p.join(e.path, 'entries'));
-      if (await newDir.exists()) {
-        // Both exist — likely a partial migration or manual copy. Leave it:
-        // entries/ wins at read time, posts/ is dead weight the user can
-        // clean up. Warn so it shows up in logs if it ever happens.
-        debugPrint('Both posts/ and entries/ exist in ${e.path}; '
-            'leaving both, entries/ takes precedence');
-        continue;
-      }
-      pending.add(oldDir);
-    }
-
-    for (final oldDir in pending) {
-      try {
-        await oldDir.rename(p.join(p.dirname(oldDir.path), 'entries'));
-      } catch (err) {
-        debugPrint('Migration posts/→entries/ failed for ${oldDir.path}: $err. '
-            'PostRepository will fall back to reading from posts/.');
-      }
-    }
-  }
-
   // ── Spaces ─────────────────────────────────────────────────────────────
 
   Future<Space> createSpace({required String name, String icon = '📓'}) async {
@@ -345,21 +245,16 @@ class VaultStore extends ChangeNotifier {
     _postCache[space.id] = [];
     _fileCache[space.id] = [];
     _fileIndex[space.id] = {};
+    _offloadedIdsBySpace[space.id] = {};
     _resortSpacesByUsage();
     notifyListeners();
     return space;
   }
 
-  Future<void> updateSpace(
-    String spaceId, {
-    required String name,
-    required String icon,
-  }) async {
-    final updated = await _spaces.update(
-      spaceId: spaceId,
-      name: name,
-      icon: icon,
-    );
+  Future<void> updateSpace(String spaceId,
+      {required String name, required String icon}) async {
+    final updated =
+        await _spaces.update(spaceId: spaceId, name: name, icon: icon);
     final idx = _spaceCache.indexWhere((s) => s.id == spaceId);
     if (idx >= 0) _spaceCache[idx] = updated;
     notifyListeners();
@@ -371,6 +266,7 @@ class VaultStore extends ChangeNotifier {
     _postCache.remove(spaceId);
     _fileCache.remove(spaceId);
     _fileIndex.remove(spaceId);
+    _offloadedIdsBySpace.remove(spaceId);
     _imageCache.removeWhere((k, _) => k.startsWith('$spaceId:'));
     notifyListeners();
   }
@@ -408,11 +304,10 @@ class VaultStore extends ChangeNotifier {
     final space = spaceById(spaceId);
     if (space != null) {
       _scheduleHooks(
-        post: post,
-        original: null,
-        space: space,
-        trigger: HookTrigger.create,
-      );
+          post: post,
+          original: null,
+          space: space,
+          trigger: HookTrigger.create);
     }
     return post;
   }
@@ -458,11 +353,10 @@ class VaultStore extends ChangeNotifier {
     final space = spaceById(spaceId);
     if (space != null) {
       _scheduleHooks(
-        post: updated,
-        original: previous,
-        space: space,
-        trigger: HookTrigger.edit,
-      );
+          post: updated,
+          original: previous,
+          space: space,
+          trigger: HookTrigger.edit);
     }
   }
 
@@ -473,7 +367,6 @@ class VaultStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Deletes multiple posts in one batch. Updates the cache once.
   Future<void> deletePosts(String spaceId, Set<String> postIds) async {
     if (postIds.isEmpty) return;
     await _posts.deleteMultiple(spaceId, postIds);
@@ -482,12 +375,9 @@ class VaultStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Returns the raw HTML + frontmatter for [postId].
   Future<String> readPostSource(String spaceId, String postId) =>
       _posts.readSource(spaceId, postId);
 
-  /// Returns the actual on-disk path for [postId]'s source file, or null
-  /// if it can't be located (should not happen for a loaded post).
   Future<String?> postFilePath(String spaceId, String postId) =>
       _posts.filePath(spaceId, postId);
 
@@ -498,11 +388,8 @@ class VaultStore extends ChangeNotifier {
     required Uint8List bytes,
     required String name,
   }) async {
-    final file = await _drive.addBytes(
-      spaceId: spaceId,
-      bytes: bytes,
-      name: name,
-    );
+    final file =
+        await _drive.addBytes(spaceId: spaceId, bytes: bytes, name: name);
     _fileCache.putIfAbsent(spaceId, () => []).insert(0, file);
     _fileIndex.putIfAbsent(spaceId, () => {})[file.id] = file;
     notifyListeners();
@@ -525,23 +412,144 @@ class VaultStore extends ChangeNotifier {
     await _drive.delete(spaceId, fileId);
     _fileCache[spaceId]?.removeWhere((x) => x.id == fileId);
     _fileIndex[spaceId]?.remove(fileId);
+    _offloadedIdsBySpace[spaceId]?.remove(fileId);
     _imageCache.remove('$spaceId:$fileId');
-    _imageAspectCache.remove('$spaceId:$fileId'); // ← add
+    _imageAspectCache.remove('$spaceId:$fileId');
     notifyListeners();
   }
 
-  /// Deletes multiple drive files in one batch. Updates all three
-  /// file-related caches (list, index, byte/image caches) once.
   Future<void> deleteFiles(String spaceId, Set<String> fileIds) async {
     if (fileIds.isEmpty) return;
     await _drive.deleteMultiple(spaceId, fileIds);
     _fileCache[spaceId]?.removeWhere((f) => fileIds.contains(f.id));
     for (final id in fileIds) {
       _fileIndex[spaceId]?.remove(id);
+      _offloadedIdsBySpace[spaceId]?.remove(id);
       _imageCache.remove('$spaceId:$id');
       _imageAspectCache.remove('$spaceId:$id');
     }
     notifyListeners();
+  }
+
+  double? imageAspectRatio(String spaceId, String fileId) =>
+      _imageAspectCache['$spaceId:$fileId'];
+
+  void cacheImageAspect(String spaceId, String fileId, double ratio) {
+    if (ratio <= 0 || !ratio.isFinite) return;
+    _imageAspectCache['$spaceId:$fileId'] = ratio;
+  }
+
+  // ── Offloading ─────────────────────────────────────────────────────────
+
+  Set<String> usedFileIds(String spaceId) {
+    final used = <String>{};
+    for (final post in _postCache[spaceId] ?? const <Post>[]) {
+      if (post.fileIds.isNotEmpty) used.addAll(post.fileIds);
+    }
+    return used;
+  }
+
+  Future<void> fetchOffloadedFile(String spaceId, String fileId) async {
+    // 1. Fetch bytes (via `_drive.readBytes`, which delegates to
+    //    ContentFetcher because the file is offloaded).
+    final bytes = await _drive.readBytes(spaceId, fileId);
+
+    // 2. Write to disk and unoffload. `restoreFile` also updates the
+    //    path cache so subsequent reads don't hit the stale-index bug.
+    await _drive.restoreFile(spaceId, fileId, bytes);
+
+    // 3. Reload the offloaded set from the store (source of truth).
+    //    This is the safest way to avoid drift between the in-memory set
+    //    and the on-disk record.
+    final offloaded = await _offloadedStore.load(spaceId);
+    _offloadedIdsBySpace[spaceId] = offloaded.keys.toSet();
+
+    // 4. Update in-memory caches.
+    _imageCache['$spaceId:$fileId'] = bytes;
+
+    final file = _fileIndex[spaceId]?[fileId];
+    if (file != null) {
+      final updated = DriveFile(
+        id: file.id,
+        name: file.name,
+        sizeBytes: bytes.length,
+        createdAt: file.createdAt,
+      );
+      _fileIndex[spaceId]![fileId] = updated;
+      final idx = _fileCache[spaceId]?.indexWhere((f) => f.id == fileId) ?? -1;
+      if (idx >= 0) _fileCache[spaceId]![idx] = updated;
+    }
+
+    notifyListeners();
+  }
+
+  Future<Uint8List> fetchThumbnailForOffloaded(
+      String spaceId, String fileId) async {
+    final info = await _offloadedStore.get(spaceId, fileId);
+    if (info == null) throw StateError('File $fileId is not offloaded');
+
+    final cached = await _thumbnailCache.get(info.remoteSha);
+    if (cached != null) return cached;
+
+    final full = await _drive.readBytes(spaceId, fileId);
+    final thumb = await _makeThumbnail(full);
+    await _thumbnailCache.put(info.remoteSha, thumb);
+    return thumb;
+  }
+
+  Future<Uint8List> _makeThumbnail(Uint8List full) async {
+    try {
+      final codec = await ui.instantiateImageCodec(full);
+      final frame = await codec.getNextFrame();
+      final srcW = frame.image.width;
+      final srcH = frame.image.height;
+
+      const maxDim = 256;
+
+      // Already small enough — re-encode as-is.
+      if (srcW <= maxDim && srcH <= maxDim) {
+        final byteData =
+            await frame.image.toByteData(format: ui.ImageByteFormat.png);
+        frame.image.dispose();
+        codec.dispose();
+        return byteData!.buffer.asUint8List();
+      }
+
+      // Compute target dimensions preserving aspect.
+      int targetW, targetH;
+      if (srcW >= srcH) {
+        targetW = maxDim;
+        targetH = (maxDim * srcH / srcW).round().clamp(1, maxDim);
+      } else {
+        targetH = maxDim;
+        targetW = (maxDim * srcW / srcH).round().clamp(1, maxDim);
+      }
+
+      // Draw at the computed size. Because targetW / targetH equals
+      // srcW / srcH to within rounding, drawImageRect scales without
+      // distorting — the previous codec-based call produced a square
+      // output for any input and was the source of the stretching.
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(recorder);
+      canvas.drawImageRect(
+        frame.image,
+        ui.Rect.fromLTWH(0, 0, srcW.toDouble(), srcH.toDouble()),
+        ui.Rect.fromLTWH(0, 0, targetW.toDouble(), targetH.toDouble()),
+        ui.Paint()..filterQuality = ui.FilterQuality.medium,
+      );
+      final picture = recorder.endRecording();
+      final scaled = await picture.toImage(targetW, targetH);
+      final byteData = await scaled.toByteData(format: ui.ImageByteFormat.png);
+
+      frame.image.dispose();
+      scaled.dispose();
+      picture.dispose();
+      codec.dispose();
+      return byteData!.buffer.asUint8List();
+    } catch (e) {
+      debugPrint('Thumbnail generation failed: $e');
+      return full;
+    }
   }
 
   // ── Archive (zip export / import) ──────────────────────────────────────
@@ -571,15 +579,11 @@ class VaultStore extends ChangeNotifier {
         .map((f) => f.id)
         .toSet();
 
-    // Posts referenced as a reply parent within the incoming batch — these
-    // must be imported even if their URL matches something in the target,
-    // otherwise the reply's `parent` field would point to a missing post.
     final referencedParents = <String>{
       for (final p in extracted.posts)
         if (p.parentId != null) p.parentId!,
     };
 
-    // Decide what to import.
     final toImportPosts = <Post>[];
     var skippedDuplicates = 0;
     for (final p in extracted.posts) {
@@ -597,7 +601,6 @@ class VaultStore extends ChangeNotifier {
       toImportPosts.add(p);
     }
 
-    // Import files first so imported posts can resolve fileIds.
     final importedFiles = await _drive.importExistingFiles(
       spaceId: targetSpaceId,
       files: extracted.files,
@@ -605,7 +608,6 @@ class VaultStore extends ChangeNotifier {
     );
     final filesSkipped = extracted.files.length - importedFiles.length;
 
-    // Import posts.
     final importedPosts = <Post>[];
     var failedPosts = 0;
     for (final p in toImportPosts) {
@@ -619,7 +621,6 @@ class VaultStore extends ChangeNotifier {
       }
     }
 
-    // Update caches in one shot.
     if (importedPosts.isNotEmpty) {
       final merged = [
         ...(_postCache[targetSpaceId] ?? const <Post>[]),
@@ -660,13 +661,10 @@ class VaultStore extends ChangeNotifier {
       for (final p in existing)
         if (p.kind == PostKind.bookmark && p.url != null) p.url!,
     };
-
     final r = await _bookmarksImporter.importInto(
-      spaceId: spaceId,
-      bookmarks: file.bookmarks,
-      existingUrls: existingUrls,
-    );
-
+        spaceId: spaceId,
+        bookmarks: file.bookmarks,
+        existingUrls: existingUrls);
     if (r.created.isNotEmpty) {
       final merged = [...existing, ...r.created]
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -684,10 +682,7 @@ class VaultStore extends ChangeNotifier {
   }) async {
     final space = await createSpace(name: spaceName, icon: icon);
     final r = await _bookmarksImporter.importInto(
-      spaceId: space.id,
-      bookmarks: file.bookmarks,
-      existingUrls: const {},
-    );
+        spaceId: space.id, bookmarks: file.bookmarks, existingUrls: const {});
     if (r.created.isNotEmpty) {
       _postCache[space.id] = List.of(r.created)
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -707,7 +702,7 @@ class VaultStore extends ChangeNotifier {
         files: _fileCache[spaceId] ?? const [],
       );
 
-  // ── Hooks: CRUD ────────────────────────────────────────────────────────
+  // ── Hooks: CRUD + execution ────────────────────────────────────────────
 
   Future<void> saveHook(Hook hook) async {
     await _hooks.save(hook);
@@ -719,21 +714,131 @@ class VaultStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// True if at least one hook is currently running for [postId]. Used by
-  /// the post card to show a spinner.
-  bool hasActiveHooks(String postId) =>
-      _activeHookRuns.any((k) => k.startsWith('$postId:'));
+  Future<T> _withPostLock<T>(String postId, Future<T> Function() fn) {
+    final prev = _postLocks[postId] ?? Future<void>.value();
+    final completer = Completer<T>();
+    final next = prev.then((_) async {
+      try {
+        completer.complete(await fn());
+      } catch (e, st) {
+        completer.completeError(e, st);
+      }
+    });
+    _postLocks[postId] = next;
+    next.whenComplete(() {
+      if (identical(_postLocks[postId], next)) _postLocks.remove(postId);
+    });
+    return completer.future;
+  }
 
-  /// Re-runs a specific hook on a post. Used by the "Re-run" button in the
-  /// hook status dialog — typically after a failure, but works on successful
-  /// hooks too (e.g. re-send to Telegram after manual changes on their end).
-  ///
-  /// `{{trigger}}` in templates resolves to `create` for never-edited posts
-  /// and `edit` otherwise. The exact original trigger isn't stored, so a
-  /// retried create-triggered hook on an edited post will see `edit`.
-  /// Templates that don't reference `{{trigger}}` are unaffected.
+  void _scheduleHooks({
+    required Post post,
+    required Post? original,
+    required Space space,
+    required HookTrigger trigger,
+  }) {
+    final prev = _hookChains[post.id] ?? Future<void>.value();
+    final next = prev.then((_) => _runHooks(
+        postId: post.id,
+        originalSnapshot: original,
+        space: space,
+        trigger: trigger));
+    _hookChains[post.id] = next;
+    next.whenComplete(() {
+      if (identical(_hookChains[post.id], next)) _hookChains.remove(post.id);
+    });
+  }
+
+  Future<void> _runHooks({
+    required String postId,
+    required Post? originalSnapshot,
+    required Space space,
+    required HookTrigger trigger,
+  }) async {
+    Post? post;
+    for (final p in _postCache[space.id] ?? const <Post>[]) {
+      if (p.id == postId) {
+        post = p;
+        break;
+      }
+    }
+    if (post == null) return;
+
+    Post? parentPost;
+    if (post.parentId != null) {
+      for (final p in _postCache[space.id] ?? const <Post>[]) {
+        if (p.id == post.parentId) {
+          parentPost = p;
+          break;
+        }
+      }
+    }
+
+    final active = _hooks.activeFor(
+        spaceId: space.id,
+        trigger: trigger,
+        postKind: post.kind,
+        postTags: post.tags.toSet());
+    if (active.isEmpty) return;
+
+    final files = post.fileIds
+        .map((id) => _fileIndex[space.id]?[id])
+        .whereType<DriveFile>()
+        .toList();
+
+    final resolved = <String, ResolvedFile>{};
+    Future<ResolvedFile?> resolveFile(String fileId) async {
+      final cached = resolved[fileId];
+      if (cached != null) return cached;
+      final df = _fileIndex[space.id]?[fileId];
+      if (df == null) return null;
+      final bytes = await _drive.readBytes(space.id, fileId);
+      final r = ResolvedFile(
+          bytes: bytes, name: df.name, mimeType: mimeTypeForName(df.name));
+      resolved[fileId] = r;
+      return r;
+    }
+
+    for (final hook in active) {
+      _activeHookRuns.add('$postId:${hook.key}');
+    }
+    notifyListeners();
+
+    try {
+      final priorStates = post.hookState;
+      final results = <String, PostHookState>{};
+      for (final hook in active) {
+        results[hook.key] = await _executor.execute(
+            hook: hook,
+            post: post,
+            original: originalSnapshot,
+            parent: parentPost,
+            space: space,
+            trigger: trigger,
+            priorStates: priorStates,
+            parentPriorStates: parentPost?.hookState ?? const {},
+            files: files,
+            resolveFile: resolveFile);
+      }
+      if (results.isEmpty) return;
+
+      await _withPostLock(postId, () async {
+        final patched = await _posts.patchHookState(space.id, postId, results);
+        final idx =
+            _postCache[space.id]?.indexWhere((x) => x.id == postId) ?? -1;
+        if (idx >= 0) _postCache[space.id]![idx] = patched;
+      });
+    } catch (e) {
+      debugPrint('Hook batch failed for $postId: $e');
+    } finally {
+      for (final hook in active) {
+        _activeHookRuns.remove('$postId:${hook.key}');
+      }
+      notifyListeners();
+    }
+  }
+
   Future<void> retryHook(String spaceId, String postId, String hookKey) async {
-    // Snapshot the post + hook + space. If any is missing, nothing to do.
     Post? post;
     for (final p in _postCache[spaceId] ?? const <Post>[]) {
       if (p.id == postId) {
@@ -775,10 +880,7 @@ class VaultStore extends ChangeNotifier {
       if (df == null) return null;
       final bytes = await _drive.readBytes(spaceId, fileId);
       final r = ResolvedFile(
-        bytes: bytes,
-        name: df.name,
-        mimeType: mimeTypeForName(df.name),
-      );
+          bytes: bytes, name: df.name, mimeType: mimeTypeForName(df.name));
       resolved[fileId] = r;
       return r;
     }
@@ -789,17 +891,17 @@ class VaultStore extends ChangeNotifier {
 
     try {
       final result = await _executor.execute(
-        hook: hook,
-        post: post,
-        original: null,
-        parent: parentPost,
-        space: space,
-        trigger: post.editedAt == null ? HookTrigger.create : HookTrigger.edit,
-        priorStates: post.hookState,
-        parentPriorStates: parentPost?.hookState ?? const {},
-        files: files,
-        resolveFile: resolveFile,
-      );
+          hook: hook,
+          post: post,
+          original: null,
+          parent: parentPost,
+          space: space,
+          trigger:
+              post.editedAt == null ? HookTrigger.create : HookTrigger.edit,
+          priorStates: post.hookState,
+          parentPriorStates: parentPost?.hookState ?? const {},
+          files: files,
+          resolveFile: resolveFile);
 
       await _withPostLock(postId, () async {
         final patched =
@@ -809,9 +911,6 @@ class VaultStore extends ChangeNotifier {
         if (idx >= 0) _postCache[spaceId]![idx] = patched;
       });
     } catch (e) {
-      // Post could have been deleted during the network call, or the file
-      // write could have failed. Log without rethrowing so the dialog's
-      // caller doesn't need to handle it.
       debugPrint('Retry failed for $hookKey on $postId: $e');
     } finally {
       _activeHookRuns.remove(activeKey);
@@ -819,9 +918,6 @@ class VaultStore extends ChangeNotifier {
     }
   }
 
-  /// Convenience: retries every failed hook on [postId] sequentially.
-  /// Each call to [retryHook] goes through its own `_withPostLock`, so
-  /// parallel calls would serialize on the file anyway.
   Future<void> retryFailedHooks(String spaceId, String postId) async {
     Post? post;
     for (final p in _postCache[spaceId] ?? const <Post>[]) {
@@ -831,7 +927,6 @@ class VaultStore extends ChangeNotifier {
       }
     }
     if (post == null) return;
-
     final failed = <String>[
       for (final e in post.hookState.entries)
         if (hookStateFailed(e.value)) e.key,
@@ -841,144 +936,8 @@ class VaultStore extends ChangeNotifier {
     }
   }
 
-  // ── Hooks: execution ───────────────────────────────────────────────────
+  // ── Sync config ────────────────────────────────────────────────────────
 
-  Future<T> _withPostLock<T>(String postId, Future<T> Function() fn) {
-    final prev = _postLocks[postId] ?? Future<void>.value();
-    final completer = Completer<T>();
-    final next = prev.then((_) async {
-      try {
-        completer.complete(await fn());
-      } catch (e, st) {
-        completer.completeError(e, st);
-      }
-    });
-    _postLocks[postId] = next;
-    next.whenComplete(() {
-      if (identical(_postLocks[postId], next)) _postLocks.remove(postId);
-    });
-    return completer.future;
-  }
-
-  void _scheduleHooks({
-    required Post post,
-    required Post? original,
-    required Space space,
-    required HookTrigger trigger,
-  }) {
-    final prev = _hookChains[post.id] ?? Future<void>.value();
-    final next = prev.then((_) => _runHooks(
-          postId: post.id,
-          originalSnapshot: original,
-          space: space,
-          trigger: trigger,
-        ));
-    _hookChains[post.id] = next;
-    next.whenComplete(() {
-      if (identical(_hookChains[post.id], next)) _hookChains.remove(post.id);
-    });
-  }
-
-  Future<void> _runHooks({
-    required String postId,
-    required Post? originalSnapshot,
-    required Space space,
-    required HookTrigger trigger,
-  }) async {
-    Post? post;
-    for (final p in _postCache[space.id] ?? const <Post>[]) {
-      if (p.id == postId) {
-        post = p;
-        break;
-      }
-    }
-    if (post == null) return;
-
-    Post? parentPost;
-    if (post.parentId != null) {
-      for (final p in _postCache[space.id] ?? const <Post>[]) {
-        if (p.id == post.parentId) {
-          parentPost = p;
-          break;
-        }
-      }
-    }
-
-    final active = _hooks.activeFor(
-      spaceId: space.id,
-      trigger: trigger,
-      postKind: post.kind,
-      postTags: post.tags.toSet(),
-    );
-    if (active.isEmpty) return;
-
-    final files = post.fileIds
-        .map((id) => _fileIndex[space.id]?[id])
-        .whereType<DriveFile>()
-        .toList();
-
-    final resolved = <String, ResolvedFile>{};
-    Future<ResolvedFile?> resolveFile(String fileId) async {
-      final cached = resolved[fileId];
-      if (cached != null) return cached;
-      final df = _fileIndex[space.id]?[fileId];
-      if (df == null) return null;
-      final bytes = await _drive.readBytes(space.id, fileId);
-      final r = ResolvedFile(
-        bytes: bytes,
-        name: df.name,
-        mimeType: mimeTypeForName(df.name),
-      );
-      resolved[fileId] = r;
-      return r;
-    }
-
-    // Mark the whole batch active up front so the card shows one continuous
-    // "running" state rather than flickering between individual hooks.
-    for (final hook in active) {
-      _activeHookRuns.add('$postId:${hook.key}');
-    }
-    notifyListeners();
-
-    try {
-      final priorStates = post.hookState;
-      final results = <String, PostHookState>{};
-      for (final hook in active) {
-        results[hook.key] = await _executor.execute(
-          hook: hook,
-          post: post,
-          original: originalSnapshot,
-          parent: parentPost,
-          space: space,
-          trigger: trigger,
-          priorStates: priorStates,
-          parentPriorStates: parentPost?.hookState ?? const {},
-          files: files,
-          resolveFile: resolveFile,
-        );
-      }
-      if (results.isEmpty) return;
-
-      await _withPostLock(postId, () async {
-        final patched = await _posts.patchHookState(space.id, postId, results);
-        final idx =
-            _postCache[space.id]?.indexWhere((x) => x.id == postId) ?? -1;
-        if (idx >= 0) _postCache[space.id]![idx] = patched;
-      });
-    } catch (e) {
-      debugPrint('Hook batch failed for $postId: $e');
-    } finally {
-      for (final hook in active) {
-        _activeHookRuns.remove('$postId:${hook.key}');
-      }
-      notifyListeners();
-    }
-  }
-
-// ── Sync ───────────────────────────────────────────────────────────────
-
-  /// Saves a config (new or updated). Enforces the exactly-one-primary
-  /// invariant. If the config's cache key changed, clears the stale cache.
   Future<void> saveSyncConfig(SyncConfig config) async {
     final old = syncConfigById(config.id);
     if (old != null && old.cacheKey != config.cacheKey) {
@@ -986,31 +945,24 @@ class VaultStore extends ChangeNotifier {
         await _syncCacheStore.clear(old.cacheKey);
       } catch (_) {}
     }
-
-    // First config is always primary.
     if (_syncConfigs.isEmpty) {
       config = config.copyWith(isPrimary: true);
     }
-
     final idx = _syncConfigs.indexWhere((c) => c.id == config.id);
     if (idx >= 0) {
       _syncConfigs[idx] = config;
     } else {
       _syncConfigs.add(config);
     }
-
     if (config.isPrimary) {
-      // Demote any other config that was primary.
       for (var i = 0; i < _syncConfigs.length; i++) {
         if (_syncConfigs[i].id != config.id && _syncConfigs[i].isPrimary) {
           _syncConfigs[i] = _syncConfigs[i].copyWith(isPrimary: false);
         }
       }
     } else if (!_syncConfigs.any((c) => c.isPrimary)) {
-      // Safety net: never leave the list with no primary.
       _syncConfigs[0] = _syncConfigs[0].copyWith(isPrimary: true);
     }
-
     await _syncConfigsStore.save(_syncConfigs);
     notifyListeners();
   }
@@ -1019,19 +971,14 @@ class VaultStore extends ChangeNotifier {
     final config = syncConfigById(id);
     if (config == null) return;
     final wasPrimary = config.isPrimary;
-
     _syncConfigs.removeWhere((c) => c.id == id);
-
     if (wasPrimary && _syncConfigs.isNotEmpty) {
       _syncConfigs[0] = _syncConfigs[0].copyWith(isPrimary: true);
     }
-
     await _syncConfigsStore.save(_syncConfigs);
-
     try {
       await _syncCacheStore.clear(config.cacheKey);
     } catch (_) {}
-
     notifyListeners();
   }
 
@@ -1089,18 +1036,19 @@ class VaultStore extends ChangeNotifier {
       final provider = _makeProvider(client, config);
       final scope = SyncScope.forConfig(config);
       final service = SyncService(
-        fs: fs,
-        vaultPath: vaultPath,
-        config: config,
-        provider: provider,
-        cacheStore: _syncCacheStore,
-        scope: scope,
-      );
-      final result = await service.push(token: token, onProgress: onProgress);
+          fs: fs,
+          vaultPath: vaultPath,
+          config: config,
+          provider: provider,
+          cacheStore: _syncCacheStore,
+          scope: scope);
+      final result = await service.push(
+          token: token,
+          onProgress: onProgress,
+          offloadedStore: _offloadedStore);
       await saveSyncConfig(config.copyWith(
-        lastSyncedAt: DateTime.now().toUtc(),
-        lastCommitSha: result.commitSha,
-      ));
+          lastSyncedAt: DateTime.now().toUtc(),
+          lastCommitSha: result.commitSha));
       return result;
     } finally {
       client.close();
@@ -1123,17 +1071,18 @@ class VaultStore extends ChangeNotifier {
       final provider = _makeProvider(client, config);
       final scope = SyncScope.forConfig(config);
       final service = SyncService(
-        fs: fs,
-        vaultPath: vaultPath,
-        config: config,
-        provider: provider,
-        cacheStore: _syncCacheStore,
-        scope: scope,
-      );
-      final result = await service.pull(token: token, onProgress: onProgress);
-      await saveSyncConfig(config.copyWith(
-        lastSyncedAt: DateTime.now().toUtc(),
-      ));
+          fs: fs,
+          vaultPath: vaultPath,
+          config: config,
+          provider: provider,
+          cacheStore: _syncCacheStore,
+          scope: scope);
+      final result = await service.pull(
+          token: token,
+          onProgress: onProgress,
+          offloadedStore: _offloadedStore);
+      await saveSyncConfig(
+          config.copyWith(lastSyncedAt: DateTime.now().toUtc()));
       await reload();
       return result;
     } finally {
@@ -1159,8 +1108,6 @@ class VaultStore extends ChangeNotifier {
         .substring(0, 15);
     final zipBytes = Uint8List.fromList(ZipEncoder().encode(archive)!);
 
-    // Resolve backup dir explicitly. Two code paths with no shared helper
-    // that could accidentally call the wrong one:
     final Directory backupDir;
     if (kIsWeb) {
       backupDir = fs.directory('/pre-pull-backups');
@@ -1168,14 +1115,10 @@ class VaultStore extends ChangeNotifier {
       final supportDir = await getApplicationSupportDirectory();
       backupDir = fs.directory(p.join(supportDir.path, 'vault_backups'));
     }
-
     await backupDir.create(recursive: true);
-    final backupFile = fs.file(
-      p.join(backupDir.path, 'pre-pull-$stamp.zip'),
-    );
-    await backupFile.writeAsBytes(zipBytes);
-    debugPrint('Pre-pull backup saved: ${backupFile.path}');
-
+    await fs
+        .file(p.join(backupDir.path, 'pre-pull-$stamp.zip'))
+        .writeAsBytes(zipBytes);
     await _pruneOldBackups(backupDir, keep: kIsWeb ? 3 : 10);
   }
 
@@ -1187,14 +1130,53 @@ class VaultStore extends ChangeNotifier {
       }
       if (entries.length <= keep) return;
       entries.sort((a, b) => a.path.compareTo(b.path));
-      final toDelete = entries.sublist(0, entries.length - keep);
-      for (final f in toDelete) {
+      for (var i = 0; i < entries.length - keep; i++) {
         try {
-          await f.delete();
+          await entries[i].delete();
         } catch (_) {}
       }
     } catch (e) {
-      debugPrint('Backup pruning failed (non-fatal): $e');
+      debugPrint('Backup pruning failed: $e');
+    }
+  }
+
+  // ── Usage ordering ─────────────────────────────────────────────────────
+
+  void _resortSpacesByUsage() {
+    _spaceCache.sort((a, b) => _lastUsedAt(b).compareTo(_lastUsedAt(a)));
+  }
+
+  DateTime _lastUsedAt(Space space) {
+    var max = space.createdAt;
+    for (final p in _postCache[space.id] ?? const <Post>[]) {
+      if (p.createdAt.isAfter(max)) max = p.createdAt;
+    }
+    return max;
+  }
+
+  // ── Migrations ─────────────────────────────────────────────────────────
+
+  Future<void> _migratePostFolders() async {
+    final root = fs.directory(vaultPath);
+    if (!await root.exists()) return;
+    final pending = <Directory>[];
+    await for (final e in root.list(followLinks: false)) {
+      if (e is! Directory) continue;
+      final oldDir = fs.directory(p.join(e.path, 'posts'));
+      if (!await oldDir.exists()) continue;
+      final newDir = fs.directory(p.join(e.path, 'entries'));
+      if (await newDir.exists()) {
+        debugPrint('Both posts/ and entries/ in ${e.path}; keeping both');
+        continue;
+      }
+      pending.add(oldDir);
+    }
+    for (final oldDir in pending) {
+      try {
+        await oldDir.rename(p.join(p.dirname(oldDir.path), 'entries'));
+      } catch (err) {
+        debugPrint('Migration posts/→entries/ failed for ${oldDir.path}: $err');
+      }
     }
   }
 }

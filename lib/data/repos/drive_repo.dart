@@ -6,31 +6,30 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
-import '../../util/json_format.dart';
-import '../space_archive.dart';
 import '../models.dart';
+import '../sync/offloaded_store.dart';
+import '../space_archive.dart';
 
 /// Stores opaque file blobs under `drive/<id>.<ext>` (or `drive/<id>` for
 /// extensionless names) and their metadata under `drive_meta.json`.
 ///
-/// On-disk filenames carry the file's extension so that Git forges render
-/// previews, `.gitattributes` matches work, and clones are recognisable
-/// at a glance. The `id` remains the primary key — the extension is
-/// presentation only and is ignored when resolving a file.
-///
-/// Files created before this scheme existed are named `<id>` (no
-/// extension). They are renamed lazily on first access: for each legacy
-/// file whose metadata `name` has an extension, the file is renamed to
-/// `<id>.<ext>`. The rename is one-time per space, and the next sync
-/// shows it as a rename (or delete+create on GitLab).
+/// Offloaded files exist in `drive_meta.json` and in the remote git repo,
+/// but not on local disk. `OffloadedStore` records their `remoteSha` and
+/// `size`. [list] reports them with the recorded size; [readBytes] fetches
+/// them via the injected [onFetchBytes] callback.
 class DriveRepository {
   final FileSystem fs;
   final String vaultPath;
 
   /// `spaceId` → (`fileId` → full on-disk path). Rebuilt lazily; cleared
-  /// by [clearCache]. Necessary because [readBytes] must resolve an `id`
-  /// to `id` or `id.ext` — both forms coexist during and after migration.
+  /// by [clearCache].
   final Map<String, Map<String, String>> _pathCache = {};
+
+  OffloadedStore? offloadedStore;
+
+  /// Async fetcher supplied by the store, resolving bytes for offloaded
+  /// files via the sync provider. Null when no sync config is configured.
+  Future<Uint8List> Function(String spaceId, String fileId)? onFetchBytes;
 
   DriveRepository({required this.fs, required this.vaultPath});
 
@@ -41,24 +40,37 @@ class DriveRepository {
     if (meta.isEmpty) return const [];
 
     final index = await _driveIndex(spaceId);
+    final offloaded = await offloadedStore?.load(spaceId) ?? const {};
     final result = <DriveFile>[];
+
     for (final entry in meta.entries) {
       final id = entry.key;
       final m = entry.value;
-      final path = index[id];
-      if (path == null) continue;
       try {
-        final file = fs.file(path);
+        final off = offloaded[id];
+        if (off != null) {
+          result.add(DriveFile(
+            id: id,
+            name: (m['name'] as String?) ?? id,
+            sizeBytes: off.size,
+            createdAt: DateTime.parse(m['created'] as String),
+          ));
+          continue;
+        }
+        final path = index[id];
+        if (path == null) continue;
+        final stat = await fs.file(path).stat();
         result.add(DriveFile(
           id: id,
           name: (m['name'] as String?) ?? id,
-          sizeBytes: (await file.stat()).size,
+          sizeBytes: stat.size,
           createdAt: DateTime.parse(m['created'] as String),
         ));
       } catch (err) {
         debugPrint('Bad drive file $id: $err');
       }
     }
+
     result.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return result;
   }
@@ -83,8 +95,6 @@ class DriveRepository {
     meta[id] = {'name': name, 'created': now.toIso8601String()};
     await _writeMeta(spaceId, meta);
 
-    // Update the index in-place rather than invalidating it — files never
-    // change their on-disk name after creation.
     final index = await _driveIndex(spaceId);
     index[id] = path;
 
@@ -99,10 +109,22 @@ class DriveRepository {
   Future<Uint8List> readBytes(String spaceId, String fileId) async {
     final index = await _driveIndex(spaceId);
     final path = index[fileId];
-    if (path == null) {
-      throw StateError('Drive file $fileId not found in space $spaceId');
+    if (path != null) {
+      final f = fs.file(path);
+      if (await f.exists()) return f.readAsBytes();
     }
-    return fs.file(path).readAsBytes();
+
+    final off = await offloadedStore?.get(spaceId, fileId);
+    if (off != null) {
+      final fetcher = onFetchBytes;
+      if (fetcher == null) {
+        throw StateError(
+            'File $fileId is offloaded and no fetcher is configured.');
+      }
+      return fetcher(spaceId, fileId);
+    }
+
+    throw StateError('Drive file $fileId not found in space $spaceId');
   }
 
   Future<void> delete(String spaceId, String fileId) async {
@@ -112,14 +134,20 @@ class DriveRepository {
       final f = fs.file(path);
       if (await f.exists()) await f.delete();
     }
+
+    final store = offloadedStore;
+    if (store != null) {
+      final info = await store.load(spaceId);
+      if (info.remove(fileId) != null) {
+        await store.save(spaceId, info);
+      }
+    }
+
     final meta = await _readMeta(spaceId);
     meta.remove(fileId);
     await _writeMeta(spaceId, meta);
   }
 
-  /// Deletes multiple files with one metadata read/write. The individual
-  /// blob deletes are still one per file, but the expensive
-  /// `drive_meta.json` round-trip happens once for the whole batch.
   Future<void> deleteMultiple(String spaceId, Set<String> fileIds) async {
     if (fileIds.isEmpty) return;
 
@@ -135,6 +163,16 @@ class DriveRepository {
       }
     }
 
+    final store = offloadedStore;
+    if (store != null) {
+      final info = await store.load(spaceId);
+      var changed = false;
+      for (final id in fileIds) {
+        if (info.remove(id) != null) changed = true;
+      }
+      if (changed) await store.save(spaceId, info);
+    }
+
     final meta = await _readMeta(spaceId);
     for (final id in fileIds) {
       meta.remove(id);
@@ -142,121 +180,7 @@ class DriveRepository {
     await _writeMeta(spaceId, meta);
   }
 
-  /// Drops the path cache for all spaces. Called from `VaultStore.reload`
-  /// so external changes (imports, pulls, manual edits) are picked up.
-  void clearCache() {
-    _pathCache.clear();
-  }
-
-  // ── Index building + migration ─────────────────────────────────────────
-
-  Future<Map<String, String>> _driveIndex(String spaceId) async {
-    final cached = _pathCache[spaceId];
-    if (cached != null) return cached;
-
-    final index = await _buildIndex(spaceId);
-    _pathCache[spaceId] = index;
-    return index;
-  }
-
-  Future<Map<String, String>> _buildIndex(String spaceId) async {
-    final out = <String, String>{};
-    final driveDir = fs.directory(p.join(vaultPath, spaceId, 'drive'));
-    if (!await driveDir.exists()) return out;
-
-    final meta = await _readMeta(spaceId);
-
-    // Collect every file on disk, grouped by id. Both `<id>` (legacy) and
-    // `<id>.<ext>` (current) resolve to the same id — take whichever exists.
-    final byId = <String, List<File>>{};
-    await for (final e in driveDir.list(followLinks: false)) {
-      if (e is! File) continue;
-      final base = p.basename(e.path);
-      final dot = base.indexOf('.');
-      final id = dot < 0 ? base : base.substring(0, dot);
-      byId.putIfAbsent(id, () => []).add(e);
-    }
-
-    for (final entry in byId.entries) {
-      final id = entry.key;
-      final candidates = entry.value;
-      final metaName = meta[id]?['name'];
-
-      // Prefer a candidate whose extension matches the metadata name
-      // (current scheme); otherwise take the first (legacy).
-      File chosen = candidates.first;
-      if (metaName is String) {
-        final wantExt = _sanitizedExtension(metaName);
-        if (wantExt.isNotEmpty) {
-          for (final f in candidates) {
-            if (p.extension(f.path).toLowerCase() == '.$wantExt') {
-              chosen = f;
-              break;
-            }
-          }
-        }
-      }
-
-      // Migrate a legacy file to the current scheme if its metadata name
-      // declares an extension and the file is still bare `<id>`.
-      if (metaName is String) {
-        final base = p.basename(chosen.path);
-        final hasExtOnDisk = base.contains('.');
-        if (!hasExtOnDisk) {
-          final ext = _sanitizedExtension(metaName);
-          if (ext.isNotEmpty) {
-            final newPath = p.join(p.dirname(chosen.path), '$id.$ext');
-            try {
-              await fs.file(chosen.path).rename(newPath);
-              chosen = fs.file(newPath);
-            } catch (e) {
-              debugPrint('Migration rename failed for $id: $e');
-              // Keep the old path.
-            }
-          }
-        }
-      }
-
-      out[id] = chosen.path;
-    }
-
-    return out;
-  }
-
-  /// Returns the lowercase extension without the leading dot, filtered to
-  /// `[a-z0-9]`. Empty when the name has no extension (including dotfiles
-  /// like `.env`) or the trailing segment contains no valid characters.
-  String _sanitizedExtension(String name) {
-    final dot = name.lastIndexOf('.');
-    if (dot < 0 || dot == 0) return '';
-    final raw = name.substring(dot + 1);
-    return raw.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
-  }
-
-  // ── drive_meta.json ────────────────────────────────────────────────────
-
-  Future<Map<String, Map<String, dynamic>>> _readMeta(String spaceId) async {
-    final f = fs.file(p.join(vaultPath, spaceId, 'drive_meta.json'));
-    if (!await f.exists()) return {};
-    final raw = jsonDecode(await f.readAsString()) as Map;
-    return raw.map(
-        (k, v) => MapEntry(k as String, (v as Map).cast<String, dynamic>()));
-  }
-
-  Future<void> _writeMeta(
-      String spaceId, Map<String, Map<String, dynamic>> meta) async {
-    // `jsonDecode` accepts any whitespace, so the pretty-printed form is
-    // read back identically. `prettyJson` ends with a trailing newline,
-    // which matters for git diffs.
-    await fs
-        .file(p.join(vaultPath, spaceId, 'drive_meta.json'))
-        .writeAsString(prettyJson(meta));
-  }
-
-// Add to the DriveRepository class.
-
-  /// Writes multiple pre-read files into [spaceId] with one metadata write.
-  /// Skips ids in [existingIds]. Returns the DriveFile records created.
+  /// Writes multiple pre-read files with one metadata write.
   Future<List<DriveFile>> importExistingFiles({
     required String spaceId,
     required Map<String, ExtractedFile> files,
@@ -299,4 +223,169 @@ class DriveRepository {
     await _writeMeta(spaceId, meta);
     return result;
   }
+
+  /// Removes the on-disk copy and records the file as offloaded.
+  Future<void> offloadFile(
+    String spaceId,
+    String fileId, {
+    required String remoteSha,
+    required int size,
+  }) async {
+    final index = await _driveIndex(spaceId);
+    final path = index.remove(fileId);
+    if (path != null) {
+      final f = fs.file(path);
+      if (await f.exists()) {
+        try {
+          await f.delete();
+        } catch (e) {
+          debugPrint('Failed to delete on-disk copy of $fileId: $e');
+        }
+      }
+    }
+
+    final store = offloadedStore;
+    if (store == null) return;
+    final info = await store.load(spaceId);
+    info[fileId] = OffloadedFileInfo(remoteSha: remoteSha, size: size);
+    await store.save(spaceId, info);
+  }
+
+  /// Removes the offloaded marker. Does not download the file.
+  Future<void> unoffloadFile(String spaceId, String fileId) async {
+    final store = offloadedStore;
+    if (store == null) return;
+    final info = await store.load(spaceId);
+    if (info.remove(fileId) != null) {
+      await store.save(spaceId, info);
+    }
+  }
+
+  /// Writes [bytes] to disk under the correct filename and clears the
+  /// offloaded marker. Also updates the path cache so subsequent
+  /// [readBytes] calls find the file without rebuilding the index.
+  Future<void> restoreFile(
+    String spaceId,
+    String fileId,
+    Uint8List bytes,
+  ) async {
+    final meta = await _readMeta(spaceId);
+    final entry = meta[fileId];
+    if (entry == null) {
+      throw StateError('File $fileId not in drive_meta.json');
+    }
+    final name = (entry['name'] as String?) ?? fileId;
+    final ext = _sanitizedExtension(name);
+    final diskName = ext.isEmpty ? fileId : '$fileId.$ext';
+    final path = p.join(vaultPath, spaceId, 'drive', diskName);
+
+    await fs
+        .directory(p.join(vaultPath, spaceId, 'drive'))
+        .create(recursive: true);
+    await fs.file(path).writeAsBytes(bytes);
+
+    final index = await _driveIndex(spaceId);
+    index[fileId] = path;
+
+    await unoffloadFile(spaceId, fileId);
+  }
+
+  /// Drops the path cache for all spaces.
+  void clearCache() {
+    _pathCache.clear();
+  }
+
+  // ── Index building + migration ─────────────────────────────────────────
+
+  Future<Map<String, String>> _driveIndex(String spaceId) async {
+    final cached = _pathCache[spaceId];
+    if (cached != null) return cached;
+    final index = await _buildIndex(spaceId);
+    _pathCache[spaceId] = index;
+    return index;
+  }
+
+  Future<Map<String, String>> _buildIndex(String spaceId) async {
+    final out = <String, String>{};
+    final driveDir = fs.directory(p.join(vaultPath, spaceId, 'drive'));
+    if (!await driveDir.exists()) return out;
+
+    final meta = await _readMeta(spaceId);
+
+    final byId = <String, List<File>>{};
+    await for (final e in driveDir.list(followLinks: false)) {
+      if (e is! File) continue;
+      final base = p.basename(e.path);
+      final dot = base.indexOf('.');
+      final id = dot < 0 ? base : base.substring(0, dot);
+      byId.putIfAbsent(id, () => []).add(e);
+    }
+
+    for (final entry in byId.entries) {
+      final id = entry.key;
+      final candidates = entry.value;
+      final metaName = meta[id]?['name'];
+
+      File chosen = candidates.first;
+      if (metaName is String) {
+        final wantExt = _sanitizedExtension(metaName);
+        if (wantExt.isNotEmpty) {
+          for (final f in candidates) {
+            if (p.extension(f.path).toLowerCase() == '.$wantExt') {
+              chosen = f;
+              break;
+            }
+          }
+        }
+      }
+
+      if (metaName is String) {
+        final base = p.basename(chosen.path);
+        final hasExtOnDisk = base.contains('.');
+        if (!hasExtOnDisk) {
+          final ext = _sanitizedExtension(metaName);
+          if (ext.isNotEmpty) {
+            final newPath = p.join(p.dirname(chosen.path), '$id.$ext');
+            try {
+              await fs.file(chosen.path).rename(newPath);
+              chosen = fs.file(newPath);
+            } catch (e) {
+              debugPrint('Migration rename failed for $id: $e');
+            }
+          }
+        }
+      }
+
+      out[id] = chosen.path;
+    }
+
+    return out;
+  }
+
+  String _sanitizedExtension(String name) {
+    final dot = name.lastIndexOf('.');
+    if (dot < 0 || dot == 0) return '';
+    final raw = name.substring(dot + 1);
+    return raw.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+  }
+
+  // ── drive_meta.json ────────────────────────────────────────────────────
+
+  Future<Map<String, Map<String, dynamic>>> _readMeta(String spaceId) async {
+    final f = fs.file(p.join(vaultPath, spaceId, 'drive_meta.json'));
+    if (!await f.exists()) return {};
+    final raw = jsonDecode(await f.readAsString()) as Map;
+    return raw.map(
+        (k, v) => MapEntry(k as String, (v as Map).cast<String, dynamic>()));
+  }
+
+  Future<void> _writeMeta(
+      String spaceId, Map<String, Map<String, dynamic>> meta) async {
+    await fs
+        .file(p.join(vaultPath, spaceId, 'drive_meta.json'))
+        .writeAsString(_prettyJson(meta));
+  }
+
+  String _prettyJson(Object? value) =>
+      '${const JsonEncoder.withIndent('  ').convert(value)}\n';
 }

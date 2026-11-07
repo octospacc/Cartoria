@@ -12,7 +12,6 @@ import '../../../platform/media.dart';
 import '../../../util/file_category.dart';
 import 'media_widgets.dart';
 
-/// Dispatches [file] to the correct inline viewer based on extension.
 class InlineMedia extends StatelessWidget {
   final VaultStore store;
   final String spaceId;
@@ -43,6 +42,14 @@ class InlineMedia extends StatelessWidget {
   }
 }
 
+// ── Image ─────────────────────────────────────────────────────────────────
+
+class _InlineImageData {
+  final Uint8List bytes;
+  final double aspectRatio;
+  const _InlineImageData(this.bytes, this.aspectRatio);
+}
+
 class _InlineImage extends StatefulWidget {
   final VaultStore store;
   final String spaceId;
@@ -55,12 +62,6 @@ class _InlineImage extends StatefulWidget {
 
   @override
   State<_InlineImage> createState() => _InlineImageState();
-}
-
-class _InlineImageData {
-  final Uint8List bytes;
-  final double aspectRatio;
-  const _InlineImageData(this.bytes, this.aspectRatio);
 }
 
 class _InlineImageState extends State<_InlineImage> {
@@ -81,20 +82,26 @@ class _InlineImageState extends State<_InlineImage> {
   }
 
   Future<_InlineImageData> _load() async {
-    final bytes =
-        await widget.store.readImageBytes(widget.spaceId, widget.file.id);
+    final offloaded = widget.store
+        .offloadedFileIds(widget.spaceId)
+        .contains(widget.file.id);
 
-    // Use the cached ratio when available — this is what makes re-visits
-    // (and subsequent scroll-backs) jump-free.
-    final cached =
-        widget.store.imageAspectRatio(widget.spaceId, widget.file.id);
-    if (cached != null) {
-      return _InlineImageData(bytes, cached);
-    }
+    final bytes = offloaded
+        ? await widget.store
+            .fetchThumbnailForOffloaded(widget.spaceId, widget.file.id)
+        : await widget.store
+            .readImageBytes(widget.spaceId, widget.file.id);
 
-    // First visit: decode to get dimensions, cache the ratio, return.
-    // `instantiateImageCodec` runs off the UI thread, so the frame cost
-    // is just the await in the FutureBuilder.
+    final ratio = await _aspectOf(bytes);
+    return _InlineImageData(bytes, ratio);
+  }
+
+  /// Actual aspect ratio of [bytes]. Falls back to the cached value for
+  /// this file (set on a previous render), then to decoding the image.
+  Future<double> _aspectOf(Uint8List bytes) async {
+    final cached = widget.store.imageAspectRatio(
+        widget.spaceId, widget.file.id);
+    if (cached != null) return cached;
     try {
       final codec = await ui.instantiateImageCodec(bytes);
       final frame = await codec.getNextFrame();
@@ -103,11 +110,71 @@ class _InlineImageState extends State<_InlineImage> {
       final ratio = (w > 0 && h > 0) ? w / h : 16.0 / 9.0;
       frame.image.dispose();
       codec.dispose();
-      widget.store.cacheImageAspect(widget.spaceId, widget.file.id, ratio);
-      return _InlineImageData(bytes, ratio);
+      widget.store
+          .cacheImageAspect(widget.spaceId, widget.file.id, ratio);
+      return ratio;
     } catch (_) {
-      return _InlineImageData(bytes, 16.0 / 9.0);
+      return 16.0 / 9.0;
     }
+  }
+
+  Future<void> _onTap() async {
+    final offloaded = widget.store
+        .offloadedFileIds(widget.spaceId)
+        .contains(widget.file.id);
+
+    if (offloaded) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Download from remote?'),
+          content: Text('"${widget.file.name}" is not on this device. '
+              'Fetch it now?'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Download')),
+          ],
+        ),
+      );
+      if (ok != true || !mounted) return;
+      try {
+        await widget.store
+            .fetchOffloadedFile(widget.spaceId, widget.file.id);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Download failed: $e')));
+        }
+        return;
+      }
+      if (!mounted) return;
+      setState(() => _future = _load());
+    }
+
+    if (!mounted) return;
+    _InlineImageData data;
+    try {
+      data = await _future;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not load image: $e')));
+      }
+      return;
+    }
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(12),
+        child: InteractiveViewer(child: Image.memory(data.bytes)),
+      ),
+    );
   }
 
   @override
@@ -116,18 +183,14 @@ class _InlineImageState extends State<_InlineImage> {
     return FutureBuilder<_InlineImageData>(
       future: _future,
       builder: (context, snap) {
-        // Use the real ratio as soon as we know it — from the completed
-        // future, or from the store cache (set by a previous visit to
-        // this same image). Fall back to 16:9 on the very first visit
-        // before the decode completes.
         final ratio = snap.data?.aspectRatio ??
-            widget.store.imageAspectRatio(widget.spaceId, widget.file.id) ??
+            widget.store.imageAspectRatio(
+                widget.spaceId, widget.file.id) ??
             16.0 / 9.0;
 
-        // Placeholder uses the SAME constrained box and aspect ratio as
-        // the loaded image — no size jump when loading finishes.
         final box = ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 320, maxWidth: 600),
+          constraints:
+              const BoxConstraints(maxHeight: 320, maxWidth: 600),
           child: AspectRatio(
             aspectRatio: ratio,
             child: snap.hasError || !snap.hasData
@@ -158,20 +221,15 @@ class _InlineImageState extends State<_InlineImage> {
           return Align(alignment: Alignment.centerLeft, child: box);
         }
         return GestureDetector(
-          onTap: () => showDialog(
-            context: context,
-            builder: (_) => Dialog(
-              backgroundColor: Colors.transparent,
-              insetPadding: const EdgeInsets.all(12),
-              child: InteractiveViewer(child: Image.memory(snap.data!.bytes)),
-            ),
-          ),
+          onTap: _onTap,
           child: Align(alignment: Alignment.centerLeft, child: box),
         );
       },
     );
   }
 }
+
+// ── Video ─────────────────────────────────────────────────────────────────
 
 class _InlineVideo extends StatefulWidget {
   final VaultStore store;
@@ -192,21 +250,55 @@ class _InlineVideoState extends State<_InlineVideo> {
   VideoController? _controller;
   String? _uri;
   String? _error;
+  bool _loading = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _init();
-  }
+  Future<void> _start() async {
+    if (_loading || _player != null) return;
 
-  Future<void> _init() async {
+    final offloaded = widget.store
+        .offloadedFileIds(widget.spaceId)
+        .contains(widget.file.id);
+
+    if (offloaded) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Download from remote?'),
+          content: Text('"${widget.file.name}" is not on this device. '
+              'Fetch it now?'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Download')),
+          ],
+        ),
+      );
+      if (ok != true) return;
+      if (!mounted) return;
+      try {
+        await widget.store
+            .fetchOffloadedFile(widget.spaceId, widget.file.id);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Download failed: $e')));
+        }
+        return;
+      }
+      if (!mounted) return;
+    }
+
+    setState(() => _loading = true);
     try {
       final bytes =
           await widget.store.readFileBytes(widget.spaceId, widget.file.id);
       final uri = await prepareMediaUri(bytes, widget.file.name);
       final player = Player();
       final controller = VideoController(player);
-      await player.open(Media(uri), play: false);
+      await player.open(Media(uri));
       if (!mounted) {
         await player.dispose();
         await releaseMediaUri(uri);
@@ -215,9 +307,14 @@ class _InlineVideoState extends State<_InlineVideo> {
       _uri = uri;
       _player = player;
       _controller = controller;
-      setState(() {});
+      setState(() => _loading = false);
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = e.toString();
+        });
+      }
     }
   }
 
@@ -235,80 +332,72 @@ class _InlineVideoState extends State<_InlineVideo> {
       return MediaErrorCard(
         file: widget.file,
         message: 'Cannot play video',
-        onRetry: () {
-          setState(() => _error = null);
-          _init();
-        },
+        onRetry: () => setState(() => _error = null),
       );
     }
     final controller = _controller;
     final player = _player;
+    if (controller == null || player == null) {
+      return PlayCard(
+        file: widget.file,
+        icon: Icons.play_circle_outline,
+        label: 'Tap to play video',
+        loading: _loading,
+        onTap: _start,
+      );
+    }
     return Align(
       alignment: Alignment.centerLeft,
       child: FittedBox(
         fit: BoxFit.scaleDown,
         child: ConstrainedBox(
           constraints: const BoxConstraints(
-            minWidth: 300,
-            maxWidth: 600,
-            maxHeight: 320,
+              minWidth: 300, maxWidth: 600, maxHeight: 320),
+          child: StreamBuilder<int?>(
+            stream: player.stream.width,
+            initialData: player.state.width,
+            builder: (context, wSnap) {
+              return StreamBuilder<int?>(
+                stream: player.stream.height,
+                initialData: player.state.height,
+                builder: (context, hSnap) {
+                  final w = wSnap.data;
+                  final h = hSnap.data;
+                  final ratio = (w != null && h != null && w > 0 && h > 0)
+                      ? w / h
+                      : 16.0 / 9.0;
+                  return AspectRatio(
+                    aspectRatio: ratio,
+                    child: MaterialVideoControlsTheme(
+                      normal: MaterialVideoControlsThemeData(
+                        displaySeekBar: true,
+                        buttonBarButtonSize: 18.0,
+                        buttonBarHeight: 32.0,
+                        seekBarHeight: 2.0,
+                        padding: EdgeInsets.zero,
+                        bottomButtonBarMargin: EdgeInsets.zero,
+                        topButtonBar: const [],
+                        primaryButtonBar: const [],
+                        bottomButtonBar: const [
+                          MaterialPlayOrPauseButton(),
+                          MaterialPositionIndicator(),
+                        ],
+                      ),
+                      fullscreen: const MaterialVideoControlsThemeData(),
+                      child: Video(controller: controller),
+                    ),
+                  );
+                },
+              );
+            },
           ),
-          child: controller == null || player == null
-              ? AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: Container(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .surfaceContainerHighest,
-                    child:
-                        const Center(child: CircularProgressIndicator()),
-                  ),
-                )
-              : StreamBuilder<int?>(
-                  stream: player.stream.width,
-                  initialData: player.state.width,
-                  builder: (context, wSnap) {
-                    return StreamBuilder<int?>(
-                      stream: player.stream.height,
-                      initialData: player.state.height,
-                      builder: (context, hSnap) {
-                        final w = wSnap.data;
-                        final h = hSnap.data;
-                        final ratio =
-                            (w != null && h != null && w > 0 && h > 0)
-                                ? w / h
-                                : 16.0 / 9.0;
-                        return AspectRatio(
-                          aspectRatio: ratio,
-                          child: MaterialVideoControlsTheme(
-                            normal: MaterialVideoControlsThemeData(
-                              displaySeekBar: true,
-                              buttonBarButtonSize: 18.0,
-                              buttonBarHeight: 32.0,
-                              seekBarHeight: 2.0,
-                              padding: EdgeInsets.zero,
-                              bottomButtonBarMargin: EdgeInsets.zero,
-                              topButtonBar: const [],
-                              primaryButtonBar: const [],
-                              bottomButtonBar: const [
-                                MaterialPlayOrPauseButton(),
-                                MaterialPositionIndicator(),
-                              ],
-                            ),
-                            fullscreen:
-                                const MaterialVideoControlsThemeData(),
-                            child: Video(controller: controller),
-                          ),
-                        );
-                      },
-                    );
-                  },
-                ),
         ),
       ),
     );
   }
 }
+
+// ── Audio ─────────────────────────────────────────────────────────────────
 
 class _InlineAudio extends StatefulWidget {
   final VaultStore store;
@@ -332,6 +421,43 @@ class _InlineAudioState extends State<_InlineAudio> {
 
   Future<void> _start() async {
     if (_loading || _player != null) return;
+
+    final offloaded = widget.store
+        .offloadedFileIds(widget.spaceId)
+        .contains(widget.file.id);
+
+    if (offloaded) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Download from remote?'),
+          content: Text('"${widget.file.name}" is not on this device. '
+              'Fetch it now?'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Download')),
+          ],
+        ),
+      );
+      if (ok != true) return;
+      if (!mounted) return;
+      try {
+        await widget.store
+            .fetchOffloadedFile(widget.spaceId, widget.file.id);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Download failed: $e')));
+        }
+        return;
+      }
+      if (!mounted) return;
+    }
+
     setState(() => _loading = true);
     try {
       final bytes =
@@ -389,6 +515,8 @@ class _InlineAudioState extends State<_InlineAudio> {
   }
 }
 
+// ── Text ──────────────────────────────────────────────────────────────────
+
 class _InlineText extends StatefulWidget {
   final VaultStore store;
   final String spaceId;
@@ -423,6 +551,16 @@ class _InlineTextState extends State<_InlineText> {
   }
 
   Future<String> _load() async {
+    final offloaded = widget.store
+        .offloadedFileIds(widget.spaceId)
+        .contains(widget.file.id);
+
+    if (offloaded) {
+      // Text attachments can be large; fetching the whole file to preview
+      // defeats the point of offloading. Require an explicit download.
+      return '\u0000OFFLOADED';
+    }
+
     final bytes =
         await widget.store.readFileBytes(widget.spaceId, widget.file.id);
     if (bytes.length > kMaxTextPreviewBytes) {
@@ -448,19 +586,56 @@ class _InlineTextState extends State<_InlineText> {
           );
         }
         final text = snap.data!;
+
+        if (text == '\u0000OFFLOADED') {
+          return PlayCard(
+            file: widget.file,
+            icon: Icons.cloud_download_outlined,
+            label: 'Offloaded — tap to download',
+            loading: false,
+            onTap: () async {
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Download from remote?'),
+                  content: Text('"${widget.file.name}" is not on this '
+                      'device. Fetch it now?'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Cancel')),
+                    FilledButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('Download')),
+                  ],
+                ),
+              );
+              if (ok != true) return;
+              if (!mounted) return;
+              try {
+                await widget.store
+                    .fetchOffloadedFile(widget.spaceId, widget.file.id);
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Download failed: $e')));
+                }
+                return;
+              }
+              if (!mounted) return;
+              setState(() => _future = _load());
+            },
+          );
+        }
+
         if (text == '\u0000TOO_LARGE') {
-          // Fall back to a plain file row so the user can still act on it.
           return FileRow(
             store: widget.store,
-            space: Space(
-              id: widget.spaceId,
-              name: '',
-              icon: '',
-              createdAt: DateTime.now(),
-            ),
+            spaceId: widget.spaceId,
             file: widget.file,
           );
         }
+
         final lines = text.split('\n');
         final visibleLines =
             _expanded ? lines : lines.take(8).toList(growable: false);
@@ -486,7 +661,8 @@ class _InlineTextState extends State<_InlineText> {
                     ),
                   ),
                   TextButton(
-                    onPressed: () => setState(() => _expanded = !_expanded),
+                    onPressed: () =>
+                        setState(() => _expanded = !_expanded),
                     style: TextButton.styleFrom(
                       visualDensity: VisualDensity.compact,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -496,13 +672,10 @@ class _InlineTextState extends State<_InlineText> {
                 ],
               ),
               const SizedBox(height: 6),
-              SelectableText(
+              Text(
                 visibleLines.join('\n'),
                 style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                  height: 1.35,
-                ),
+                  fontFamily: 'monospace', fontSize: 12, height: 1.35),
               ),
               if (truncated)
                 Padding(

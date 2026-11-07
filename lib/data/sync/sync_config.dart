@@ -55,6 +55,7 @@ class SyncConfig {
   final String branch;
   final String pathPrefix;
   final Set<String>? spaceIds;
+  final int? keepLocalFileCount;
   final DateTime? lastSyncedAt;
   final String? lastCommitSha;
 
@@ -69,6 +70,7 @@ class SyncConfig {
     this.branch = 'main',
     this.pathPrefix = '',
     this.spaceIds,
+    this.keepLocalFileCount,
     this.lastSyncedAt,
     this.lastCommitSha,
   });
@@ -110,19 +112,18 @@ class SyncConfig {
   /// same-named repo on `gitlab.com`. Public-host configs keep the
   /// pre-host key format, so existing tokens continue to work without
   /// migration.
-  String get tokenKey =>
-      '${provider.name}:$_hostSegment$owner/$repo';
+  String get tokenKey => '${provider.name}:$_hostSegment$owner/$repo';
 
   /// Key for the remote-listing cache. Includes branch so two configs on
   /// the same repo but different branches have independent caches.
-  String get cacheKey =>
-      '${provider.name}:$_hostSegment$owner/$repo:$branch';
+  String get cacheKey => '${provider.name}:$_hostSegment$owner/$repo:$branch';
 
   SyncConfig copyWith({
     String? name,
     bool? isPrimary,
     SyncProviderKind? provider,
     Object? host = _unspecifiedSpaceIds,
+    Object? keepLocalFileCount = _unspecifiedSpaceIds,
     String? owner,
     String? repo,
     String? branch,
@@ -136,9 +137,8 @@ class SyncConfig {
         name: name ?? this.name,
         isPrimary: isPrimary ?? this.isPrimary,
         provider: provider ?? this.provider,
-        host: identical(host, _unspecifiedSpaceIds)
-            ? this.host
-            : host as String?,
+        host:
+            identical(host, _unspecifiedSpaceIds) ? this.host : host as String?,
         owner: owner ?? this.owner,
         repo: repo ?? this.repo,
         branch: branch ?? this.branch,
@@ -146,6 +146,9 @@ class SyncConfig {
         spaceIds: identical(spaceIds, _unspecifiedSpaceIds)
             ? this.spaceIds
             : spaceIds as Set<String>?,
+        keepLocalFileCount: identical(keepLocalFileCount, _unspecifiedSpaceIds)
+            ? this.keepLocalFileCount
+            : keepLocalFileCount as int?,
         lastSyncedAt: lastSyncedAt ?? this.lastSyncedAt,
         lastCommitSha: lastCommitSha ?? this.lastCommitSha,
       );
@@ -161,6 +164,7 @@ class SyncConfig {
         'branch': branch,
         'pathPrefix': pathPrefix,
         if (spaceIds != null) 'spaceIds': spaceIds!.toList(),
+        if (keepLocalFileCount != null) 'keepLocalFileCount': keepLocalFileCount,
         if (lastSyncedAt != null)
           'lastSyncedAt': lastSyncedAt!.toIso8601String(),
         if (lastCommitSha != null) 'lastCommitSha': lastCommitSha,
@@ -180,6 +184,7 @@ class SyncConfig {
         spaceIds: j.containsKey('spaceIds')
             ? ((j['spaceIds'] as List?) ?? const []).cast<String>().toSet()
             : null,
+        keepLocalFileCount: j['keepLocalFileCount'] as int?,
         lastSyncedAt: j['lastSyncedAt'] != null
             ? DateTime.tryParse(j['lastSyncedAt'] as String)
             : null,
@@ -207,8 +212,8 @@ class SyncConfigsStore {
         final configs = <SyncConfig>[];
         for (final e in remotes) {
           try {
-            configs.add(
-                SyncConfig.fromJson((e as Map).cast<String, dynamic>()));
+            configs
+                .add(SyncConfig.fromJson((e as Map).cast<String, dynamic>()));
           } catch (err) {
             debugPrint('Bad sync config: $err');
           }
@@ -228,6 +233,7 @@ class SyncConfigsStore {
         branch: (raw['branch'] as String?) ?? 'main',
         pathPrefix: (raw['pathPrefix'] as String?) ?? '',
         spaceIds: null,
+        keepLocalFileCount: null,
         lastSyncedAt: raw['lastSyncedAt'] != null
             ? DateTime.tryParse(raw['lastSyncedAt'] as String)
             : null,
@@ -273,8 +279,8 @@ class SyncConfigsStore {
     }
     await fs.directory(vaultPath).create(recursive: true);
     await fs.file(_path).writeAsString(prettyJson({
-      'version': 2,
-      'remotes': configs.map((c) => c.toJson()).toList(),
-    }));
+          'version': 2,
+          'remotes': configs.map((c) => c.toJson()).toList(),
+        }));
   }
 }

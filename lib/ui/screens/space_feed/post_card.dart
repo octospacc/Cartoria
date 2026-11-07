@@ -182,7 +182,7 @@ class PostCard extends StatelessWidget {
                               children: attachmentFiles
                                   .map((f) => FileRow(
                                       store: store,
-                                      space: space,
+                                      spaceId: space.id, // ← was: space: space
                                       file: f))
                                   .toList(),
                             ),
@@ -211,8 +211,7 @@ class PostCard extends StatelessWidget {
                           const SizedBox(height: 8),
                           ...post.quotedExternals
                               .map((q) => Padding(
-                                    padding:
-                                        const EdgeInsets.only(bottom: 6),
+                                    padding: const EdgeInsets.only(bottom: 6),
                                     child: _QuotedExternalCard(quote: q),
                                   ))
                               .toList(),
@@ -314,8 +313,8 @@ class _QuotedOwnCard extends StatelessWidget {
       decoration: BoxDecoration(
         border: Border.all(color: theme.colorScheme.outlineVariant),
         borderRadius: BorderRadius.circular(8),
-        color: theme.colorScheme.surfaceContainerHighest
-            .withValues(alpha: 0.25),
+        color:
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.25),
       ),
       clipBehavior: Clip.antiAlias,
       child: inner,
@@ -333,9 +332,8 @@ class _QuotedOwnCard extends StatelessWidget {
   }
 
   Widget _quotedContent(BuildContext context, ThemeData theme, Post quoted) {
-    final icon = quoted.kind == PostKind.bookmark
-        ? Icons.bookmark_outline
-        : Icons.notes;
+    final icon =
+        quoted.kind == PostKind.bookmark ? Icons.bookmark_outline : Icons.notes;
     final preview = _previewOf(quoted);
     final media = _mediaPreview(context, quoted);
     final mediaFiles = _mediaFiles(quoted);
@@ -517,8 +515,7 @@ class _QuotedExternalCard extends StatelessWidget {
                   ),
                   if (hasUri)
                     Icon(Icons.open_in_new,
-                        size: 12,
-                        color: theme.colorScheme.onSurfaceVariant),
+                        size: 12, color: theme.colorScheme.onSurfaceVariant),
                 ],
               ),
               if (content.isNotEmpty) ...[

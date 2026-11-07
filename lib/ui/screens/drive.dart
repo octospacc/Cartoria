@@ -79,11 +79,17 @@ class _DriveScreenState extends State<DriveScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return AnimatedBuilder(
       animation: widget.store,
       builder: (context, _) {
         final files = widget.store.filesForSpace(widget.space.id);
-        final used = widget.store.usedFileIds(widget.space.id); // ← new
+        final offloadedIds = widget.store.offloadedFileIds(widget.space.id);
+        final used = widget.store.usedFileIds(widget.space.id);
+        final offloadedCount =
+            files.where((f) => offloadedIds.contains(f.id)).length;
+        final localCount = files.length - offloadedCount;
+
         return Scaffold(
           appBar: _selectionMode
               ? AppBar(
@@ -92,12 +98,26 @@ class _DriveScreenState extends State<DriveScreen> {
                     tooltip: 'Exit selection',
                     onPressed: _exitSelectionMode,
                   ),
-                  title: Text(
-                    _selectedFileIds.isEmpty
-                        ? 'Select files'
-                        : '${_selectedFileIds.length} selected',
-                  ),
+                  title: Text(_selectedFileIds.isEmpty
+                      ? 'Select files'
+                      : '${_selectedFileIds.length} selected'),
                   actions: [
+                    IconButton(
+                      icon: const Icon(Icons.cleaning_services_outlined),
+                      tooltip: 'Select unused',
+                      onPressed: () {
+                        final unused = files
+                            .where((f) => !used.contains(f.id))
+                            .map((f) => f.id)
+                            .toSet();
+                        if (unused.isEmpty) return;
+                        setState(() {
+                          _selectedFileIds
+                            ..clear()
+                            ..addAll(unused);
+                        });
+                      },
+                    ),
                     IconButton(
                       icon: const Icon(Icons.delete_outline),
                       tooltip: 'Delete selected',
@@ -113,11 +133,13 @@ class _DriveScreenState extends State<DriveScreen> {
                     IconButton(
                       icon: const Icon(Icons.checklist),
                       tooltip: 'Select',
-                      onPressed:
-                          files.isEmpty ? null : () => _enterSelectionMode(),
+                      onPressed: files.isEmpty
+                          ? null
+                          : () => _enterSelectionMode(),
                     ),
                     IconButton(
-                      icon: Icon(_grid ? Icons.view_list : Icons.grid_view),
+                      icon: Icon(
+                          _grid ? Icons.view_list : Icons.grid_view),
                       tooltip: _grid ? 'List view' : 'Grid view',
                       onPressed: () => setState(() => _grid = !_grid),
                     ),
@@ -133,7 +155,34 @@ class _DriveScreenState extends State<DriveScreen> {
                     ),
                   ),
                 )
-              : (_grid ? _buildGrid(files, used) : _buildList(files, used)),
+              : Column(
+                  children: [
+                    if (offloadedCount > 0)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
+                        color: theme.colorScheme.surfaceContainerHighest,
+                        child: Row(
+                          children: [
+                            Icon(Icons.cloud, size: 14,
+                                color:
+                                    theme.colorScheme.onSurfaceVariant),
+                            const SizedBox(width: 6),
+                            Text(
+                              '$localCount local · $offloadedCount offloaded',
+                              style: theme.textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                    Expanded(
+                      child: _grid
+                          ? _buildGrid(files, offloadedIds, used)
+                          : _buildList(files, offloadedIds, used),
+                    ),
+                  ],
+                ),
           floatingActionButton: _selectionMode
               ? null
               : FloatingActionButton(
@@ -145,7 +194,11 @@ class _DriveScreenState extends State<DriveScreen> {
     );
   }
 
-  Widget _buildGrid(List<DriveFile> files, Set<String> used) {
+  Widget _buildGrid(
+    List<DriveFile> files,
+    Set<String> offloadedIds,
+    Set<String> used,
+  ) {
     return GridView.builder(
       padding: const EdgeInsets.all(8),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
@@ -162,20 +215,27 @@ class _DriveScreenState extends State<DriveScreen> {
           store: widget.store,
           space: widget.space,
           file: f,
-          isUsed: used.contains(f.id), // ← new
+          isUsed: used.contains(f.id),
+          isOffloaded: offloadedIds.contains(f.id),
           selectionMode: _selectionMode,
           isSelected: _selectedFileIds.contains(f.id),
           onTap: _selectionMode
               ? () => _toggleSelection(f.id)
               : () => _openViewer(f),
-          onLongPress: _selectionMode ? null : () => _enterSelectionMode(f.id),
+          onLongPress: _selectionMode
+              ? null
+              : () => _enterSelectionMode(f.id),
           onDelete: () => _confirmDelete(f),
         );
       },
     );
   }
 
-  Widget _buildList(List<DriveFile> files, Set<String> used) {
+  Widget _buildList(
+    List<DriveFile> files,
+    Set<String> offloadedIds,
+    Set<String> used,
+  ) {
     final theme = Theme.of(context);
     return ListView.separated(
       itemCount: files.length,
@@ -183,14 +243,17 @@ class _DriveScreenState extends State<DriveScreen> {
       itemBuilder: (context, i) {
         final f = files[i];
         final selected = _selectedFileIds.contains(f.id);
-        final isUsed = used.contains(f.id); // ← new
+        final isUsed = used.contains(f.id);
+        final isOffloaded = offloadedIds.contains(f.id);
         return ListTile(
           selected: _selectionMode && selected,
           selectedTileColor:
               theme.colorScheme.primaryContainer.withValues(alpha: 0.25),
           leading: _selectionMode
               ? Icon(
-                  selected ? Icons.check_circle : Icons.radio_button_unchecked,
+                  selected
+                      ? Icons.check_circle
+                      : Icons.radio_button_unchecked,
                   color: selected
                       ? theme.colorScheme.primary
                       : theme.colorScheme.onSurfaceVariant,
@@ -217,12 +280,24 @@ class _DriveScreenState extends State<DriveScreen> {
                       : theme.colorScheme.error,
                 ),
               ),
+              if (isOffloaded) ...[
+                const SizedBox(width: 8),
+                Icon(Icons.cloud,
+                    size: 12, color: theme.colorScheme.onSurfaceVariant),
+                const SizedBox(width: 3),
+                Text('remote',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    )),
+              ],
             ],
           ),
           onTap: _selectionMode
               ? () => _toggleSelection(f.id)
               : () => _openViewer(f),
-          onLongPress: _selectionMode ? null : () => _enterSelectionMode(f.id),
+          onLongPress: _selectionMode
+              ? null
+              : () => _enterSelectionMode(f.id),
           trailing: _selectionMode
               ? null
               : PopupMenuButton<String>(
@@ -230,7 +305,8 @@ class _DriveScreenState extends State<DriveScreen> {
                   itemBuilder: (_) => const [
                     PopupMenuItem(value: 'open', child: Text('Open')),
                     PopupMenuItem(
-                        value: 'share', child: Text('Share / download')),
+                        value: 'share',
+                        child: Text('Share / download')),
                     PopupMenuItem(value: 'delete', child: Text('Delete')),
                   ],
                 ),
@@ -242,7 +318,7 @@ class _DriveScreenState extends State<DriveScreen> {
   Future<void> _handleMenu(String action, DriveFile f) async {
     switch (action) {
       case 'open':
-        _openViewer(f);
+        await _openViewer(f);
         break;
       case 'share':
         final bytes = await widget.store.readFileBytes(widget.space.id, f.id);
@@ -254,7 +330,39 @@ class _DriveScreenState extends State<DriveScreen> {
     }
   }
 
-  void _openViewer(DriveFile f) {
+  Future<void> _openViewer(DriveFile f) async {
+    final offloaded =
+        widget.store.offloadedFileIds(widget.space.id).contains(f.id);
+    if (offloaded) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Download from remote?'),
+          content: Text('"${f.name}" is not on this device. Fetch it now?'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Download')),
+          ],
+        ),
+      );
+      if (ok != true) return;
+      if (!mounted) return;
+      try {
+        await widget.store.fetchOffloadedFile(widget.space.id, f.id);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Download failed: $e')));
+        }
+        return;
+      }
+      if (!mounted) return;
+    }
+
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -275,10 +383,7 @@ class _DriveScreenState extends State<DriveScreen> {
       final bytes = picked?.bytes;
       if (bytes == null || picked == null) return;
       await widget.store.addFileFromBytes(
-        spaceId: widget.space.id,
-        bytes: bytes,
-        name: picked.name,
-      );
+        spaceId: widget.space.id, bytes: bytes, name: picked.name);
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
@@ -312,7 +417,8 @@ class _GridTile extends StatelessWidget {
   final VaultStore store;
   final Space space;
   final DriveFile file;
-  final bool isUsed;          // ← new
+  final bool isUsed;
+  final bool isOffloaded;
   final bool selectionMode;
   final bool isSelected;
   final VoidCallback onTap;
@@ -324,7 +430,8 @@ class _GridTile extends StatelessWidget {
     required this.store,
     required this.space,
     required this.file,
-    required this.isUsed,      // ← new
+    required this.isUsed,
+    required this.isOffloaded,
     required this.selectionMode,
     required this.isSelected,
     required this.onTap,
@@ -370,10 +477,6 @@ class _GridTile extends StatelessWidget {
                 ),
               ],
             ),
-
-            // Usage badge — top-left. Used files get a subdued link mark;
-            // orphans get an error-coloured link-off mark so they stand
-            // out visually as cleanup targets.
             Positioned(
               top: 4,
               left: 4,
@@ -381,9 +484,7 @@ class _GridTile extends StatelessWidget {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                 decoration: BoxDecoration(
-                  color: isUsed
-                      ? Colors.black45
-                      : theme.colorScheme.error,
+                  color: isUsed ? Colors.black45 : theme.colorScheme.error,
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Icon(
@@ -393,8 +494,20 @@ class _GridTile extends StatelessWidget {
                 ),
               ),
             ),
-
-            // Existing top-right: selection checkmark or delete X.
+            if (isOffloaded)
+              Positioned(
+                top: 4,
+                left: 30,
+                child: Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Icon(Icons.cloud,
+                      size: 12, color: Colors.white),
+                ),
+              ),
             Positioned(
               top: 4,
               right: 4,

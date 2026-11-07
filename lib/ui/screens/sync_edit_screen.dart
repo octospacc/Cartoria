@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
-import 'package:flutter/foundation.dart';
 
 import '../../data/sync/sync_config.dart';
 import '../../data/sync/sync_provider.dart';
@@ -24,6 +23,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
   late TextEditingController _repo;
   late TextEditingController _branch;
   late TextEditingController _prefix;
+  late TextEditingController _keepLocal;
   late TextEditingController _token;
   late Set<String>? _spaceIds;
   bool _isPrimary = false;
@@ -47,6 +47,8 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
     _repo = TextEditingController(text: e?.repo ?? '');
     _branch = TextEditingController(text: e?.branch ?? 'main');
     _prefix = TextEditingController(text: e?.pathPrefix ?? '');
+    _keepLocal = TextEditingController(
+        text: e?.keepLocalFileCount?.toString() ?? '');
     _spaceIds = e?.spaceIds != null ? {...e!.spaceIds!} : null;
     _isPrimary = e?.isPrimary ?? widget.store.syncConfigs.isEmpty;
     _token = TextEditingController();
@@ -61,6 +63,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
     _repo.dispose();
     _branch.dispose();
     _prefix.dispose();
+    _keepLocal.dispose();
     _token.dispose();
     super.dispose();
   }
@@ -89,6 +92,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
       branch: _branch.text.trim().isEmpty ? 'main' : _branch.text.trim(),
       pathPrefix: _prefix.text.trim(),
       spaceIds: _spaceIds,
+      keepLocalFileCount: int.tryParse(_keepLocal.text.trim()),
       lastSyncedAt: widget.existing?.lastSyncedAt,
       lastCommitSha: widget.existing?.lastCommitSha,
     );
@@ -102,18 +106,13 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
       return false;
     }
 
-    // Warn if the token key is changing — the previously saved token
-    // won't be found under the new key, so the user will need to
-    // re-enter it. Only applies when an existing config had a token and
-    // the (provider, host, owner, repo) tuple changes.
     final old = widget.store.syncConfigById(_id);
     if (old != null &&
         old.tokenKey != config.tokenKey &&
         _token.text.trim().isEmpty) {
-      final oldHadToken =
+      final hadToken =
           (await widget.store.loadSyncToken(_id))?.isNotEmpty ?? false;
-      if (oldHadToken) {
-        if (!mounted) return false;
+      if (hadToken && mounted) {
         final proceed = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -121,9 +120,8 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
             content: const Text(
               'The provider, host, owner, or repo changed. Tokens are '
               'scoped to that combination, so the previously saved token '
-              'can\'t be reused here.\n\n'
-              'You\'ll need to enter a new token for this configuration. '
-              'Continue saving without a token?',
+              'can\'t be reused here.\n\nYou\'ll need to enter a new token. '
+              'Save anyway without a token?',
             ),
             actions: [
               TextButton(
@@ -160,11 +158,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
       setState(() => _error = 'Enter a token first');
       return;
     }
-    setState(() {
-      _busy = true;
-      _error = null;
-      _status = null;
-    });
+    setState(() { _busy = true; _error = null; _status = null; });
     try {
       await widget.store.verifySyncAccess(_id);
       if (mounted) setState(() => _status = 'Access verified');
@@ -203,22 +197,17 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
     if (ok != true) return;
 
     setState(() {
-      _busy = true;
-      _error = null;
-      _status = null;
-      _progress = null;
+      _busy = true; _error = null; _status = null; _progress = null;
     });
     try {
-      final r = await widget.store.syncPush(
-        _id,
-        onProgress: (p) {
-          if (mounted) setState(() => _progress = p);
-        },
-      );
+      final r = await widget.store.syncPush(_id, onProgress: (p) {
+        if (mounted) setState(() => _progress = p);
+      });
       if (mounted) {
         setState(() {
           _status = 'Pushed ${r.pushed} file(s), deleted ${r.deleted}'
-              '${r.skippedLarge > 0 ? ", skipped ${r.skippedLarge} large" : ""}';
+              '${r.skippedLarge > 0 ? ", skipped ${r.skippedLarge} large" : ""}'
+              '${r.skippedOffloaded > 0 ? ", ${r.skippedOffloaded} offloaded" : ""}';
         });
       }
     } catch (e) {
@@ -239,11 +228,12 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Pull from remote?'),
         content: const Text(
-            'This overwrites local files in the selected spaces (and vault-'
-            'level data if this is the primary) with the remote version. '
-            'A backup of the vault is saved before pulling.'
-            '\n\nOn web, the backup is stored in the browser\'s local storage '
-            'and keeps only the 3 most recent backups.'),
+          'This overwrites local files in the selected spaces (and vault-'
+          'level data if this is the primary) with the remote version. '
+          'A backup of the vault is saved before pulling.\n\n'
+          'On web, the backup is stored in the browser\'s local storage '
+          'and keeps only the 3 most recent backups.',
+        ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -257,21 +247,16 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
     if (ok != true) return;
 
     setState(() {
-      _busy = true;
-      _error = null;
-      _status = null;
-      _progress = null;
+      _busy = true; _error = null; _status = null; _progress = null;
     });
     try {
-      final r = await widget.store.syncPull(
-        _id,
-        onProgress: (p) {
-          if (mounted) setState(() => _progress = p);
-        },
-      );
+      final r = await widget.store.syncPull(_id, onProgress: (p) {
+        if (mounted) setState(() => _progress = p);
+      });
       if (mounted) {
         setState(() {
-          _status = 'Pulled ${r.pulled} file(s), deleted ${r.deleted}';
+          _status = 'Pulled ${r.pulled} file(s), deleted ${r.deleted}'
+              '${r.offloaded > 0 ? ", ${r.offloaded} offloaded" : ""}';
         });
       }
     } catch (e) {
@@ -310,14 +295,10 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                   color: theme.colorScheme.errorContainer,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: SelectableText(
-                  _error!,
-                  style: TextStyle(
-                    color: theme.colorScheme.onErrorContainer,
-                    fontFamily: 'monospace',
-                    fontSize: 12,
-                  ),
-                ),
+                child: SelectableText(_error!,
+                    style: TextStyle(
+                      color: theme.colorScheme.onErrorContainer,
+                      fontFamily: 'monospace', fontSize: 12)),
               ),
             ),
           if (_status != null)
@@ -342,9 +323,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
           DropdownButtonFormField<SyncProviderKind>(
             value: _provider,
             decoration: const InputDecoration(
-              labelText: 'Provider',
-              border: OutlineInputBorder(),
-            ),
+              labelText: 'Provider', border: OutlineInputBorder()),
             items: SyncProviderKind.values
                 .map((p) => DropdownMenuItem(value: p, child: Text(p.label)))
                 .toList(),
@@ -360,8 +339,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
               labelText: 'Host (optional)',
               hintText: _provider.defaultHost,
               helperText: 'Leave empty for ${_provider.defaultHost}. '
-                  'For self-hosted, enter the hostname '
-                  '(e.g. git.example.com).',
+                  'For self-hosted, enter the hostname.',
               border: const OutlineInputBorder(),
             ),
           ),
@@ -370,18 +348,14 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
             controller: _owner,
             enabled: !_busy,
             decoration: const InputDecoration(
-              labelText: 'Owner / group',
-              border: OutlineInputBorder(),
-            ),
+              labelText: 'Owner / group', border: OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _repo,
             enabled: !_busy,
             decoration: const InputDecoration(
-              labelText: 'Repository',
-              border: OutlineInputBorder(),
-            ),
+              labelText: 'Repository', border: OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
           Row(
@@ -391,9 +365,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                   controller: _branch,
                   enabled: !_busy,
                   decoration: const InputDecoration(
-                    labelText: 'Branch',
-                    border: OutlineInputBorder(),
-                  ),
+                    labelText: 'Branch', border: OutlineInputBorder()),
                 ),
               ),
               const SizedBox(width: 12),
@@ -403,8 +375,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                   enabled: !_busy,
                   decoration: const InputDecoration(
                     labelText: 'Path prefix (optional)',
-                    border: OutlineInputBorder(),
-                  ),
+                    border: OutlineInputBorder()),
                 ),
               ),
             ],
@@ -434,7 +405,9 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
             title: const Text('All spaces (including future ones)'),
             value: true,
             groupValue: _spaceIds == null,
-            onChanged: _busy ? null : (_) => setState(() => _spaceIds = null),
+            onChanged: _busy
+                ? null
+                : (_) => setState(() => _spaceIds = null),
           ),
           RadioListTile<bool>(
             contentPadding: EdgeInsets.zero,
@@ -444,9 +417,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
             groupValue: _spaceIds != null,
             onChanged: _busy
                 ? null
-                : (_) => setState(() {
-                      _spaceIds ??= {};
-                    }),
+                : (_) => setState(() => _spaceIds ??= {}),
           ),
           if (_spaceIds != null) ...[
             const SizedBox(height: 6),
@@ -460,11 +431,8 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                 onChanged: _busy
                     ? null
                     : (v) => setState(() {
-                          if (v == true) {
-                            _spaceIds!.add(s.id);
-                          } else {
-                            _spaceIds!.remove(s.id);
-                          }
+                          if (v == true) _spaceIds!.add(s.id);
+                          else _spaceIds!.remove(s.id);
                         }),
               );
             }),
@@ -478,6 +446,20 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                 ),
               ),
           ],
+          const SizedBox(height: 20),
+          _section(theme, 'Drive offloading'),
+          TextField(
+            controller: _keepLocal,
+            enabled: !_busy,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Keep on disk (files per space)',
+              helperText: 'Newest N files stay on disk; older files are '
+                  'offloaded to the remote and fetched on demand. '
+                  'Empty = keep everything.',
+              border: OutlineInputBorder(),
+            ),
+          ),
           const SizedBox(height: 20),
           _section(theme, 'Token'),
           if (_tokenStored && !_showTokenInput)
@@ -559,7 +541,8 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
             if (_progress != null) ...[
               LinearProgressIndicator(value: _progress!.fraction),
               const SizedBox(height: 6),
-              Text(_progress!.message ?? '', style: theme.textTheme.bodySmall),
+              Text(_progress!.message ?? '',
+                  style: theme.textTheme.bodySmall),
             ] else
               const LinearProgressIndicator(),
           ],
