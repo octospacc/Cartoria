@@ -19,6 +19,20 @@ extension SyncProviderKindLabel on SyncProviderKind {
         SyncProviderKind.gitlab => 'GitLab',
       };
 
+  /// Short emoji tag paired with the label wherever the provider name is
+  /// shown alone, so GitHub and GitLab are distinguishable at a glance
+  /// (their names differ by two characters and read almost identically
+  /// in a dropdown at normal UI sizes).
+  ///
+  /// 🐙 for GitHub (Octocat lineage — the most widely recognised icon for
+  /// the service short of its actual logo asset).
+  /// 🦊 for GitLab (the tanuki/fox mascot, unambiguous to anyone who has
+  /// used the service).
+  String get emoji => switch (this) {
+        SyncProviderKind.github => '🐙',
+        SyncProviderKind.gitlab => '🦊',
+      };
+
   /// Placeholder shown in the form when host is empty.
   String get defaultHost => switch (this) {
         SyncProviderKind.github => 'github.com',

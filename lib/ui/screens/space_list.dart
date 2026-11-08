@@ -12,6 +12,7 @@ import '../bookmark_import_helpers.dart';
 import '../space_actions.dart';
 import '../space_dialogs.dart';
 import '../widgets/space_stats_dialog.dart';
+import '../widgets/app_footer.dart';
 import 'hooks_list.dart';
 import 'space_feed.dart';
 import 'sync_screen.dart';
@@ -54,50 +55,60 @@ class SpaceListScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: store.spaces.isEmpty
-          ? const _EmptyState()
-          : ListView.separated(
-              itemCount: store.spaces.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (context, i) {
-                final space = store.spaces[i];
-                return ListTile(
-                  leading: CircleAvatar(
-                    child:
-                        Text(space.icon, style: const TextStyle(fontSize: 20)),
-                  ),
-                  title: Text(space.name),
-                  subtitle: Text(_subtitleFor(store, space)),
-                  trailing: PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert),
-                    onSelected: (v) {
-                      if (v == 'stats') {
-                        SpaceStatsDialog.show(context, store, space);
-                      }
-                      if (v == 'edit') _editSpace(context, space);
-                      if (v == 'export') exportSpaceZip(context, store, space);
-                      if (v == 'delete') _confirmDelete(context, space);
+      body: Column(
+        children: [
+          Expanded(
+            child: store.spaces.isEmpty
+                ? const _EmptyState()
+                : ListView.separated(
+                    itemCount: store.spaces.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, i) {
+                      final space = store.spaces[i];
+                      return ListTile(
+                        leading: CircleAvatar(
+                          child: Text(space.icon,
+                              style: const TextStyle(fontSize: 20)),
+                        ),
+                        title: Text(space.name),
+                        subtitle: Text(_subtitleFor(store, space)),
+                        trailing: PopupMenuButton<String>(
+                          icon: const Icon(Icons.more_vert),
+                          onSelected: (v) {
+                            if (v == 'stats') {
+                              SpaceStatsDialog.show(context, store, space);
+                            }
+                            if (v == 'edit') _editSpace(context, space);
+                            if (v == 'export')
+                              exportSpaceZip(context, store, space);
+                            if (v == 'delete') _confirmDelete(context, space);
+                          },
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(
+                                value: 'stats', child: Text('Statistics')),
+                            PopupMenuItem(
+                                value: 'edit', child: Text('Edit space…')),
+                            PopupMenuItem(
+                                value: 'export', child: Text('Export space…')),
+                            PopupMenuItem(
+                                value: 'delete', child: Text('Delete space…')),
+                          ],
+                        ),
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                SpaceFeedScreen(store: store, space: space),
+                          ),
+                        ),
+                        onLongPress: () => _confirmDelete(context, space),
+                      );
                     },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(value: 'stats', child: Text('Statistics')),
-                      PopupMenuItem(value: 'edit', child: Text('Edit space…')),
-                      PopupMenuItem(
-                          value: 'export', child: Text('Export space…')),
-                      PopupMenuItem(
-                          value: 'delete', child: Text('Delete space…')),
-                    ],
                   ),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          SpaceFeedScreen(store: store, space: space),
-                    ),
-                  ),
-                  onLongPress: () => _confirmDelete(context, space),
-                );
-              },
-            ),
+          ),
+          const AppFooter(),
+        ],
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _newSpace(context),
         child: const Icon(Icons.add),

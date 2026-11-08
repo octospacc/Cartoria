@@ -1,7 +1,7 @@
 name: Cartoria
 description: A personal archive for notes, bookmarks, and files.
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.1+2
 environment:
   sdk: '>=3.4.0 <4.0.0'
   flutter: '>=3.22.0'
@@ -27,6 +27,7 @@ dependencies:
   http_parser: ^4.0.2
   crypto: ^3.0.3
   scrollable_positioned_list: ^0.3.8
+  package_info_plus: ^8.0.0
 
 dev_dependencies:
   flutter_lints: ^4.0.0

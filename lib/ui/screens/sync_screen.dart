@@ -74,7 +74,7 @@ class _ConfigTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final subtitleParts = <String>[
-      config.provider.label,
+      '${config.provider.emoji} ${config.provider.label}',
       if (config.host != null && config.host!.isNotEmpty) config.host!,
       '${config.owner}/${config.repo}',
       config.branch,

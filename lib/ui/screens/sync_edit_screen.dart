@@ -396,9 +396,24 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
           DropdownButtonFormField<SyncProviderKind>(
             value: _provider,
             decoration: const InputDecoration(
-                labelText: 'Provider', border: OutlineInputBorder()),
+              labelText: 'Provider',
+              border: OutlineInputBorder(),
+            ),
             items: SyncProviderKind.values
-                .map((p) => DropdownMenuItem(value: p, child: Text(p.label)))
+                .map((p) => DropdownMenuItem(
+                      value: p,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            p.emoji,
+                            style: const TextStyle(fontSize: 16),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(p.label),
+                        ],
+                      ),
+                    ))
                 .toList(),
             onChanged: _busy
                 ? null
