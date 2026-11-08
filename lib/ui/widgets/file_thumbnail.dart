@@ -59,28 +59,13 @@ class _FileThumbnailState extends State<FileThumbnail> {
     if (widget.file.isMissing) return;
     final cat = categoryFor(widget.file.name);
     if (cat != FileCategory.image) return;
-    final offloaded =
-        widget.store.offloadedFileIds(widget.spaceId).contains(widget.file.id);
-
-    if (offloaded) {
-      final info = await widget.store
-          .offloadedInfoFor(widget.spaceId, widget.file.id);
-      if (info != null) {
-        final cached = await widget.store.thumbnailCache.get(info.remoteSha);
-        if (cached != null && mounted) {
-          setState(() => _bytes = cached);
-          return;
-        }
-      }
-    }
 
     setState(() => _loading = true);
     try {
-      final bytes = offloaded
-          ? await widget.store
-              .fetchThumbnailForOffloaded(widget.spaceId, widget.file.id)
-          : await widget.store
-              .readImageBytes(widget.spaceId, widget.file.id);
+      // `readImageThumbnail` returns ~256px bytes for local and offloaded
+      // images alike. Full-resolution bytes are never held for thumbnails.
+      final bytes =
+          await widget.store.readImageThumbnail(widget.spaceId, widget.file.id);
       if (!mounted) return;
       setState(() {
         _bytes = bytes;
@@ -111,8 +96,19 @@ class _FileThumbnailState extends State<FileThumbnail> {
       );
     } else if (cat == FileCategory.image) {
       if (_bytes != null) {
-        content = Image.memory(_bytes!,
-            fit: BoxFit.cover, width: double.infinity, height: double.infinity);
+        // Belt-and-suspenders: `readImageThumbnail` already returns
+        // thumbnails, but `cacheWidth` bounds the decode size even if a
+        // full-res image ever leaks through (e.g., stale cache after a
+        // manual file swap).
+        final dpr = MediaQuery.devicePixelRatioOf(context);
+        final targetPx = (300 * dpr).round();
+        content = Image.memory(
+          _bytes!,
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
+          cacheWidth: targetPx,
+        );
       } else if (_error) {
         content = Center(
           child: Icon(Icons.broken_image_outlined, size: widget.iconSize,

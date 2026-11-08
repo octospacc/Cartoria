@@ -199,6 +199,11 @@ class _DriveScreenState extends State<DriveScreen> {
   ) {
     return GridView.builder(
       padding: const EdgeInsets.all(8),
+      // Do not keep off-screen tiles alive. `FileThumbnail`'s byte cache
+      // makes re-creating them cheap (a Map lookup), so freeing the
+      // widget's state on scroll-back costs nothing visually and eliminates
+      // the accumulated memory of hundreds of retained tile states.
+      addAutomaticKeepAlives: false,
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 150,
         mainAxisSpacing: 8,
@@ -234,6 +239,7 @@ class _DriveScreenState extends State<DriveScreen> {
   ) {
     final theme = Theme.of(context);
     return ListView.separated(
+      addAutomaticKeepAlives: false,
       itemCount: files.length,
       separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (context, i) {

@@ -100,6 +100,78 @@ class VaultStore extends ChangeNotifier {
 
   List<SyncConfig> _syncConfigs = [];
 
+  /// Bounded in-memory cache of image thumbnails keyed by `spaceId:fileId`.
+  /// Separate from [_imageCache] because thumbnails (~50 KB each) and
+  /// full-size images (multi-MB) have completely different lifecycle
+  /// profiles: thumbnails are reused heavily across scroll and evicted
+  /// rarely; full images are used once per open and should be freed.
+  ///
+  /// 200 entries × ~50 KB ≈ 10 MB ceiling. Older entries evicted by
+  /// insertion order. Cheap to regenerate from disk on the rare miss.
+  final Map<String, Uint8List> _thumbBytesCache = {};
+  static const int _thumbCacheMaxEntries = 200;
+
+  /// Concurrency limit for thumbnail generation. Reading N full images
+  /// in parallel defeats the point — the peak heap equals N × file size.
+  /// Three in flight bounds the peak to ~3× the largest single file.
+  int _thumbLoadsInFlight = 0;
+  static const int _maxConcurrentThumbLoads = 3;
+  final List<Completer<void>> _thumbLoadQueue = [];
+
+  Future<void> _acquireThumbSlot() async {
+    while (_thumbLoadsInFlight >= _maxConcurrentThumbLoads) {
+      final c = Completer<void>();
+      _thumbLoadQueue.add(c);
+      await c.future;
+    }
+    _thumbLoadsInFlight++;
+  }
+
+  void _releaseThumbSlot() {
+    _thumbLoadsInFlight--;
+    if (_thumbLoadQueue.isNotEmpty) {
+      _thumbLoadQueue.removeAt(0).complete();
+    }
+  }
+
+  void _trimThumbCache() {
+    while (_thumbBytesCache.length > _thumbCacheMaxEntries) {
+      _thumbBytesCache.remove(_thumbBytesCache.keys.first);
+    }
+  }
+
+  /// Returns a downscaled thumbnail for [fileId]. Safe to call for every
+  /// visible tile in a grid — bounded concurrency and cache prevent the
+  /// peak memory from exceeding a few MB regardless of file count.
+  ///
+  /// Caching strategy differs by file state:
+  ///  - Offloaded: SHA-addressed disk cache (deduplicated across files).
+  ///  - Local: in-memory map keyed by fileId, bounded above.
+  Future<Uint8List> readImageThumbnail(String spaceId, String fileId) async {
+    if (offloadedFileIds(spaceId).contains(fileId)) {
+      return fetchThumbnailForOffloaded(spaceId, fileId);
+    }
+
+    final key = '$spaceId:$fileId';
+    final cached = _thumbBytesCache[key];
+    if (cached != null) return cached;
+
+    await _acquireThumbSlot();
+    try {
+      // Re-check inside the slot — a concurrent load may have populated it.
+      final recheck = _thumbBytesCache[key];
+      if (recheck != null) return recheck;
+
+      final full = await _drive.readBytes(spaceId, fileId);
+      final thumb = await _makeThumbnail(full);
+      _thumbBytesCache[key] = thumb;
+      _trimThumbCache();
+      return thumb;
+    } finally {
+      _releaseThumbSlot();
+    }
+  }
+
   // ── Read accessors ─────────────────────────────────────────────────────
 
   /// True once the user has either created a space or explicitly skipped
@@ -465,6 +537,7 @@ class VaultStore extends ChangeNotifier {
     _offloadedIdsBySpace[spaceId]?.remove(fileId);
     _imageCache.remove('$spaceId:$fileId');
     _imageAspectCache.remove('$spaceId:$fileId');
+    _thumbBytesCache.remove('$spaceId:$fileId');
     notifyListeners();
   }
 
@@ -477,6 +550,7 @@ class VaultStore extends ChangeNotifier {
       _offloadedIdsBySpace[spaceId]?.remove(id);
       _imageCache.remove('$spaceId:$id');
       _imageAspectCache.remove('$spaceId:$id');
+      _thumbBytesCache.remove('$spaceId:$id');
     }
     notifyListeners();
   }
@@ -525,6 +599,7 @@ class VaultStore extends ChangeNotifier {
     // Any stale caches from failed loads must be cleared.
     _imageCache.remove('$spaceId:$fileId');
     _imageAspectCache.remove('$spaceId:$fileId');
+    _thumbBytesCache.remove('$spaceId:$fileId');
 
     notifyListeners();
   }
