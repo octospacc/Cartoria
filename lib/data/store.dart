@@ -250,6 +250,10 @@ class VaultStore extends ChangeNotifier {
         _fileCache[space.id] = [];
         _fileIndex[space.id] = {};
       }
+      // Yield between spaces so GC can reclaim the previous space's parsed
+      // objects before the next one starts. Small cost (~5ms per space),
+      // large benefit on web when there are many posts to re-parse.
+      if (kIsWeb) await Future<void>.delayed(Duration.zero);
     }
 
     // Backfill the onboarding flag for users upgrading from a version that
@@ -1218,7 +1222,19 @@ class VaultStore extends ChangeNotifier {
           offloadedStore: _offloadedStore);
       await saveSyncConfig(
           config.copyWith(lastSyncedAt: DateTime.now().toUtc()));
-      await reload();
+
+      // Only re-parse the vault if pull actually changed something. A pull
+      // with no changes is the common second-in-a-row case, and reloading
+      // 26K posts costs ~30 seconds and a large allocation burst on web —
+      // exactly the peak that pushed iOS Safari over its memory limit in
+      // the alternating crash pattern.
+      final changed =
+          result.pulled > 0 || result.deleted > 0 || result.offloaded > 0;
+      if (changed) {
+        await reload();
+      } else {
+        notifyListeners(); // update lastSyncedAt in the UI
+      }
       return result;
     } finally {
       client.close();

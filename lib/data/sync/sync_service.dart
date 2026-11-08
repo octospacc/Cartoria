@@ -77,6 +77,23 @@ class SyncService {
   /// platform overhead.
   static const _commitBatchMaxBytes = 10 * 1024 * 1024;
 
+  /// Web has a much lower concurrency ceiling than desktop: each
+  /// in-flight request holds its full response in memory (BrowserClient
+  /// buffers rather than streams), and iOS Safari's heap limit is
+  /// 200–450 MB. Two concurrent downloads keeps peak response buffers
+  /// under ~10 MB even for large media.
+  static int get _phase1Concurrency => kIsWeb ? 2 : 8;
+
+  /// Explicit yield after each file write on web. Gives the browser's
+  /// GC a chance to reclaim the previous file's buffers before the next
+  /// one allocates. Costs ~10–20 ms per file; prevents the heap from
+  /// accumulating monotonic growth across hundreds of downloads.
+  static Future<void> _webGcPause() async {
+    if (kIsWeb) {
+      await Future<void>.delayed(const Duration(milliseconds: 15));
+    }
+  }
+
   // ── Push ───────────────────────────────────────────────────────────────
 
   Future<SyncPushResult> push({
@@ -124,7 +141,8 @@ class SyncService {
         continue;
       }
       final remoteSha = remoteMap[path];
-      if (remoteSha == info.sha) continue;
+      // size: sentinel means "we couldn't compute a SHA — always push"
+      if (remoteSha == info.sha && !info.sha.startsWith('size:')) continue;
       pendingChanges.add(_PendingChange(
         path: path,
         kind: remoteSha == null ? FileChangeKind.create : FileChangeKind.update,
@@ -331,11 +349,10 @@ class SyncService {
 
     final failures = <String, Object>{};
     var phase1Completed = 0;
-    const concurrency = 8;
 
     await _parallelForEach<MapEntry<String, String>>(
       items: toDownload,
-      concurrency: concurrency,
+      concurrency: _phase1Concurrency, // ← was 8, now 2 on web
       body: (entry) async {
         final bytes = await _downloadWithRetry(
           token: token,
@@ -343,6 +360,10 @@ class SyncService {
         );
         final dest = p.join(vaultPath, entry.key);
         await fs.file(dest).writeAsBytes(bytes);
+        // Drop the local reference before the GC pause so the buffer
+        // is eligible for collection immediately.
+        // (bytes goes out of scope at the end of this closure anyway.)
+        await _webGcPause();
         pulled++;
         phase1Completed++;
         onProgress?.call(SyncProgress(
@@ -447,6 +468,7 @@ class SyncService {
           pathMap[id] = dest;
           if (offloaded.remove(id) != null) offloadedChanged = true;
           pulled++;
+          await _webGcPause();
           await Future<void>.delayed(Duration.zero);
         } else {
           // Offload.
@@ -518,14 +540,21 @@ class SyncService {
     final root = fs.directory(vaultPath);
     if (!await root.exists()) return out;
     final files = await walkFiles(root);
+    var sinceYield = 0;
     for (final f in files) {
       final rel = p.relative(f.path, from: vaultPath);
       if (_isExcluded(rel)) continue;
       try {
         final stat = await f.stat();
         final bytes = await f.readAsBytes();
-        out[rel] = (sha: gitBlobSha(bytes), size: stat.size);
+        final sha = gitBlobSha(bytes) ?? 'size:${stat.size}';
+        out[rel] = (sha: sha, size: stat.size);
       } catch (_) {}
+      sinceYield++;
+      if (kIsWeb && sinceYield >= 50) {
+        sinceYield = 0;
+        await Future<void>.delayed(Duration.zero);
+      }
     }
     return out;
   }
@@ -536,13 +565,24 @@ class SyncService {
     final root = fs.directory(vaultPath);
     if (!await root.exists()) return out;
     final files = await walkFiles(root);
+    var sinceYield = 0;
     for (final f in files) {
       final rel = p.relative(f.path, from: vaultPath);
       if (_isExcluded(rel)) continue;
       try {
         final bytes = await f.readAsBytes();
-        out[rel] = gitBlobSha(bytes);
+        final sha = gitBlobSha(bytes);
+        out[rel] = sha ?? 'size:${bytes.length}';
       } catch (_) {}
+      sinceYield++;
+      // On web, yield every 50 files so GC can reclaim hashing buffers.
+      // Without this, hashing 26K files in a tight loop builds up
+      // hundreds of MB of transient allocations — iOS Safari's GC can't
+      // reclaim them fast enough to stay under the tab memory limit.
+      if (kIsWeb && sinceYield >= 50) {
+        sinceYield = 0;
+        await Future<void>.delayed(Duration.zero);
+      }
     }
     return out;
   }
