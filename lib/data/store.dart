@@ -326,6 +326,7 @@ class VaultStore extends ChangeNotifier {
     List<String> tags = const [],
     List<String> fileIds = const [],
     DateTime? createdAt,
+    String? quotedPostId,
   }) async {
     final post = await _posts.create(
       spaceId: spaceId,
@@ -339,6 +340,7 @@ class VaultStore extends ChangeNotifier {
       tags: tags,
       fileIds: fileIds,
       createdAt: createdAt,
+      quotedPostId: quotedPostId,
     );
     _postCache.putIfAbsent(spaceId, () => []).add(post);
     _postCache[spaceId]!.sort((a, b) => a.createdAt.compareTo(b.createdAt));

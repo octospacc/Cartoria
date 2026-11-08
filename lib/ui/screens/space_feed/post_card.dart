@@ -22,6 +22,7 @@ class PostCard extends StatelessWidget {
   final bool hideReplyToggle;
   final VoidCallback onToggleReplies;
   final VoidCallback onReply;
+  final VoidCallback onQuote;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final void Function(String quotedPostId)? onQuoteTap;
@@ -53,6 +54,7 @@ class PostCard extends StatelessWidget {
     this.hideReplyToggle = false,
     required this.onToggleReplies,
     required this.onReply,
+    required this.onQuote,
     required this.onEdit,
     required this.onDelete,
     this.onQuoteTap,
@@ -224,6 +226,7 @@ class PostCard extends StatelessWidget {
                           hideReplyToggle: hideReplyToggle,
                           onToggleReplies: onToggleReplies,
                           onReply: onReply,
+                          onQuote: onQuote,
                         ),
                       ],
                     ),
@@ -793,6 +796,7 @@ class _PostActions extends StatelessWidget {
   final bool hideReplyToggle;
   final VoidCallback onToggleReplies;
   final VoidCallback onReply;
+  final VoidCallback onQuote;
 
   const _PostActions({
     required this.childCount,
@@ -801,24 +805,34 @@ class _PostActions extends StatelessWidget {
     required this.hideReplyToggle,
     required this.onToggleReplies,
     required this.onReply,
+    required this.onQuote,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final toggle = _replyToggle(theme);
+    final actionStyle = TextButton.styleFrom(
+      foregroundColor: theme.colorScheme.onSurfaceVariant,
+      visualDensity: VisualDensity.compact,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+    );
+
     return Row(
       children: [
         TextButton.icon(
           onPressed: onReply,
           icon: const Icon(Icons.reply, size: 15),
           label: const Text('Reply'),
-          style: TextButton.styleFrom(
-            foregroundColor: theme.colorScheme.onSurfaceVariant,
-            visualDensity: VisualDensity.compact,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-          ),
+          style: actionStyle,
+        ),
+        const SizedBox(width: 2),
+        TextButton.icon(
+          onPressed: onQuote,
+          icon: const Icon(Icons.format_quote, size: 15),
+          label: const Text('Quote'),
+          style: actionStyle,
         ),
         if (toggle != null) ...[
           const SizedBox(width: 2),

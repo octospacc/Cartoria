@@ -31,8 +31,18 @@ Future<DateTime?> _pickPostDateTime(
 }
 
 const _monthsShort = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
 ];
 
 String _formatPostDateTime(DateTime dt) {
@@ -62,6 +72,11 @@ class ComposerResult {
   /// "use now at send time"; ignored for edits.
   final DateTime? createdAt;
 
+  /// The post being quoted, if this composition is a quote. Null for
+  /// ordinary new posts and for replies. Ignored on edit — the existing
+  /// post's quote reference is preserved by `updatePost` regardless.
+  final String? quotedPostId;
+
   const ComposerResult({
     required this.kind,
     required this.body,
@@ -71,6 +86,7 @@ class ComposerResult {
     required this.thumbnail,
     required this.fileIds,
     this.createdAt,
+    this.quotedPostId,
   });
 }
 
@@ -122,8 +138,7 @@ class InlineComposer extends StatelessWidget {
               children: pendingFileIds.map((id) {
                 final f = store.fileById(space.id, id);
                 return Chip(
-                  label:
-                      Text(f?.name ?? id, overflow: TextOverflow.ellipsis),
+                  label: Text(f?.name ?? id, overflow: TextOverflow.ellipsis),
                   onDeleted: () => onRemoveFile(id),
                 );
               }).toList(),
@@ -241,8 +256,7 @@ class _DateTimeChip extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(Icons.schedule,
-                    size: 14,
-                    color: theme.colorScheme.onSecondaryContainer),
+                    size: 14, color: theme.colorScheme.onSecondaryContainer),
                 const SizedBox(width: 4),
                 Text(
                   _formatPostDateTime(v),
@@ -278,12 +292,18 @@ class ComposerSheet extends StatefulWidget {
   final Post? editing;
   final Post? replyTo;
 
+  /// The post being quoted, if any. Mutually exclusive with [editing]
+  /// in practice — editing preserves the post's existing quote (if any)
+  /// and cannot add or remove one via this sheet.
+  final Post? quoting;
+
   const ComposerSheet({
     super.key,
     required this.store,
     required this.space,
     this.editing,
     this.replyTo,
+    this.quoting,
   });
 
   @override
@@ -331,12 +351,14 @@ class _ComposerSheetState extends State<ComposerSheet> {
   String get _headerTitle {
     if (widget.editing != null) return 'Edit post';
     if (widget.replyTo != null) return 'Reply';
+    if (widget.quoting != null) return 'Quote';
     return 'New post';
   }
 
   String get _submitLabel {
     if (widget.editing != null) return 'Save';
     if (widget.replyTo != null) return 'Reply';
+    if (widget.quoting != null) return 'Quote';
     return 'Post';
   }
 
@@ -406,6 +428,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
         thumbnail: _kind == PostKind.bookmark ? _thumbnail : null,
         fileIds: List.of(_fileIds),
         createdAt: widget.editing == null ? _postDateTime : null,
+        quotedPostId: widget.editing == null ? widget.quoting?.id : null,
       ),
     );
   }
@@ -446,11 +469,45 @@ class _ComposerSheetState extends State<ComposerSheet> {
                     color: theme.colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(6),
                   ),
-                  child: Text(
-                    'Replying to: ${_previewOf(widget.replyTo!)}',
-                    style: theme.textTheme.bodySmall,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                  child: Row(
+                    children: [
+                      Icon(Icons.reply,
+                          size: 14, color: theme.colorScheme.onSurfaceVariant),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Replying to: ${_previewOf(widget.replyTo!)}',
+                          style: theme.textTheme.bodySmall,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (widget.quoting != null) ...[
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.format_quote,
+                          size: 14, color: theme.colorScheme.onSurfaceVariant),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Quoting: ${_previewOf(widget.quoting!)}',
+                          style: theme.textTheme.bodySmall,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -492,8 +549,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
                           ? const SizedBox(
                               width: 18,
                               height: 18,
-                              child:
-                                  CircularProgressIndicator(strokeWidth: 2),
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.refresh),
                     ),
@@ -556,8 +612,8 @@ class _ComposerSheetState extends State<ComposerSheet> {
                   children: _fileIds.map((id) {
                     final f = widget.store.fileById(widget.space.id, id);
                     return Chip(
-                      label: Text(f?.name ?? id,
-                          overflow: TextOverflow.ellipsis),
+                      label:
+                          Text(f?.name ?? id, overflow: TextOverflow.ellipsis),
                       onDeleted: () => setState(() => _fileIds.remove(id)),
                     );
                   }).toList(),
@@ -627,8 +683,7 @@ class _DateTimeRow extends StatelessWidget {
             ),
           TextButton(
             onPressed: () async {
-              final picked =
-                  await _pickPostDateTime(context, initial: v);
+              final picked = await _pickPostDateTime(context, initial: v);
               if (picked != null) onChanged(picked);
             },
             child: Text(v == null ? 'Set…' : 'Change'),

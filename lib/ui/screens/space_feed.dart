@@ -442,6 +442,50 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     if (mounted) setState(() => _expanded.add(parent.id));
   }
 
+  Future<void> _quote(Post post) async {
+    final result = await showModalBottomSheet<ComposerResult>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => ComposerSheet(
+        store: widget.store,
+        space: widget.space,
+        quoting: post,
+      ),
+    );
+    if (result == null) return;
+
+    String? title = result.title;
+    String? description = result.description;
+    String? thumbnail = result.thumbnail;
+    if (result.kind == PostKind.bookmark &&
+        result.url != null &&
+        result.url!.isNotEmpty &&
+        title == null &&
+        description == null &&
+        thumbnail == null) {
+      final meta = await widget.store.fetchLinkMetadata(result.url!);
+      if (meta != null) {
+        title = meta.title;
+        description = meta.description;
+        thumbnail = meta.image;
+      }
+    }
+
+    await widget.store.createPost(
+      spaceId: widget.space.id,
+      kind: result.kind,
+      plaintextBody: result.body,
+      url: result.url,
+      title: title,
+      description: description,
+      thumbnail: thumbnail,
+      tags: _extractTags(result.body),
+      fileIds: result.fileIds,
+      createdAt: result.createdAt,
+      quotedPostId: result.quotedPostId,
+    );
+  }
+
   Future<void> _edit(Post post) async {
     final result = await showModalBottomSheet<ComposerResult>(
       context: context,
@@ -618,6 +662,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         }
       }),
       onReply: () => _reply(post),
+      onQuote: () => _quote(post),
       onEdit: () => _edit(post),
       onDelete: () => widget.store.deletePost(widget.space.id, post.id),
       onQuoteTap: (searchMode || _selectionMode) ? null : _scrollToPost,
