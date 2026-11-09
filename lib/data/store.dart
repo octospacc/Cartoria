@@ -264,12 +264,6 @@ class VaultStore extends ChangeNotifier {
     await fs.directory(vaultPath).create(recursive: true);
 
     try {
-      await _hooks.load();
-    } catch (e) {
-      debugPrint('Hooks load failed: $e');
-    }
-
-    try {
       _syncConfigs = await _syncConfigsStore.load();
     } catch (e) {
       debugPrint('Sync configs load failed: $e');
@@ -298,6 +292,21 @@ class VaultStore extends ChangeNotifier {
     await _migratePostFolders();
     await _spaces.migrateHtmlToJson();
     await _hooks.migrateSingleFileToFolder();
+
+    // Hooks can change on disk without going through HooksRepository —
+    // git pull writes hook files directly via the filesystem, bypassing
+    // the repo's in-memory cache. Reloading here keeps the hooks screen
+    // and hook matching in sync with whatever is actually on disk.
+    //
+    // Wrapped because reload() is a hot path (called after every
+    // non-trivial pull); a malformed hook should not abort the whole
+    // refresh. HooksRepository.load() already tolerates individual
+    // malformed files, so this only guards against filesystem errors.
+    try {
+      await _hooks.load();
+    } catch (e) {
+      debugPrint('Hooks reload failed: $e');
+    }
 
     _drive.clearCache();
     _spaceCache.clear();
