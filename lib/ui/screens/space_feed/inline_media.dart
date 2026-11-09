@@ -82,15 +82,13 @@ class _InlineImageState extends State<_InlineImage> {
   }
 
   Future<_InlineImageData> _load() async {
-    final offloaded = widget.store
-        .offloadedFileIds(widget.spaceId)
-        .contains(widget.file.id);
+    final offloaded =
+        widget.store.offloadedFileIds(widget.spaceId).contains(widget.file.id);
 
     final bytes = offloaded
         ? await widget.store
             .fetchThumbnailForOffloaded(widget.spaceId, widget.file.id)
-        : await widget.store
-            .readImageBytes(widget.spaceId, widget.file.id);
+        : await widget.store.readImageBytes(widget.spaceId, widget.file.id);
 
     final ratio = await _aspectOf(bytes);
     return _InlineImageData(bytes, ratio);
@@ -99,8 +97,8 @@ class _InlineImageState extends State<_InlineImage> {
   /// Actual aspect ratio of [bytes]. Falls back to the cached value for
   /// this file (set on a previous render), then to decoding the image.
   Future<double> _aspectOf(Uint8List bytes) async {
-    final cached = widget.store.imageAspectRatio(
-        widget.spaceId, widget.file.id);
+    final cached =
+        widget.store.imageAspectRatio(widget.spaceId, widget.file.id);
     if (cached != null) return cached;
     try {
       final codec = await ui.instantiateImageCodec(bytes);
@@ -110,8 +108,7 @@ class _InlineImageState extends State<_InlineImage> {
       final ratio = (w > 0 && h > 0) ? w / h : 16.0 / 9.0;
       frame.image.dispose();
       codec.dispose();
-      widget.store
-          .cacheImageAspect(widget.spaceId, widget.file.id, ratio);
+      widget.store.cacheImageAspect(widget.spaceId, widget.file.id, ratio);
       return ratio;
     } catch (_) {
       return 16.0 / 9.0;
@@ -119,9 +116,8 @@ class _InlineImageState extends State<_InlineImage> {
   }
 
   Future<void> _onTap() async {
-    final offloaded = widget.store
-        .offloadedFileIds(widget.spaceId)
-        .contains(widget.file.id);
+    final offloaded =
+        widget.store.offloadedFileIds(widget.spaceId).contains(widget.file.id);
 
     if (offloaded) {
       final ok = await showDialog<bool>(
@@ -142,12 +138,11 @@ class _InlineImageState extends State<_InlineImage> {
       );
       if (ok != true || !mounted) return;
       try {
-        await widget.store
-            .fetchOffloadedFile(widget.spaceId, widget.file.id);
+        await widget.store.fetchOffloadedFile(widget.spaceId, widget.file.id);
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Download failed: $e')));
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('Download failed: $e')));
         }
         return;
       }
@@ -161,8 +156,8 @@ class _InlineImageState extends State<_InlineImage> {
       data = await _future;
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not load image: $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Could not load image: $e')));
       }
       return;
     }
@@ -184,13 +179,11 @@ class _InlineImageState extends State<_InlineImage> {
       future: _future,
       builder: (context, snap) {
         final ratio = snap.data?.aspectRatio ??
-            widget.store.imageAspectRatio(
-                widget.spaceId, widget.file.id) ??
+            widget.store.imageAspectRatio(widget.spaceId, widget.file.id) ??
             16.0 / 9.0;
 
         final box = ConstrainedBox(
-          constraints:
-              const BoxConstraints(maxHeight: 320, maxWidth: 600),
+          constraints: const BoxConstraints(maxHeight: 320, maxWidth: 600),
           child: AspectRatio(
             aspectRatio: ratio,
             child: snap.hasError || !snap.hasData
@@ -255,9 +248,8 @@ class _InlineVideoState extends State<_InlineVideo> {
   Future<void> _start() async {
     if (_loading || _player != null) return;
 
-    final offloaded = widget.store
-        .offloadedFileIds(widget.spaceId)
-        .contains(widget.file.id);
+    final offloaded =
+        widget.store.offloadedFileIds(widget.spaceId).contains(widget.file.id);
 
     if (offloaded) {
       final ok = await showDialog<bool>(
@@ -279,12 +271,11 @@ class _InlineVideoState extends State<_InlineVideo> {
       if (ok != true) return;
       if (!mounted) return;
       try {
-        await widget.store
-            .fetchOffloadedFile(widget.spaceId, widget.file.id);
+        await widget.store.fetchOffloadedFile(widget.spaceId, widget.file.id);
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Download failed: $e')));
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('Download failed: $e')));
         }
         return;
       }
@@ -338,10 +329,12 @@ class _InlineVideoState extends State<_InlineVideo> {
     final controller = _controller;
     final player = _player;
     if (controller == null || player == null) {
-      return PlayCard(
+      final offloaded = widget.store
+          .offloadedFileIds(widget.spaceId)
+          .contains(widget.file.id);
+      return _VideoPreviewCard(
         file: widget.file,
-        icon: Icons.play_circle_outline,
-        label: 'Tap to play video',
+        isOffloaded: offloaded,
         loading: _loading,
         onTap: _start,
       );
@@ -422,9 +415,8 @@ class _InlineAudioState extends State<_InlineAudio> {
   Future<void> _start() async {
     if (_loading || _player != null) return;
 
-    final offloaded = widget.store
-        .offloadedFileIds(widget.spaceId)
-        .contains(widget.file.id);
+    final offloaded =
+        widget.store.offloadedFileIds(widget.spaceId).contains(widget.file.id);
 
     if (offloaded) {
       final ok = await showDialog<bool>(
@@ -446,12 +438,11 @@ class _InlineAudioState extends State<_InlineAudio> {
       if (ok != true) return;
       if (!mounted) return;
       try {
-        await widget.store
-            .fetchOffloadedFile(widget.spaceId, widget.file.id);
+        await widget.store.fetchOffloadedFile(widget.spaceId, widget.file.id);
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Download failed: $e')));
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('Download failed: $e')));
         }
         return;
       }
@@ -551,9 +542,8 @@ class _InlineTextState extends State<_InlineText> {
   }
 
   Future<String> _load() async {
-    final offloaded = widget.store
-        .offloadedFileIds(widget.spaceId)
-        .contains(widget.file.id);
+    final offloaded =
+        widget.store.offloadedFileIds(widget.spaceId).contains(widget.file.id);
 
     if (offloaded) {
       // Text attachments can be large; fetching the whole file to preview
@@ -661,8 +651,7 @@ class _InlineTextState extends State<_InlineText> {
                     ),
                   ),
                   TextButton(
-                    onPressed: () =>
-                        setState(() => _expanded = !_expanded),
+                    onPressed: () => setState(() => _expanded = !_expanded),
                     style: TextButton.styleFrom(
                       visualDensity: VisualDensity.compact,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -675,7 +664,7 @@ class _InlineTextState extends State<_InlineText> {
               Text(
                 visibleLines.join('\n'),
                 style: const TextStyle(
-                  fontFamily: 'monospace', fontSize: 12, height: 1.35),
+                    fontFamily: 'monospace', fontSize: 12, height: 1.35),
               ),
               if (truncated)
                 Padding(
@@ -687,5 +676,170 @@ class _InlineTextState extends State<_InlineText> {
         );
       },
     );
+  }
+}
+
+// ── Video preview card ───────────────────────────────────────────────────
+
+/// Poster-style card shown in place of a video before the player loads.
+///
+/// 16:9 dark surface, centered play button, filename + size at bottom.
+/// If [thumbnail] is provided (extracted frame, cached from a previous
+/// play) it's shown as the background; otherwise a themed gradient
+/// stands in. If [isOffloaded], the button uses a cloud icon so the
+/// user knows a download is required.
+class _VideoPreviewCard extends StatelessWidget {
+  final DriveFile file;
+  final bool isOffloaded;
+  final bool loading;
+  final VoidCallback onTap;
+  final Uint8List? thumbnail;
+
+  const _VideoPreviewCard({
+    required this.file,
+    required this.isOffloaded,
+    required this.loading,
+    required this.onTap,
+    this.thumbnail,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 600, maxHeight: 320),
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: Material(
+            color: Colors.black,
+            borderRadius: BorderRadius.circular(8),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: loading ? null : onTap,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Background: real frame if available, else gradient.
+                  if (thumbnail != null)
+                    Image.memory(
+                      thumbnail!,
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                    )
+                  else
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            theme.colorScheme.primaryContainer
+                                .withValues(alpha: 0.55),
+                            Colors.black.withValues(alpha: 0.9),
+                          ],
+                        ),
+                      ),
+                    ),
+                  // Scrim over the lower half so the info bar is legible
+                  // on any background (gradient or a bright frame).
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withValues(alpha: 0.6),
+                        ],
+                        stops: const [0.5, 1.0],
+                      ),
+                    ),
+                  ),
+                  // Play button
+                  Center(
+                    child: loading
+                        ? const SizedBox(
+                            width: 48,
+                            height: 48,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 3,
+                            ),
+                          )
+                        : Container(
+                            width: 64,
+                            height: 64,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.92),
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.3),
+                                  blurRadius: 12,
+                                ),
+                              ],
+                            ),
+                            child: Icon(
+                              isOffloaded
+                                  ? Icons.cloud_download_outlined
+                                  : Icons.play_arrow,
+                              size: 36,
+                              color: Colors.black87,
+                            ),
+                          ),
+                  ),
+                  // Info bar: icon, filename, size
+                  Positioned(
+                    left: 10,
+                    right: 10,
+                    bottom: 10,
+                    child: Row(
+                      children: [
+                        Icon(
+                          isOffloaded ? Icons.cloud : Icons.videocam,
+                          size: 14,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            file.name,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _formatSize(file.sizeBytes),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _formatSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    }
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
   }
 }
