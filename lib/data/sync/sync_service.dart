@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -71,28 +72,17 @@ class SyncService {
   static const _excludedFiles = {'sync.json', '.DS_Store', 'Thumbs.db'};
   static const _maxFileBytes = 20 * 1024 * 1024;
 
-  /// Max bytes of file content held in memory at once during push.
-  /// Bounds the transient memory cost of the second pass; on iOS Safari
-  /// even 30 MB starts to reach the tab budget when multiplied by
-  /// platform overhead.
-  static const _commitBatchMaxBytes = 10 * 1024 * 1024;
-
-  /// Web has a much lower concurrency ceiling than desktop: each
-  /// in-flight request holds its full response in memory (BrowserClient
-  /// buffers rather than streams), and iOS Safari's heap limit is
-  /// 200–450 MB. Two concurrent downloads keeps peak response buffers
-  /// under ~10 MB even for large media.
+  /// Web downloads run at lower concurrency because each in-flight
+  /// request holds its full response in memory (BrowserClient buffers
+  /// rather than streams) and iOS Safari's heap is much tighter.
   static int get _phase1Concurrency => kIsWeb ? 2 : 8;
 
-  /// Explicit yield after each file write on web. Gives the browser's
-  /// GC a chance to reclaim the previous file's buffers before the next
-  /// one allocates. Costs ~10–20 ms per file; prevents the heap from
-  /// accumulating monotonic growth across hundreds of downloads.
-  static Future<void> _webGcPause() async {
-    if (kIsWeb) {
-      await Future<void>.delayed(const Duration(milliseconds: 15));
-    }
-  }
+  /// Timer-based yield for WebKit GC. `Duration.zero` schedules a
+  /// microtask that the timer-driven collector never sees — only a
+  /// real timer allows collection to run. 20 ms is small enough to be
+  /// unnoticeable per call and long enough to trigger collection.
+  static Future<void> _gcYield() =>
+      Future<void>.delayed(const Duration(milliseconds: 20));
 
   // ── Push ───────────────────────────────────────────────────────────────
 
@@ -102,32 +92,24 @@ class SyncService {
     required OffloadedStore offloadedStore,
   }) async {
     onProgress?.call(const SyncProgress(
-      totalFiles: 0,
-      completedFiles: 0,
-      isPush: true,
+      totalFiles: 0, completedFiles: 0, isPush: true,
       message: 'Checking remote…',
     ));
     final remoteMap = await _remoteListing(
-      token: token,
-      isPush: true,
-      onProgress: onProgress,
+      token: token, isPush: true, onProgress: onProgress,
     );
 
     onProgress?.call(const SyncProgress(
-      totalFiles: 0,
-      completedFiles: 0,
-      isPush: true,
+      totalFiles: 0, completedFiles: 0, isPush: true,
       message: 'Scanning local files…',
     ));
-
-    // Pass 1: walk local files once, compute SHA + size, decide what
-    // needs pushing. Only paths and hashes stay in memory — not bytes.
     final localInfos = await _collectLocalFileInfo();
+
     final offloadedByPath = await _buildOffloadedByPath(
-      remoteMap: remoteMap,
-      offloadedStore: offloadedStore,
+      remoteMap: remoteMap, offloadedStore: offloadedStore,
     );
 
+    // Diff: local vs remote.
     final pendingChanges = <_PendingChange>[];
     var skippedLarge = 0;
     var skippedOffloaded = 0;
@@ -141,18 +123,16 @@ class SyncService {
         continue;
       }
       final remoteSha = remoteMap[path];
-      // size: sentinel means "we couldn't compute a SHA — always push"
-      if (remoteSha == info.sha)
-        continue; // was: && !info.sha.startsWith('size:')
+      if (remoteSha == info.sha) continue;
       pendingChanges.add(_PendingChange(
         path: path,
-        kind: remoteSha == null ? FileChangeKind.create : FileChangeKind.update,
+        kind: remoteSha == null
+            ? FileChangeKind.create
+            : FileChangeKind.update,
         size: info.size,
       ));
     }
 
-    // Deletes: remote paths absent locally. Files present locally (even
-    // ones skipped for size) are NOT deleted remotely.
     for (final path in remoteMap.keys) {
       if (!scope.includes(path)) continue;
       if (localInfos.containsKey(path)) continue;
@@ -161,139 +141,538 @@ class SyncService {
         continue;
       }
       pendingChanges.add(_PendingChange(
-        path: path,
-        kind: FileChangeKind.delete,
-        size: 0,
+        path: path, kind: FileChangeKind.delete, size: 0,
       ));
     }
 
     if (pendingChanges.isEmpty) {
       onProgress?.call(SyncProgress(
-        totalFiles: 1,
-        completedFiles: 1,
-        isPush: true,
+        totalFiles: 1, completedFiles: 1, isPush: true,
         message: 'Nothing to push'
             '${skippedLarge > 0 ? " ($skippedLarge large files skipped)" : ""}'
             '${skippedOffloaded > 0 ? " ($skippedOffloaded offloaded)" : ""}',
       ));
       return SyncPushResult(
-        pushed: 0,
-        deleted: 0,
+        pushed: 0, deleted: 0,
         skippedLarge: skippedLarge,
         skippedOffloaded: skippedOffloaded,
         commitSha: config.lastCommitSha ?? '',
       );
     }
 
-    // Pass 2: batch by size, load bytes per batch, commit. Peak memory
-    // is bounded by _commitBatchMaxBytes + overhead, not vault size.
-    final batches = _batchChanges(pendingChanges);
-    var newSha = config.lastCommitSha ?? '';
-    var pushed = 0;
-    var deleted = 0;
-    var completed = 0;
+    // Pass 2: load bytes and commit. The provider owns internal
+    // batching — GitLab splits large batches into sub-batches and
+    // reports their progress; GitHub uploads blobs individually then
+    // creates one tree. Doing our own batching AND letting the provider
+    // batch produced doubly-suffixed commit messages like "(5/6) (1/2)".
+    onProgress?.call(SyncProgress(
+      totalFiles: pendingChanges.length,
+      completedFiles: 0,
+      isPush: true,
+      message: 'Uploading ${pendingChanges.length} '
+          'change${pendingChanges.length == 1 ? "" : "s"}…',
+    ));
 
-    for (var i = 0; i < batches.length; i++) {
-      final batch = batches[i];
-      final fileChanges = <FileChange>[];
-
-      for (final c in batch) {
-        if (c.kind == FileChangeKind.delete) {
-          fileChanges.add(FileChange.delete(c.path));
-          continue;
-        }
-        try {
-          final bytes = await fs.file(p.join(vaultPath, c.path)).readAsBytes();
-          fileChanges.add(c.kind == FileChangeKind.create
-              ? FileChange.create(c.path, bytes)
-              : FileChange.update(c.path, bytes));
-          // bytes goes out of scope after this iteration
-        } catch (e) {
-          debugPrint('Could not read ${c.path} for push: $e');
-        }
+    final fileChanges = <FileChange>[];
+    for (final c in pendingChanges) {
+      if (c.kind == FileChangeKind.delete) {
+        fileChanges.add(FileChange.delete(c.path));
+        continue;
       }
-      if (fileChanges.isEmpty) continue;
-
-      final message = batches.length == 1
-          ? 'Vault sync ${DateTime.now().toUtc().toIso8601String()}'
-          : 'Vault sync ${DateTime.now().toUtc().toIso8601String()} '
-              '(${i + 1}/${batches.length})';
-
-      newSha = await provider.commit(
-        config: config,
-        token: token,
-        message: message,
-        changes: fileChanges,
-        onProgress: onProgress,
-      );
-
-      pushed +=
-          fileChanges.where((c) => c.kind != FileChangeKind.delete).length;
-      deleted +=
-          fileChanges.where((c) => c.kind == FileChangeKind.delete).length;
-      completed += fileChanges.length;
-
-      onProgress?.call(SyncProgress(
-        totalFiles: pendingChanges.length,
-        completedFiles: completed,
-        isPush: true,
-        message: 'Committed ${i + 1}/${batches.length} — '
-            '$completed/${pendingChanges.length} files',
-      ));
-
-      // Yield so GC can reclaim batch bytes before the next batch starts.
-      await Future<void>.delayed(Duration.zero);
+      try {
+        final bytes =
+            await fs.file(p.join(vaultPath, c.path)).readAsBytes();
+        fileChanges.add(c.kind == FileChangeKind.create
+            ? FileChange.create(c.path, bytes)
+            : FileChange.update(c.path, bytes));
+      } catch (e) {
+        debugPrint('Could not read ${c.path} for push: $e');
+      }
+      if (kIsWeb) await _gcYield();
     }
 
-    // Update cache with the new full remote state.
+    if (fileChanges.isEmpty) {
+      return SyncPushResult(
+        pushed: 0, deleted: 0,
+        skippedLarge: skippedLarge,
+        skippedOffloaded: skippedOffloaded,
+        commitSha: config.lastCommitSha ?? '',
+      );
+    }
+
+    final newSha = await provider.commit(
+      config: config,
+      token: token,
+      message: 'Vault sync ${DateTime.now().toUtc().toIso8601String()}',
+      changes: fileChanges,
+      onProgress: onProgress,
+    );
+
+    final pushed = fileChanges
+        .where((c) => c.kind != FileChangeKind.delete).length;
+    final deleted = fileChanges
+        .where((c) => c.kind == FileChangeKind.delete).length;
+
+    // Cache update with the new full remote state.
     final newCacheFiles = <String, String>{...remoteMap};
     for (final c in pendingChanges) {
       if (c.kind == FileChangeKind.delete) {
         newCacheFiles.remove(c.path);
       } else {
         final sha = localInfos[c.path]?.sha;
-        if (sha != null) newCacheFiles[c.path] = sha;
+        if (sha != null && sha.isNotEmpty) {
+          newCacheFiles[c.path] = sha;
+        }
       }
     }
     if (newSha.isNotEmpty) {
       await cacheStore?.save(config.cacheKey, newCacheFiles, newSha);
     }
 
-    // Apply the same offload policy as pull, now that every file is
-    // confirmed on the remote. Without this, uploading new media leaves
-    // every local file local — the policy is only enforced on pull —
-    // and the "keep N newest" setting accumulates drift with each push.
+    // Apply the offload policy after the commit — every file the policy
+    // might remove is now confirmed on the remote. Uses the SHAs already
+    // computed by `_collectLocalFileInfo`, so no re-hashing.
     if (config.keepLocalFileCount != null) {
       await _applyOffloadPolicy(
         remoteMap: newCacheFiles,
         offloadedStore: offloadedStore,
-        onProgress: onProgress,
+        localInfos: localInfos,
       );
     }
 
     onProgress?.call(SyncProgress(
       totalFiles: pendingChanges.length,
-      completedFiles: completed,
+      completedFiles: pendingChanges.length,
       isPush: true,
       message: 'Pushed: $pushed new/updated, $deleted deleted',
     ));
 
     return SyncPushResult(
-      pushed: pushed,
-      deleted: deleted,
+      pushed: pushed, deleted: deleted,
       skippedLarge: skippedLarge,
       skippedOffloaded: skippedOffloaded,
       commitSha: newSha,
     );
   }
 
-  /// Offloads local drive files beyond `keepLocalFileCount` for each
-  /// space in scope, using [remoteMap] as the authority for what's safe
-  /// to remove from disk (every included file is on the remote).
+  // ── Pull ───────────────────────────────────────────────────────────────
+
+  Future<SyncPullResult> pull({
+    required String token,
+    SyncProgressCallback? onProgress,
+    required OffloadedStore offloadedStore,
+  }) async {
+    onProgress?.call(const SyncProgress(
+      totalFiles: 0, completedFiles: 0, isPush: false,
+      message: 'Checking remote…',
+    ));
+    final remoteMap = await _remoteListing(
+      token: token, isPush: false, onProgress: onProgress,
+    );
+
+    final inScope = <String, String>{};
+    for (final e in remoteMap.entries) {
+      if (scope.includes(e.key)) inScope[e.key] = e.value;
+    }
+    if (inScope.isEmpty) {
+      onProgress?.call(const SyncProgress(
+        totalFiles: 0, completedFiles: 0, isPush: false,
+        message: 'Nothing in scope on the remote.',
+      ));
+      return const SyncPullResult(pulled: 0, deleted: 0);
+    }
+
+    onProgress?.call(const SyncProgress(
+      totalFiles: 0, completedFiles: 0, isPush: false,
+      message: 'Scanning local files…',
+    ));
+
+    // SHA-only map of non-drive files. Drive files are resolved from
+    // directory listing in phase 2 — reading their bytes during the
+    // scan was the primary source of iOS Safari OOM.
+    final localShas = await _collectLocalFileShas();
+
+    var pulled = 0;
+    var deleted = 0;
+    var offloadedCount = 0;
+
+    // ── Phase 1: non-drive files (posts, metadata, hooks) ────────────────
+    final toDownload = <MapEntry<String, String>>[];
+    for (final entry in inScope.entries) {
+      if (_isDrivePath(entry.key)) continue;
+      if (localShas[entry.key] == entry.value) continue;
+      toDownload.add(entry);
+    }
+
+    // Pre-create parent directories so parallel workers never race on
+    // create(recursive: true) for the same parent.
+    final dirs = <String>{};
+    for (final entry in toDownload) {
+      dirs.add(p.dirname(p.join(vaultPath, entry.key)));
+    }
+    for (final dir in dirs) {
+      await fs.directory(dir).create(recursive: true);
+    }
+
+    final failures = <String, Object>{};
+    var phase1Completed = 0;
+
+    await _parallelForEach<MapEntry<String, String>>(
+      items: toDownload,
+      concurrency: _phase1Concurrency,
+      body: (entry) async {
+        try {
+          final bytes = await _downloadWithRetry(
+            token: token, path: entry.key,
+          );
+          final dest = p.join(vaultPath, entry.key);
+          await fs.file(dest).writeAsBytes(bytes);
+          pulled++;
+          phase1Completed++;
+          onProgress?.call(SyncProgress(
+            totalFiles: inScope.length,
+            completedFiles: pulled,
+            isPush: false,
+            message: 'Downloading ${entry.key} '
+                '($phase1Completed/${toDownload.length})',
+          ));
+        } finally {
+          if (kIsWeb) await _gcYield();
+        }
+      },
+      onError: (entry, err) {
+        failures[entry.key] = err;
+        debugPrint('Failed to download ${entry.key}: $err');
+      },
+    );
+
+    if (toDownload.isNotEmpty &&
+        failures.length == toDownload.length) {
+      throw StateError(
+          'All ${toDownload.length} file downloads failed. '
+          'First error: ${failures.values.first}');
+    }
+    if (failures.isNotEmpty) {
+      debugPrint(
+          'Pull completed with ${failures.length}/${toDownload.length} '
+          'file download(s) failed; they will be retried on next pull.');
+    }
+
+    // ── Phase 2: drive files, policy-aware ───────────────────────────────
+    final scopeSpaces = <String>{};
+    for (final path in inScope.keys) {
+      if (!_isDrivePath(path)) continue;
+      final slash = path.indexOf('/');
+      if (slash > 0) scopeSpaces.add(path.substring(0, slash));
+    }
+
+    for (final spaceId in scopeSpaces) {
+      final meta = await _readDriveMeta(spaceId);
+      final sortedIds = meta.keys.toList()
+        ..sort((a, b) {
+          final ca = (meta[a] as Map)['created'] as String? ?? '';
+          final cb = (meta[b] as Map)['created'] as String? ?? '';
+          return cb.compareTo(ca);
+        });
+
+      final keepCount = config.keepLocalFileCount;
+      final keepIds = keepCount == null
+          ? sortedIds.toSet()
+          : sortedIds.take(keepCount).toSet();
+
+      final offloaded = await offloadedStore.load(spaceId);
+      var offloadedChanged = false;
+      final driveDir = fs.directory(p.join(vaultPath, spaceId, 'drive'));
+      final pathMap = await _resolveDrivePaths(driveDir);
+
+      var filesSinceYield = 0;
+      for (final id in sortedIds) {
+        try {
+          final localPath = pathMap[id];
+          final remotePath = localPath != null
+              ? '$spaceId/drive/${p.basename(localPath)}'
+              : _findRemotePathForId(inScope, spaceId, id);
+          if (remotePath == null) continue;
+          final remoteSha = inScope[remotePath];
+          if (remoteSha == null) continue;
+
+          if (keepIds.contains(id)) {
+            // Fast path: file on disk and matching remote.
+            if (localPath != null) {
+              try {
+                final bytes = await fs.file(localPath).readAsBytes();
+                if (gitBlobSha(bytes) == remoteSha) {
+                  if (offloaded.remove(id) != null) {
+                    offloadedChanged = true;
+                  }
+                  continue;  // finally block runs the yield
+                }
+              } catch (_) {}
+            }
+            // Download.
+            onProgress?.call(SyncProgress(
+              totalFiles: inScope.length, completedFiles: pulled,
+              isPush: false,
+              message: 'Downloading drive/$id',
+            ));
+            final bytes = await provider.downloadFile(
+              config: config, token: token, path: remotePath,
+            );
+            final metaEntry = meta[id] as Map? ?? const {};
+            final name = (metaEntry['name'] as String?) ?? id;
+            final ext = _sanitizedExt(name);
+            final diskName = ext.isEmpty ? id : '$id.$ext';
+            final dest = p.join(vaultPath, spaceId, 'drive', diskName);
+            await fs.directory(p.dirname(dest)).create(recursive: true);
+            await fs.file(dest).writeAsBytes(bytes);
+            pathMap[id] = dest;
+            if (offloaded.remove(id) != null) offloadedChanged = true;
+            pulled++;
+          } else {
+            // Offload.
+            var size = offloaded[id]?.size ?? 0;
+            if (localPath != null) {
+              try {
+                size = (await fs.file(localPath).stat()).size;
+                await fs.file(localPath).delete();
+                pathMap.remove(id);
+              } catch (_) {}
+            }
+            offloaded[id] =
+                OffloadedFileInfo(remoteSha: remoteSha, size: size);
+            offloadedChanged = true;
+            offloadedCount++;
+          }
+        } finally {
+          filesSinceYield++;
+          if (kIsWeb && filesSinceYield >= 3) {
+            filesSinceYield = 0;
+            await _gcYield();
+          }
+        }
+      }
+
+      // Prune offloaded entries no longer in meta.
+      final toRemove = <String>[];
+      for (final id in offloaded.keys) {
+        if (!meta.containsKey(id)) toRemove.add(id);
+      }
+      for (final id in toRemove) {
+        offloaded.remove(id);
+        offloadedChanged = true;
+      }
+
+      if (offloadedChanged) {
+        await offloadedStore.save(spaceId, offloaded);
+      }
+    }
+
+    // ── Phase 3a: non-drive files absent from the remote ─────────────────
+    for (final path in localShas.keys) {
+      if (!scope.includes(path)) continue;
+      if (inScope.containsKey(path)) continue;
+      if (_isExcluded(path)) continue;
+      final file = fs.file(p.join(vaultPath, path));
+      if (await file.exists()) {
+        await file.delete();
+        deleted++;
+      }
+    }
+
+    // ── Phase 3b: drive files absent from the remote ─────────────────────
+    // Not covered by `localShas` (drive files are skipped in the scan),
+    // so walk each space's drive directory directly.
+    for (final spaceId in scopeSpaces) {
+      final driveDir = fs.directory(p.join(vaultPath, spaceId, 'drive'));
+      if (!await driveDir.exists()) continue;
+      final pathMap = await _resolveDrivePaths(driveDir);
+      for (final id in pathMap.keys.toList()) {
+        final localPath = pathMap[id]!;
+        final remotePath = '$spaceId/drive/${p.basename(localPath)}';
+        if (inScope.containsKey(remotePath)) continue;
+        try {
+          await fs.file(localPath).delete();
+          deleted++;
+        } catch (_) {}
+        final offloaded = await offloadedStore.load(spaceId);
+        if (offloaded.remove(id) != null) {
+          await offloadedStore.save(spaceId, offloaded);
+        }
+      }
+    }
+
+    final head = await provider.currentHeadSha(config: config, token: token);
+    await cacheStore?.save(config.cacheKey, remoteMap, head);
+
+    onProgress?.call(SyncProgress(
+      totalFiles: inScope.length, completedFiles: pulled, isPush: false,
+      message: 'Pulled: $pulled updated, $deleted deleted, '
+          '$offloadedCount offloaded',
+    ));
+    return SyncPullResult(
+      pulled: pulled, deleted: deleted, offloaded: offloadedCount,
+    );
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────
+
+  /// Scans all local files (including drive) and returns size + SHA.
+  /// Uses the mtime-keyed SHA cache to skip re-hashing unchanged files,
+  /// and skips reading files above `_maxFileBytes` entirely.
+  Future<Map<String, ({String sha, int size})>> _collectLocalFileInfo() async {
+    final cached =
+        await cacheStore?.loadLocalShas(config.cacheKey) ?? const {};
+
+    final out = <String, ({String sha, int size})>{};
+    final updated = <String, ({int size, DateTime mtime, String sha})>{};
+    final root = fs.directory(vaultPath);
+    if (!await root.exists()) return out;
+
+    final files = await walkFiles(root);
+    var sinceYield = 0;
+    var reused = 0;
+    var rescanned = 0;
+
+    for (final f in files) {
+      final rel = p.relative(f.path, from: vaultPath);
+      if (_isExcluded(rel)) continue;
+      try {
+        final stat = await f.stat();
+
+        // Too large to ever sync. Report size with an empty SHA so the
+        // diff loop's `_maxFileBytes` check trips and skips it, and the
+        // deletion loop sees it as present (never deleted).
+        if (stat.size > _maxFileBytes) {
+          out[rel] = (sha: '', size: stat.size);
+          continue;
+        }
+
+        final entry = cached[rel];
+        if (entry != null &&
+            entry.size == stat.size &&
+            entry.mtime == stat.modified) {
+          out[rel] = (sha: entry.sha, size: stat.size);
+          updated[rel] = entry;
+          reused++;
+        } else {
+          final bytes = await f.readAsBytes();
+          final sha = gitBlobSha(bytes);
+          out[rel] = (sha: sha, size: stat.size);
+          updated[rel] = (size: stat.size, mtime: stat.modified, sha: sha);
+          rescanned++;
+        }
+      } catch (_) {}
+      sinceYield++;
+      if (kIsWeb && sinceYield >= 30) {
+        sinceYield = 0;
+        await _gcYield();
+      }
+    }
+
+    await cacheStore?.saveLocalShas(config.cacheKey, updated);
+    debugPrint('Push scan: $reused reused, $rescanned rescanned');
+    return out;
+  }
+
+  /// SHA-only scan for pull. Skips drive files (handled in phase 2),
+  /// uses the mtime-keyed SHA cache to avoid re-reading unchanged
+  /// non-drive files, and preserves drive entries from the previous
+  /// cache (populated by the last push).
+  Future<Map<String, String>> _collectLocalFileShas() async {
+    final cached =
+        await cacheStore?.loadLocalShas(config.cacheKey) ?? const {};
+
+    final out = <String, String>{};
+    final updated = <String, ({int size, DateTime mtime, String sha})>{};
+    final root = fs.directory(vaultPath);
+    if (!await root.exists()) return out;
+
+    final files = await walkFiles(root);
+    var sinceYield = 0;
+    var reused = 0;
+    var rescanned = 0;
+
+    for (final f in files) {
+      final rel = p.relative(f.path, from: vaultPath);
+      if (_isExcluded(rel)) continue;
+      if (_isDrivePath(rel)) continue;
+      try {
+        final stat = await f.stat();
+        final entry = cached[rel];
+        if (entry != null &&
+            entry.size == stat.size &&
+            entry.mtime == stat.modified) {
+          out[rel] = entry.sha;
+          updated[rel] = entry;
+          reused++;
+        } else {
+          final bytes = await f.readAsBytes();
+          final sha = gitBlobSha(bytes);
+          out[rel] = sha;
+          updated[rel] = (size: stat.size, mtime: stat.modified, sha: sha);
+          rescanned++;
+        }
+      } catch (_) {}
+      sinceYield++;
+      if (kIsWeb && sinceYield >= 30) {
+        sinceYield = 0;
+        await _gcYield();
+      }
+    }
+
+    // Preserve drive entries from the previous cache (populated by
+    // push). Pull doesn't touch them, so re-saving them avoids forcing
+    // a re-hash of all drive files on the next push.
+    final merged =
+        <String, ({int size, DateTime mtime, String sha})>{};
+    for (final e in cached.entries) {
+      if (_isDrivePath(e.key)) merged[e.key] = e.value;
+    }
+    merged.addAll(updated);
+    await cacheStore?.saveLocalShas(config.cacheKey, merged);
+
+    debugPrint('Pull scan: $reused reused, $rescanned rescanned, '
+        '${merged.length - updated.length} drive entries preserved');
+    return out;
+  }
+
+  /// Builds `path → remoteSha` for offloaded files, so push can
+  /// distinguish "offloaded (skip)" from "genuinely deleted (remove)".
+  Future<Map<String, String>> _buildOffloadedByPath({
+    required Map<String, String> remoteMap,
+    required OffloadedStore offloadedStore,
+  }) async {
+    final out = <String, String>{};
+    final spaces = <String>{};
+    for (final path in remoteMap.keys) {
+      if (!scope.includes(path)) continue;
+      final slash = path.indexOf('/');
+      if (slash > 0) spaces.add(path.substring(0, slash));
+    }
+    for (final spaceId in spaces) {
+      final info = await offloadedStore.load(spaceId);
+      for (final e in info.entries) {
+        final prefix = '$spaceId/drive/${e.key}';
+        for (final remotePath in remoteMap.keys) {
+          if (remotePath == prefix || remotePath.startsWith('$prefix.')) {
+            out[remotePath] = e.value.remoteSha;
+            break;
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  /// Deletes local drive files beyond `keepLocalFileCount`, using
+  /// `localInfos` (already-computed SHAs from `_collectLocalFileInfo`)
+  /// to skip re-hashing. Saves offload records before deleting blobs,
+  /// so a save failure preserves the files on disk rather than losing
+  /// them without a record.
   Future<void> _applyOffloadPolicy({
     required Map<String, String> remoteMap,
     required OffloadedStore offloadedStore,
-    SyncProgressCallback? onProgress,
+    required Map<String, ({String sha, int size})> localInfos,
   }) async {
     final keepCount = config.keepLocalFileCount;
     if (keepCount == null) return;
@@ -322,549 +701,108 @@ class SyncService {
       final pathMap = await _resolveDrivePaths(driveDir);
 
       final offloaded = await offloadedStore.load(spaceId);
-      var changed = false;
+      final pendingDeletes =
+          <String, ({String remoteSha, int size})>{};
 
-      var filesSinceYield = 0;
       for (final id in sortedIds) {
-        try {
-          if (keepIds.contains(id)) continue;
-          if (offloaded.containsKey(id)) continue;
-          final localPath = pathMap[id];
-          if (localPath == null) continue;
+        if (keepIds.contains(id)) continue;
+        if (offloaded.containsKey(id)) continue;
+        final localPath = pathMap[id];
+        if (localPath == null) continue;
 
-          final remotePath = '$spaceId/drive/${p.basename(localPath)}';
-          final remoteSha = remoteMap[remotePath];
-          if (remoteSha == null) continue;
-
-          try {
-            final bytes = await fs.file(localPath).readAsBytes();
-            if (gitBlobSha(bytes) != remoteSha) continue;
-            final size = (await fs.file(localPath).stat()).size;
-            await fs.file(localPath).delete();
-            offloaded[id] = OffloadedFileInfo(remoteSha: remoteSha, size: size);
-            changed = true;
-          } catch (e) {
-            debugPrint('Offload after push failed for $localPath: $e');
-          }
-        } finally {
-          filesSinceYield++;
-          if (kIsWeb && filesSinceYield >= 3) {
-            filesSinceYield = 0;
-            await Future<void>.delayed(const Duration(milliseconds: 20));
-          }
-        }
-      }
-
-      if (changed) await offloadedStore.save(spaceId, offloaded);
-    }
-  }
-
-  // ── Pull ───────────────────────────────────────────────────────────────
-
-  Future<SyncPullResult> pull({
-    required String token,
-    SyncProgressCallback? onProgress,
-    required OffloadedStore offloadedStore,
-  }) async {
-    onProgress?.call(const SyncProgress(
-      totalFiles: 0,
-      completedFiles: 0,
-      isPush: false,
-      message: 'Checking remote…',
-    ));
-    final remoteMap = await _remoteListing(
-      token: token,
-      isPush: false,
-      onProgress: onProgress,
-    );
-
-    final inScope = <String, String>{};
-    for (final e in remoteMap.entries) {
-      if (scope.includes(e.key)) inScope[e.key] = e.value;
-    }
-    if (inScope.isEmpty) {
-      onProgress?.call(const SyncProgress(
-        totalFiles: 0,
-        completedFiles: 0,
-        isPush: false,
-        message: 'Nothing in scope on the remote.',
-      ));
-      return const SyncPullResult(pulled: 0, deleted: 0);
-    }
-
-    onProgress?.call(const SyncProgress(
-      totalFiles: 0,
-      completedFiles: 0,
-      isPush: false,
-      message: 'Scanning local files…',
-    ));
-
-    // SHA-only map — the previous version held the bytes of every local
-    // file simultaneously, which on iOS Safari with a media-heavy vault
-    // exceeded the tab memory budget and crashed the app mid-pull.
-    final localShas = await _collectLocalFileShas();
-
-    var pulled = 0;
-    var deleted = 0;
-    var offloadedCount = 0;
-
-    // Phase 1: non-drive files (entries, space metadata, hooks). These
-    // are small — a few KB each — so bounded-parallel downloads turn a
-    // 43-minute sequential pull of a large vault into a ~6-minute
-    // download. Concurrency is capped at 8 to stay under GitHub's
-    // secondary rate limit (~900 points/minute for authenticated
-    // requests); GitLab's limits allow more but 8 is safe for both.
-    final toDownload = <MapEntry<String, String>>[];
-    for (final entry in inScope.entries) {
-      if (_isDrivePath(entry.key)) continue;
-      if (localShas[entry.key] == entry.value) continue;
-      toDownload.add(entry);
-    }
-
-    // Pre-create every destination directory once, sequentially, so the
-    // parallel workers never race on `create(recursive: true)` for the
-    // same parent.
-    final dirs = <String>{};
-    for (final entry in toDownload) {
-      dirs.add(p.dirname(p.join(vaultPath, entry.key)));
-    }
-    for (final dir in dirs) {
-      await fs.directory(dir).create(recursive: true);
-    }
-
-    final failures = <String, Object>{};
-    var phase1Completed = 0;
-
-    await _parallelForEach<MapEntry<String, String>>(
-      items: toDownload,
-      concurrency: _phase1Concurrency, // ← was 8, now 2 on web
-      body: (entry) async {
-        try {
-          final bytes = await _downloadWithRetry(token: token, path: entry.key);
-          final dest = p.join(vaultPath, entry.key);
-          await fs.file(dest).writeAsBytes(bytes);
-          pulled++;
-          phase1Completed++;
-          onProgress?.call(SyncProgress(
-            totalFiles: inScope.length,
-            completedFiles: pulled,
-            isPush: false,
-            message: 'Downloading ${entry.key} '
-                '($phase1Completed/${toDownload.length})',
-          ));
-        } finally {
-          if (kIsWeb) {
-            await Future<void>.delayed(const Duration(milliseconds: 10));
-          }
-        }
-      },
-      onError: (entry, err) {
-        failures[entry.key] = err;
-        debugPrint('Failed to download ${entry.key}: $err');
-      },
-    );
-
-    // If every file failed, something systemic is wrong (bad token,
-    // network down) — surface it instead of continuing into phase 2
-    // with a nearly-empty pull.
-    if (toDownload.isNotEmpty && failures.length == toDownload.length) {
-      throw StateError('All ${toDownload.length} file downloads failed. '
-          'First error: ${failures.values.first}');
-    }
-    if (failures.isNotEmpty) {
-      debugPrint('Pull completed with ${failures.length}/${toDownload.length} '
-          'file download(s) failed; they will be retried on next pull.');
-    }
-
-    // Phase 2: drive files, policy-aware.
-    final scopeSpaces = <String>{};
-    for (final path in inScope.keys) {
-      if (!_isDrivePath(path)) continue;
-      final slash = path.indexOf('/');
-      if (slash > 0) scopeSpaces.add(path.substring(0, slash));
-    }
-
-    for (final spaceId in scopeSpaces) {
-      final meta = await _readDriveMeta(spaceId);
-      final sortedIds = meta.keys.toList()
-        ..sort((a, b) {
-          final ca = (meta[a] as Map)['created'] as String? ?? '';
-          final cb = (meta[b] as Map)['created'] as String? ?? '';
-          return cb.compareTo(ca);
-        });
-
-      final keepCount = config.keepLocalFileCount;
-      final keepIds = keepCount == null
-          ? sortedIds.toSet()
-          : sortedIds.take(keepCount).toSet();
-
-      final offloaded = await offloadedStore.load(spaceId);
-      var offloadedChanged = false;
-
-      // Single directory scan for the whole space. Previously one scan
-      // per file — O(N²) directory listings that compounded the memory
-      // pressure by generating small objects continuously.
-      final pathMap = await _resolveDrivePaths(
-        fs.directory(p.join(vaultPath, spaceId, 'drive')),
-      );
-
-// Yield after each file comparison or download. `Duration.zero` is a
-// microtask and does not trigger WebKit's timer-driven GC; only a real
-// timer yields allow the collector to run. Every 3 files bounds peak
-// garbage to ~3 × largest-file-size before a collection pass.
-      var filesSinceYield = 0;
-      for (final id in sortedIds) {
-        try {
-          final localPath = pathMap[id];
-          final remotePath = localPath != null
-              ? '$spaceId/drive/${p.basename(localPath)}'
-              : _findRemotePathForId(inScope, spaceId, id);
-          if (remotePath == null) continue;
-          final remoteSha = inScope[remotePath];
-          if (remoteSha == null) continue;
-
-          if (keepIds.contains(id)) {
-            // Fast path: local file matches remote SHA.
-            if (localPath != null) {
-              try {
-                final bytes = await fs.file(localPath).readAsBytes();
-                final matches = gitBlobSha(bytes) == remoteSha;
-                if (matches) {
-                  if (offloaded.remove(id) != null) offloadedChanged = true;
-                  continue; // finally block runs the yield
-                }
-              } catch (_) {}
-            }
-
-            // Download.
-            onProgress?.call(SyncProgress(
-              totalFiles: inScope.length,
-              completedFiles: pulled,
-              isPush: false,
-              message: 'Downloading drive/$id',
-            ));
-            final bytes = await provider.downloadFile(
-              config: config,
-              token: token,
-              path: remotePath,
-            );
-            final metaEntry = meta[id] as Map? ?? const {};
-            final name = (metaEntry['name'] as String?) ?? id;
-            final ext = _sanitizedExt(name);
-            final diskName = ext.isEmpty ? id : '$id.$ext';
-            final dest = p.join(vaultPath, spaceId, 'drive', diskName);
-            await fs.directory(p.dirname(dest)).create(recursive: true);
-            await fs.file(dest).writeAsBytes(bytes);
-            pathMap[id] = dest;
-            if (offloaded.remove(id) != null) offloadedChanged = true;
-            pulled++;
-          } else {
-            // Offload.
-            var size = offloaded[id]?.size ?? 0;
-            if (localPath != null) {
-              try {
-                size = (await fs.file(localPath).stat()).size;
-                await fs.file(localPath).delete();
-                pathMap.remove(id);
-              } catch (_) {}
-            }
-            offloaded[id] = OffloadedFileInfo(remoteSha: remoteSha, size: size);
-            offloadedChanged = true;
-            offloadedCount++;
-          }
-        } finally {
-          filesSinceYield++;
-          if (kIsWeb && filesSinceYield >= 3) {
-            filesSinceYield = 0;
-            await Future<void>.delayed(const Duration(milliseconds: 20));
-          }
-        }
-      }
-
-      // Prune offloaded entries no longer in meta.
-      final toRemove = <String>[];
-      for (final id in offloaded.keys) {
-        if (!meta.containsKey(id)) toRemove.add(id);
-      }
-      for (final id in toRemove) {
-        offloaded.remove(id);
-        offloadedChanged = true;
-      }
-
-      if (offloadedChanged) {
-        await offloadedStore.save(spaceId, offloaded);
-      }
-    }
-
-    // Phase 3: delete local files absent from the remote.
-    for (final path in localShas.keys) {
-      if (!scope.includes(path)) continue;
-      if (inScope.containsKey(path)) continue;
-      if (_isExcluded(path)) continue;
-      final file = fs.file(p.join(vaultPath, path));
-      if (await file.exists()) {
-        await file.delete();
-        deleted++;
-      }
-    }
-
-    // Phase 3b: drive files absent from the remote. Not covered by
-    // `localShas` anymore (drive files are skipped in the scan), so
-    // walk each space's drive directory directly.
-    for (final spaceId in scopeSpaces) {
-      final driveDir = fs.directory(p.join(vaultPath, spaceId, 'drive'));
-      if (!await driveDir.exists()) continue;
-      final pathMap = await _resolveDrivePaths(driveDir);
-      for (final id in pathMap.keys.toList()) {
-        final localPath = pathMap[id]!;
         final remotePath = '$spaceId/drive/${p.basename(localPath)}';
-        if (inScope.containsKey(remotePath)) continue;
-        try {
-          await fs.file(localPath).delete();
-          deleted++;
-        } catch (_) {}
-        final offloaded = await offloadedStore.load(spaceId);
-        if (offloaded.remove(id) != null) {
-          await offloadedStore.save(spaceId, offloaded);
-        }
-      }
-    }
+        final remoteSha = remoteMap[remotePath];
+        if (remoteSha == null) continue;
 
-    final head = await provider.currentHeadSha(config: config, token: token);
-    await cacheStore?.save(config.cacheKey, remoteMap, head);
-
-    onProgress?.call(SyncProgress(
-      totalFiles: inScope.length,
-      completedFiles: pulled,
-      isPush: false,
-      message: 'Pulled: $pulled updated, $deleted deleted, '
-          '$offloadedCount offloaded',
-    ));
-    return SyncPullResult(
-      pulled: pulled,
-      deleted: deleted,
-      offloaded: offloadedCount,
-    );
-  }
-
-  // ── Helpers ────────────────────────────────────────────────────────────
-
-  /// Returns SHA + size of every local file, one at a time. Bytes are
-  /// dropped immediately after hashing, so the peak memory is a single
-  /// file's size — not the sum of every file in the vault.
-  Future<Map<String, ({String sha, int size})>> _collectLocalFileInfo() async {
-    final out = <String, ({String sha, int size})>{};
-    final root = fs.directory(vaultPath);
-    if (!await root.exists()) return out;
-    final files = await walkFiles(root);
-    var sinceYield = 0;
-    for (final f in files) {
-      final rel = p.relative(f.path, from: vaultPath);
-      if (_isExcluded(rel)) continue;
-      try {
-        final stat = await f.stat();
-        final bytes = await f.readAsBytes();
-        out[rel] = (sha: gitBlobSha(bytes), size: stat.size);
-      } catch (_) {}
-      sinceYield++;
-      if (kIsWeb && sinceYield >= 30) {
-        sinceYield = 0;
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
-    }
-    return out;
-  }
-
-  /// SHA-only variant used by pull, which never needs the sizes.
-  Future<Map<String, String>> _collectLocalFileShas() async {
-    final cached = await cacheStore?.loadLocalShas(config.cacheKey) ?? const {};
-
-    final out = <String, String>{};
-    final updated = <String, ({int size, DateTime mtime, String sha})>{};
-    final root = fs.directory(vaultPath);
-    if (!await root.exists()) return out;
-
-    final files = await walkFiles(root);
-    var sinceYield = 0;
-    var reused = 0;
-    var rescanned = 0;
-
-    for (final f in files) {
-      final rel = p.relative(f.path, from: vaultPath);
-      if (_isExcluded(rel)) continue;
-      if (_isDrivePath(rel)) continue;
-
-      try {
-        final stat = await f.stat();
-        final cachedEntry = cached[rel];
-        if (cachedEntry != null &&
-            cachedEntry.size == stat.size &&
-            cachedEntry.mtime == stat.modified) {
-          // File unchanged since last scan — reuse cached SHA without
-          // reading content. This is the fast path for repeated pulls:
-          // stat() on IndexedDB is ~50× faster than readAsBytes().
-          out[rel] = cachedEntry.sha;
-          updated[rel] = cachedEntry;
-          reused++;
+        // Use cached SHA from the scan — skips re-reading. If the local
+        // content differs (unpushed local edit), preserve the file.
+        final info = localInfos[remotePath];
+        if (info == null) continue;
+        if (info.sha != remoteSha) {
+          debugPrint(
+              'Offload: skipping $remotePath — local SHA differs from '
+              'remote (unpushed local edit)');
           continue;
         }
-        // File is new or changed — read and hash.
-        final bytes = await f.readAsBytes();
-        final sha = gitBlobSha(bytes);
-        out[rel] = sha;
-        updated[rel] = (size: stat.size, mtime: stat.modified, sha: sha);
-        rescanned++;
-      } catch (_) {}
 
-      sinceYield++;
-      if (kIsWeb && sinceYield >= 10) {
-        sinceYield = 0;
-        await Future<void>.delayed(const Duration(milliseconds: 20));
+        pendingDeletes[id] =
+            (remoteSha: remoteSha, size: info.size);
       }
-    }
 
-    // Persist the updated cache for the next pull.
-    await cacheStore?.saveLocalShas(config.cacheKey, updated);
-    debugPrint('Scan: $reused reused, $rescanned rescanned');
-    return out;
-  }
+      if (pendingDeletes.isEmpty) continue;
 
-  /// Builds the path → known remote SHA map for offloaded files so push
-  /// doesn't misclassify them as deletes.
-  Future<Map<String, String>> _buildOffloadedByPath({
-    required Map<String, String> remoteMap,
-    required OffloadedStore offloadedStore,
-  }) async {
-    final out = <String, String>{};
-    final spaces = <String>{};
-    for (final path in remoteMap.keys) {
-      if (!scope.includes(path)) continue;
-      final slash = path.indexOf('/');
-      if (slash > 0) spaces.add(path.substring(0, slash));
-    }
-    for (final spaceId in spaces) {
-      final info = await offloadedStore.load(spaceId);
-      for (final e in info.entries) {
-        final prefix = '$spaceId/drive/${e.key}';
-        for (final remotePath in remoteMap.keys) {
-          if (remotePath == prefix || remotePath.startsWith('$prefix.')) {
-            out[remotePath] = e.value.remoteSha;
-            break;
-          }
+      // Save offload records FIRST. If the save fails, the local files
+      // stay on disk (recovered on the next pull/push), which is
+      // strictly better than deleting them without a record and having
+      // the next push treat them as deletions from the remote.
+      for (final e in pendingDeletes.entries) {
+        offloaded[e.key] = OffloadedFileInfo(
+          remoteSha: e.value.remoteSha,
+          size: e.value.size,
+        );
+      }
+      try {
+        await offloadedStore.save(spaceId, offloaded);
+      } catch (e) {
+        debugPrint(
+            'Offload save failed for $spaceId; keeping local files: $e');
+        // Roll back the in-memory additions so they match what's on disk.
+        for (final id in pendingDeletes.keys) {
+          offloaded.remove(id);
         }
+        continue;
+      }
+
+      // Save succeeded — now safe to delete.
+      for (final id in pendingDeletes.keys) {
+        final localPath = pathMap[id];
+        if (localPath == null) continue;
+        try {
+          await fs.file(localPath).delete();
+        } catch (e) {
+          debugPrint('Offload delete failed for $localPath: $e');
+        }
+        if (kIsWeb) await _gcYield();
       }
     }
-    return out;
   }
 
-  /// Single-scan resolution of a drive directory into a path map.
-  Future<Map<String, String>> _resolveDrivePaths(Directory driveDir) async {
-    final out = <String, String>{};
-    if (!await driveDir.exists()) return out;
-    await for (final e in driveDir.list(followLinks: false)) {
-      if (e is! File) continue;
-      final base = p.basename(e.path);
-      final dot = base.indexOf('.');
-      final id = dot < 0 ? base : base.substring(0, dot);
-      out[id] = e.path;
-    }
-    return out;
-  }
-
-  /// Splits pending changes into batches whose combined file content
-  /// stays under [_commitBatchMaxBytes]. A single oversized file (up to
-  /// [_maxFileBytes]) gets its own batch.
-  List<List<_PendingChange>> _batchChanges(List<_PendingChange> changes) {
-    final batches = <List<_PendingChange>>[];
-    var current = <_PendingChange>[];
-    var currentBytes = 0;
-    for (final c in changes) {
-      if (current.isNotEmpty && currentBytes + c.size > _commitBatchMaxBytes) {
-        batches.add(current);
-        current = [];
-        currentBytes = 0;
-      }
-      current.add(c);
-      currentBytes += c.size;
-    }
-    if (current.isNotEmpty) batches.add(current);
-    return batches;
-  }
-
-  // ── Unchanged helpers ─────────────────────────────────────────────────
-
-  Future<Map<String, String>> _remoteListing({
+  /// Wraps a download in a per-attempt timeout and retries transient
+  /// failures. A hung connection would otherwise block a phase-1 worker
+  /// indefinitely.
+  Future<Uint8List> _downloadWithRetry({
     required String token,
-    required bool isPush,
-    SyncProgressCallback? onProgress,
+    required String path,
   }) async {
-    final head = await provider.currentHeadSha(config: config, token: token);
-    final cache = await cacheStore?.load(config.cacheKey);
-    if (head != null && cache != null && cache.commitSha == head) {
-      onProgress?.call(SyncProgress(
-        totalFiles: cache.files.length,
-        completedFiles: cache.files.length,
-        isPush: isPush,
-        message: 'Using cached remote listing (${cache.files.length} files)',
-      ));
-      return cache.files;
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final bytes = await provider
+            .downloadFile(config: config, token: token, path: path)
+            .timeout(const Duration(seconds: 120));
+        return bytes;
+      } on SyncException catch (e) {
+        lastError = e;
+        final sc = e.statusCode;
+        if (sc == 429 || sc == 403) {
+          await Future<void>.delayed(
+              Duration(seconds: 15 * (attempt + 1)));
+          continue;
+        }
+        if (sc != null && sc >= 400 && sc < 500) rethrow;
+        await Future<void>.delayed(
+            Duration(milliseconds: 500 * (attempt + 1)));
+      } catch (e) {
+        lastError = e;
+        await Future<void>.delayed(
+            Duration(milliseconds: 500 * (attempt + 1)));
+      }
     }
-    return provider.listRemoteFiles(
-      config: config,
-      token: token,
-      isPush: isPush,
-      onProgress: onProgress,
-    );
+    throw lastError ?? StateError('Download failed for $path');
   }
 
-  Future<Map<String, Map<String, dynamic>>> _readDriveMeta(
-      String spaceId) async {
-    final f = fs.file(p.join(vaultPath, spaceId, 'drive_meta.json'));
-    if (!await f.exists()) return {};
-    try {
-      final raw = jsonDecode(await f.readAsString()) as Map;
-      return raw.map(
-          (k, v) => MapEntry(k as String, (v as Map).cast<String, dynamic>()));
-    } catch (_) {
-      return {};
-    }
-  }
-
-  bool _isDrivePath(String path) => path.contains('/drive/');
-
-  String? _findRemotePathForId(
-    Map<String, String> inScope,
-    String spaceId,
-    String id,
-  ) {
-    final prefix = '$spaceId/drive/$id';
-    for (final path in inScope.keys) {
-      if (path == prefix || path.startsWith('$prefix.')) return path;
-    }
-    return null;
-  }
-
-  String _sanitizedExt(String name) {
-    final dot = name.lastIndexOf('.');
-    if (dot < 0 || dot == 0) return '';
-    return name
-        .substring(dot + 1)
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9]'), '');
-  }
-
-  bool _isExcluded(String relPath) {
-    if (_excludedFiles.contains(relPath)) return true;
-    final first = relPath.split('/').first;
-    return first == '.git';
-  }
-
-  /// Runs [body] on each item with at most [concurrency] tasks in flight.
-  /// Errors from [body] are passed to [onError] and do not stop the
-  /// queue — one failed download must not abort the whole pull.
-  ///
-  /// Dart's single-threaded event loop makes `index++` race-free across
-  /// workers without locks: the increment is synchronous between awaits.
+  /// Runs [body] on each item with at most [concurrency] tasks in
+  /// flight. Errors are passed to [onError] and do not stop the queue.
   Future<void> _parallelForEach<T>({
     required List<T> items,
     required int concurrency,
@@ -887,39 +825,80 @@ class SyncService {
     await Future.wait(workers);
   }
 
-  /// Wraps a download in a per-attempt timeout and retries on transient
-  /// failures (429/403 rate-limit, network errors). A hung connection
-  /// would otherwise block one worker forever, progressively reducing
-  /// effective concurrency to zero.
-  Future<Uint8List> _downloadWithRetry({
+  Future<Map<String, String>> _remoteListing({
     required String token,
-    required String path,
+    required bool isPush,
+    SyncProgressCallback? onProgress,
   }) async {
-    Object? lastError;
-    for (var attempt = 0; attempt < 3; attempt++) {
-      try {
-        final bytes = await provider
-            .downloadFile(config: config, token: token, path: path)
-            .timeout(const Duration(seconds: 120));
-        return bytes;
-      } on SyncException catch (e) {
-        lastError = e;
-        if (e.statusCode == 429 || e.statusCode == 403) {
-          // Rate limited — back off before retrying.
-          await Future<void>.delayed(Duration(seconds: 15 * (attempt + 1)));
-          continue;
-        }
-        if (e.statusCode != null &&
-            e.statusCode! >= 400 &&
-            e.statusCode! < 500) {
-          rethrow;
-        }
-        await Future<void>.delayed(Duration(milliseconds: 500 * (attempt + 1)));
-      } catch (e) {
-        lastError = e;
-        await Future<void>.delayed(Duration(milliseconds: 500 * (attempt + 1)));
-      }
+    final head = await provider.currentHeadSha(config: config, token: token);
+    final cache = await cacheStore?.load(config.cacheKey);
+    if (head != null && cache != null && cache.commitSha == head) {
+      onProgress?.call(SyncProgress(
+        totalFiles: cache.files.length, completedFiles: cache.files.length,
+        isPush: isPush,
+        message: 'Using cached remote listing (${cache.files.length} files)',
+      ));
+      return cache.files;
     }
-    throw lastError ?? StateError('Download failed for $path');
+    return provider.listRemoteFiles(
+      config: config, token: token,
+      isPush: isPush, onProgress: onProgress,
+    );
+  }
+
+  Future<Map<String, Map<String, dynamic>>> _readDriveMeta(
+      String spaceId) async {
+    final f = fs.file(p.join(vaultPath, spaceId, 'drive_meta.json'));
+    if (!await f.exists()) return {};
+    try {
+      final raw = jsonDecode(await f.readAsString()) as Map;
+      return raw.map((k, v) =>
+          MapEntry(k as String, (v as Map).cast<String, dynamic>()));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  bool _isDrivePath(String path) => path.contains('/drive/');
+
+  String? _findRemotePathForId(
+    Map<String, String> inScope,
+    String spaceId,
+    String id,
+  ) {
+    final prefix = '$spaceId/drive/$id';
+    for (final path in inScope.keys) {
+      if (path == prefix || path.startsWith('$prefix.')) return path;
+    }
+    return null;
+  }
+
+  /// Single-scan resolution of a drive directory into an `id → path`
+  /// map. Called once per space per phase; avoids the O(N²) directory
+  /// enumeration that a per-file scan would produce.
+  Future<Map<String, String>> _resolveDrivePaths(Directory driveDir) async {
+    final out = <String, String>{};
+    if (!await driveDir.exists()) return out;
+    await for (final e in driveDir.list(followLinks: false)) {
+      if (e is! File) continue;
+      final base = p.basename(e.path);
+      final dot = base.indexOf('.');
+      final id = dot < 0 ? base : base.substring(0, dot);
+      out[id] = e.path;
+    }
+    return out;
+  }
+
+  String _sanitizedExt(String name) {
+    final dot = name.lastIndexOf('.');
+    if (dot < 0 || dot == 0) return '';
+    return name.substring(dot + 1).toLowerCase().replaceAll(
+          RegExp(r'[^a-z0-9]'), '');
+  }
+
+  bool _isExcluded(String relPath) {
+    if (_excludedFiles.contains(relPath)) return true;
+    final first = relPath.split('/').first;
+    return first == '.git';
   }
 }
