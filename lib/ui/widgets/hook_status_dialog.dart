@@ -5,11 +5,19 @@ import '../../data/models.dart';
 import '../../data/store.dart';
 import '../../util/hook_outcome.dart';
 
-/// Read-only inspector for the hook results stored on [post], with a
-/// per-hook re-run button. Retries are useful after failures (bad token,
-/// transient network error, server temporarily down) and also after
-/// successful runs (e.g. re-send to Telegram after editing the chat on
-/// their side).
+/// Inspector + manual-run UI for a post's hooks.
+///
+/// Shows three kinds of rows:
+///   - Applicable hooks whose last state is recorded — with prior status.
+///   - Applicable hooks that have never fired — with "Never fired" badge.
+///   - Orphaned states: hookState entries whose hook no longer exists.
+///     Read-only, no Run button.
+///
+/// Any applicable hook can be fired manually; the "Run all" button runs
+/// all of them in sequence. Firing uses the hook's own trigger set to
+/// choose create/edit (preferring the trigger that matches the post's
+/// edited state), so templates referencing `{{trigger}}` behave
+/// sensibly.
 Future<void> showHookStatusDialog(
   BuildContext context,
   Post post,
@@ -42,108 +50,129 @@ class _HookStatusDialog extends StatefulWidget {
 }
 
 class _HookStatusDialogState extends State<_HookStatusDialog> {
-  /// Hook keys with a retry in flight, started from this dialog. Kept
-  /// separate from the store's `_activeHookRuns` so the dialog's buttons
-  /// disable as soon as the user taps, even before `notifyListeners()`
-  /// reaches the dialog.
-  final Set<String> _retrying = {};
+  /// Hook keys with a run started from this dialog. Distinct from
+  /// `store.hasActiveHooks` so the buttons disable as soon as the user
+  /// taps, even before `notifyListeners()` reaches the dialog.
+  final Set<String> _running = {};
+  bool _runningAll = false;
 
-  Future<void> _retry(String hookKey) async {
-    setState(() => _retrying.add(hookKey));
-    try {
-      await widget.store.retryHook(
-        widget.spaceId,
-        widget.post.id,
-        hookKey,
-      );
-    } finally {
-      if (mounted) setState(() => _retrying.remove(hookKey));
-    }
-  }
-
-  Future<void> _retryAllFailed() async {
-    final post = _resolveCurrentPost();
-    if (post == null) return;
-
-    final failedKeys = <String>[
-      for (final e in post.hookState.entries)
-        if (!_retrying.contains(e.key) && hookStateFailed(e.value)) e.key,
-    ];
-    if (failedKeys.isEmpty) return;
-
-    setState(() => _retrying.addAll(failedKeys));
-    try {
-      for (final key in failedKeys) {
-        await widget.store.retryHook(
-          widget.spaceId,
-          widget.post.id,
-          key,
-        );
-        if (!mounted) return;
-        setState(() => _retrying.remove(key));
-      }
-    } finally {
-      if (mounted) setState(_retrying.clear);
-    }
-  }
-
-  Post? _resolveCurrentPost() {
+  Post? _currentPost() {
     for (final p in widget.store.postsForSpace(widget.spaceId)) {
       if (p.id == widget.post.id) return p;
     }
     return widget.post;
   }
 
-  String _hookNameFor(String key) {
-    for (final Hook h in widget.store.hooks) {
-      if (h.key == key) return h.name;
+  Future<void> _run(String hookKey) async {
+    setState(() => _running.add(hookKey));
+    try {
+      await widget.store.retryHook(
+        widget.spaceId, widget.post.id, hookKey);
+    } finally {
+      if (mounted) setState(() => _running.remove(hookKey));
     }
-    return key;
+  }
+
+  Future<void> _runAll() async {
+    final post = _currentPost();
+    if (post == null) return;
+    final applicable =
+        widget.store.applicableHooksFor(widget.spaceId, post.id);
+    if (applicable.isEmpty) return;
+
+    setState(() => _runningAll = true);
+    try {
+      for (final h in applicable) {
+        if (!mounted) return;
+        setState(() => _running.add(h.key));
+        await widget.store.retryHook(widget.spaceId, post.id, h.key);
+        if (!mounted) return;
+        setState(() => _running.remove(h.key));
+      }
+    } finally {
+      if (mounted) setState(() {
+        _runningAll = false;
+        _running.clear();
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Re-read from the store on every build so retry results appear
-    // without needing to close and reopen the dialog.
-    final post = _resolveCurrentPost() ?? widget.post;
+    final post = _currentPost() ?? widget.post;
+    final applicable =
+        widget.store.applicableHooksFor(widget.spaceId, post.id);
+    final applicableKeys = {for (final h in applicable) h.key};
 
-    final entries = post.hookState.entries.toList()
+    final orphaned = post.hookState.entries
+        .where((e) => !applicableKeys.contains(e.key))
+        .toList()
       ..sort((a, b) => a.key.compareTo(b.key));
-    final anyFailed = entries.any((e) => hookStateFailed(e.value));
-    final failedCount = entries.where((e) => hookStateFailed(e.value)).length;
+
+    final anyRunning =
+        _running.isNotEmpty || _runningAll ||
+        widget.store.hasActiveHooks(post.id);
+
+    final theme = Theme.of(context);
 
     return AlertDialog(
       title: const Text('Hook status'),
       content: SizedBox(
         width: 520,
-        child: entries.isEmpty
-            ? const Text('No hook results yet.')
+        child: (applicable.isEmpty && orphaned.isEmpty)
+            ? const Text('No hooks apply to this post.')
             : ListView(
                 shrinkWrap: true,
-                children: entries.map((e) {
-                  final key = e.key;
-                  final state = e.value;
-                  final isRunning = _retrying.contains(key) ||
-                      widget.store.hasActiveHooks(post.id);
-                  final failed = hookStateFailed(state);
-                  return _HookStateBlock(
-                    hookKey: key,
-                    state: state,
-                    hookName: _hookNameFor(key),
-                    hookExists: widget.store.hooks.any((h) => h.key == key),
-                    isRunning: isRunning,
-                    onRetry: isRunning ? null : () => _retry(key),
-                  );
-                }).toList(),
+                children: [
+                  if (applicable.isNotEmpty) ...[
+                    _SectionHeader(
+                      title: 'Applicable (${applicable.length})',
+                      trailing: applicable.length > 1
+                          ? TextButton.icon(
+                              onPressed: anyRunning ? null : _runAll,
+                              icon: const Icon(Icons.play_arrow, size: 16),
+                              label: const Text('Run all'),
+                            )
+                          : null,
+                    ),
+                    const SizedBox(height: 4),
+                    for (final h in applicable)
+                      _HookRow(
+                        hook: h,
+                        state: post.hookState[h.key],
+                        isRunning: _running.contains(h.key),
+                        enabled: !anyRunning,
+                        onRun: () => _run(h.key),
+                      ),
+                  ],
+                  if (orphaned.isNotEmpty) ...[
+                    if (applicable.isNotEmpty) const Divider(height: 24),
+                    const _SectionHeader(title: 'Past runs'),
+                    const SizedBox(height: 4),
+                    for (final e in orphaned)
+                      _HookRow(
+                        hook: null,
+                        hookKeyFallback: e.key,
+                        state: e.value,
+                        isRunning: false,
+                        enabled: false,
+                        onRun: null,
+                      ),
+                  ],
+                  const SizedBox(height: 4),
+                  Text(
+                    'Hooks can be fired manually at any time. Templates '
+                    'using {{trigger}} see the trigger from the hook\'s '
+                    'own settings.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
               ),
       ),
       actions: [
-        if (anyFailed && failedCount > 1)
-          TextButton.icon(
-            onPressed: _retrying.isEmpty ? _retryAllFailed : null,
-            icon: const Icon(Icons.refresh, size: 16),
-            label: Text('Re-run all failed ($failedCount)'),
-          ),
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text('Close'),
@@ -153,39 +182,67 @@ class _HookStatusDialogState extends State<_HookStatusDialog> {
   }
 }
 
-class _HookStateBlock extends StatelessWidget {
-  final String hookKey;
-  final PostHookState state;
-  final String hookName;
-  final bool hookExists;
-  final bool isRunning;
-  final VoidCallback? onRetry;
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  final Widget? trailing;
 
-  const _HookStateBlock({
-    required this.hookKey,
+  const _SectionHeader({required this.title, this.trailing});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            title.toUpperCase(),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              letterSpacing: 1.2,
+            ),
+          ),
+        ),
+        if (trailing != null) trailing!,
+      ],
+    );
+  }
+}
+
+class _HookRow extends StatelessWidget {
+  final Hook? hook;
+  final String? hookKeyFallback;
+  final PostHookState? state;
+  final bool isRunning;
+  final bool enabled;
+  final VoidCallback? onRun;
+
+  const _HookRow({
+    required this.hook,
+    this.hookKeyFallback,
     required this.state,
-    required this.hookName,
-    required this.hookExists,
     required this.isRunning,
-    required this.onRetry,
+    required this.enabled,
+    required this.onRun,
   });
+
+  String get _key => hook?.key ?? hookKeyFallback ?? '?';
+  String get _name => hook?.name ?? _key;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final mono = theme.textTheme.bodySmall?.copyWith(
-      fontFamily: 'monospace',
-      fontSize: 11,
-    );
-    final body = state.lastBody;
+      fontFamily: 'monospace', fontSize: 11);
+    final body = state?.lastBody;
     final truncatedBody = body == null || body.isEmpty
         ? null
         : (body.length > 500 ? '${body.substring(0, 500)}…' : body);
 
-    final failed = hookStateFailed(state);
+    final failed = state != null && hookStateFailed(state!);
+    final never = state == null;
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -194,39 +251,56 @@ class _HookStateBlock extends StatelessWidget {
               Expanded(
                 child: Row(
                   children: [
-                    Text(
-                      hookName,
-                      style: theme.textTheme.titleSmall,
-                      overflow: TextOverflow.ellipsis,
+                    Flexible(
+                      child: Text(
+                        _name,
+                        style: theme.textTheme.titleSmall,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                     const SizedBox(width: 8),
-                    _StatusBadge(
-                      isRunning: isRunning,
-                      failed: failed,
-                    ),
+                    if (isRunning)
+                      _Badge(
+                        color: theme.colorScheme.onSurfaceVariant,
+                        label: 'Running',
+                      )
+                    else if (never)
+                      _Badge(
+                        color: theme.colorScheme.onSurfaceVariant,
+                        label: 'Never fired',
+                      )
+                    else
+                      _Badge(
+                        color: failed
+                            ? theme.colorScheme.error
+                            : Colors.green.shade600,
+                        label: failed ? 'Failed' : 'Success',
+                      ),
                   ],
                 ),
               ),
-              if (isRunning)
-                const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else if (hookExists)
-                IconButton(
-                  icon: const Icon(Icons.refresh, size: 20),
-                  tooltip: failed ? 'Re-run' : 'Re-run',
-                  onPressed: onRetry,
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  constraints:
-                      const BoxConstraints(minWidth: 28, minHeight: 28),
-                ),
+              if (onRun != null) ...[
+                if (isRunning)
+                  const SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  TextButton.icon(
+                    onPressed: enabled ? onRun : null,
+                    icon: const Icon(Icons.play_arrow, size: 16),
+                    label: const Text('Run'),
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                  ),
+              ],
             ],
           ),
-          Text('key: $hookKey', style: theme.textTheme.bodySmall),
-          if (!hookExists)
+          Text('key: $_key', style: theme.textTheme.bodySmall),
+          if (hook == null)
             Text(
               'This hook no longer exists in the vault.',
               style: theme.textTheme.bodySmall?.copyWith(
@@ -234,59 +308,52 @@ class _HookStateBlock extends StatelessWidget {
                 fontStyle: FontStyle.italic,
               ),
             ),
-          Text(
-            'fired: ${state.lastFiredAt.toLocal()}',
-            style: theme.textTheme.bodySmall,
-          ),
-          if (state.lastError != null)
+          if (state != null) ...[
             Text(
-              'error: ${state.lastError}',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.error,
-              ),
-            )
-          else if (state.lastStatus != null)
-            Text(
-              'status: ${state.lastStatus}',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: failed ? theme.colorScheme.error : null,
-              ),
+              'fired: ${state!.lastFiredAt.toLocal()}',
+              style: theme.textTheme.bodySmall,
             ),
-          if (truncatedBody != null)
-            Container(
-              margin: const EdgeInsets.only(top: 4),
-              padding: const EdgeInsets.all(8),
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(6),
+            if (state!.lastError != null)
+              Text(
+                'error: ${state!.lastError}',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.error),
+              )
+            else if (state!.lastStatus != null)
+              Text(
+                'status: ${state!.lastStatus}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: failed ? theme.colorScheme.error : null,
+                ),
               ),
-              child: SelectableText(truncatedBody, style: mono),
-            ),
-          const Divider(height: 24),
+            if (truncatedBody != null)
+              Container(
+                margin: const EdgeInsets.only(top: 4),
+                padding: const EdgeInsets.all(8),
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: SelectableText(truncatedBody, style: mono),
+              ),
+          ],
+          const Divider(height: 20),
         ],
       ),
     );
   }
 }
 
-class _StatusBadge extends StatelessWidget {
-  final bool isRunning;
-  final bool failed;
+class _Badge extends StatelessWidget {
+  final Color color;
+  final String label;
 
-  const _StatusBadge({required this.isRunning, required this.failed});
+  const _Badge({required this.color, required this.label});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final successColor = theme.brightness == Brightness.dark
-        ? Colors.green.shade400
-        : Colors.green.shade700;
-    final (color, label) = isRunning
-        ? (theme.colorScheme.onSurfaceVariant, 'Running')
-        : failed
-            ? (theme.colorScheme.error, 'Failed')
-            : (successColor, 'Success');
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(

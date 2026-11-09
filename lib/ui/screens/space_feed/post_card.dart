@@ -139,11 +139,10 @@ class PostCard extends StatelessWidget {
                           onDelete: () => _confirmDelete(context),
                           onShowSource: () =>
                               showPostSourceDialog(context, store, space, post),
-                          onHookStatus:
-                              (_hookOutcome(store, post) == HookOutcome.none)
-                                  ? null
-                                  : () => showHookStatusDialog(
-                                      context, post, store, space.id),
+                          // Always available — the dialog offers manual runs for applicable
+                          // hooks even when nothing has fired yet.
+                          onHookStatus: () => showHookStatusDialog(
+                              context, post, store, space.id),
                         ),
                         if (plaintext.isNotEmpty) ...[
                           const SizedBox(height: 4),

@@ -403,6 +403,7 @@ class VaultStore extends ChangeNotifier {
     List<String> fileIds = const [],
     DateTime? createdAt,
     String? quotedPostId,
+    bool skipHooks = false,
   }) async {
     final post = await _posts.create(
       spaceId: spaceId,
@@ -423,13 +424,16 @@ class VaultStore extends ChangeNotifier {
     _resortSpacesByUsage();
     notifyListeners();
 
-    final space = spaceById(spaceId);
-    if (space != null) {
-      _scheduleHooks(
+    if (!skipHooks) {
+      final space = spaceById(spaceId);
+      if (space != null) {
+        _scheduleHooks(
           post: post,
           original: null,
           space: space,
-          trigger: HookTrigger.create);
+          trigger: HookTrigger.create,
+        );
+      }
     }
     return post;
   }
@@ -445,6 +449,7 @@ class VaultStore extends ChangeNotifier {
     String? thumbnail,
     List<String> tags = const [],
     List<String> fileIds = const [],
+    bool skipHooks = false,
   }) async {
     final list = _postCache[spaceId];
     if (list == null) return;
@@ -472,13 +477,16 @@ class VaultStore extends ChangeNotifier {
       return p;
     });
 
-    final space = spaceById(spaceId);
-    if (space != null) {
-      _scheduleHooks(
+    if (!skipHooks) {
+      final space = spaceById(spaceId);
+      if (space != null) {
+        _scheduleHooks(
           post: updated,
           original: previous,
           space: space,
-          trigger: HookTrigger.edit);
+          trigger: HookTrigger.edit,
+        );
+      }
     }
   }
 
@@ -1035,6 +1043,48 @@ class VaultStore extends ChangeNotifier {
     }
   }
 
+  /// Returns all enabled hooks whose space/kind/tag filters match [post].
+  /// Trigger filters are ignored here — the manual-run UI lets the user
+  /// fire a hook regardless of which lifecycle event would have triggered
+  /// it, and the appropriate trigger value is chosen per-hook at
+  /// execution time (see [retryHook]).
+  List<Hook> applicableHooksFor(String spaceId, String postId) {
+    Post? found;
+    for (final p in _postCache[spaceId] ?? const <Post>[]) {
+      if (p.id == postId) {
+        found = p;
+        break;
+      }
+    }
+    if (found == null) return const [];
+    final post = found;
+    final space = spaceById(spaceId);
+    if (space == null) return const [];
+
+    return _hooks.all.where((h) {
+      if (!h.enabled) return false;
+      if (h.spaceIds.isNotEmpty && !h.spaceIds.contains(space.id)) {
+        return false;
+      }
+      if (h.postKinds.isNotEmpty && !h.postKinds.contains(post.kind)) {
+        return false;
+      }
+      if (h.tagFilters.isNotEmpty &&
+          !h.tagFilters.any((t) => post.tags.contains(t))) {
+        return false;
+      }
+      if (h.triggers.isEmpty) return false;
+      return true;
+    }).toList();
+  }
+
+  HookTrigger _triggerForManualRun(Hook hook, Post post) {
+    final preferred =
+        post.editedAt == null ? HookTrigger.create : HookTrigger.edit;
+    if (hook.triggers.contains(preferred)) return preferred;
+    return hook.triggers.first;
+  }
+
   Future<void> retryHook(String spaceId, String postId, String hookKey) async {
     Post? post;
     for (final p in _postCache[spaceId] ?? const <Post>[]) {
@@ -1093,8 +1143,7 @@ class VaultStore extends ChangeNotifier {
           original: null,
           parent: parentPost,
           space: space,
-          trigger:
-              post.editedAt == null ? HookTrigger.create : HookTrigger.edit,
+          trigger: _triggerForManualRun(hook, post),
           priorStates: post.hookState,
           parentPriorStates: parentPost?.hookState ?? const {},
           files: files,

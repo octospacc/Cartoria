@@ -47,6 +47,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   final Set<String> _expanded = {};
   bool _sending = false;
   bool _searchActive = false;
+  bool _skipHooks = false;
 
   final ItemScrollController _feedScroll = ItemScrollController();
   final ItemScrollController _searchScroll = ItemScrollController();
@@ -374,6 +375,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         tags: _extractTags(body),
         fileIds: List.of(_pendingFileIds),
         createdAt: _postDateTime,
+        skipHooks: _skipHooks,
       );
       if (!mounted) return;
       _bodyCtrl.clear();
@@ -381,6 +383,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       setState(() {
         _pendingFileIds.clear();
         _postDateTime = null;
+        _skipHooks = false;
       });
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -438,6 +441,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       tags: _extractTags(result.body),
       fileIds: result.fileIds,
       createdAt: result.createdAt,
+      skipHooks: result.skipHooks,
     );
     if (mounted) setState(() => _expanded.add(parent.id));
   }
@@ -483,6 +487,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       fileIds: result.fileIds,
       createdAt: result.createdAt,
       quotedPostId: result.quotedPostId,
+      skipHooks: result.skipHooks,
     );
   }
 
@@ -508,6 +513,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       thumbnail: result.thumbnail,
       tags: _extractTags(result.body),
       fileIds: result.fileIds,
+      skipHooks: result.skipHooks,
     );
   }
 
@@ -896,9 +902,11 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                     onSend: _sending ? null : _send,
                     onRemoveFile: (id) =>
                         setState(() => _pendingFileIds.remove(id)),
-                    postDateTime: _postDateTime, // ← new
+                    postDateTime: _postDateTime,
                     onPostDateTimeChanged: (v) =>
-                        setState(() => _postDateTime = v), // ← new
+                        setState(() => _postDateTime = v),
+                    skipHooks: _skipHooks,
+                    onSkipHooksChanged: (v) => setState(() => _skipHooks = v),
                   ),
                 ),
             ],

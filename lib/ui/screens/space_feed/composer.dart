@@ -77,6 +77,11 @@ class ComposerResult {
   /// post's quote reference is preserved by `updatePost` regardless.
   final String? quotedPostId;
 
+  /// When true, hooks are not fired for this save. Only meaningful for
+  /// create and edit actions; ignored when composing a reply or quote
+  /// that reuses the previous value (currently always false for both).
+  final bool skipHooks;
+
   const ComposerResult({
     required this.kind,
     required this.body,
@@ -87,6 +92,7 @@ class ComposerResult {
     required this.fileIds,
     this.createdAt,
     this.quotedPostId,
+    this.skipHooks = false,
   });
 }
 
@@ -108,6 +114,9 @@ class InlineComposer extends StatelessWidget {
   final DateTime? postDateTime;
   final ValueChanged<DateTime?> onPostDateTimeChanged;
 
+  final bool skipHooks;
+  final ValueChanged<bool> onSkipHooksChanged;
+
   const InlineComposer({
     super.key,
     required this.kind,
@@ -122,6 +131,8 @@ class InlineComposer extends StatelessWidget {
     required this.onRemoveFile,
     this.postDateTime,
     required this.onPostDateTimeChanged,
+    this.skipHooks = false,
+    required this.onSkipHooksChanged,
   });
 
   @override
@@ -192,6 +203,17 @@ class InlineComposer extends StatelessWidget {
               ),
             ),
             const Spacer(),
+            IconButton(
+              icon:
+                  Icon(skipHooks ? Icons.flash_off : Icons.flash_on, size: 20),
+              tooltip: skipHooks
+                  ? 'Hooks skipped this save — tap to re-enable'
+                  : 'Hooks will run on save — tap to skip',
+              color: skipHooks
+                  ? Theme.of(context).colorScheme.onSurfaceVariant
+                  : Theme.of(context).colorScheme.primary,
+              onPressed: () => onSkipHooksChanged(!skipHooks),
+            ),
             _DateTimeChip(
               value: postDateTime,
               onChanged: onPostDateTimeChanged,
@@ -206,7 +228,7 @@ class InlineComposer extends StatelessWidget {
               onPressed: onSend,
             ),
           ],
-        ),
+        )
       ],
     );
   }
@@ -320,6 +342,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
   String? _thumbnail;
   bool _fetching = false;
   DateTime? _postDateTime;
+  bool _skipHooks = false;
 
   @override
   void initState() {
@@ -429,6 +452,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
         fileIds: List.of(_fileIds),
         createdAt: widget.editing == null ? _postDateTime : null,
         quotedPostId: widget.editing == null ? widget.quoting?.id : null,
+        skipHooks: _skipHooks,
       ),
     );
   }
@@ -604,6 +628,26 @@ class _ComposerSheetState extends State<ComposerSheet> {
                   onChanged: (v) => setState(() => _postDateTime = v),
                 ),
               ],
+              const SizedBox(height: 12),
+              Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: theme.colorScheme.outlineVariant),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: SwitchListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                  title: const Text('Run hooks on save'),
+                  subtitle: Text(
+                    _skipHooks
+                        ? 'Hooks will be skipped. You can trigger them later from the '
+                            'post menu.'
+                        : 'Matching hooks will fire when you tap ${_submitLabel.toLowerCase()}.',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  value: !_skipHooks,
+                  onChanged: (v) => setState(() => _skipHooks = !v),
+                ),
+              ),
               const SizedBox(height: 12),
               if (_fileIds.isNotEmpty)
                 Wrap(
