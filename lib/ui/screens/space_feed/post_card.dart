@@ -8,6 +8,7 @@ import '../../../util/hook_outcome.dart';
 import '../../widgets/file_thumbnail.dart';
 import '../../widgets/hook_status_dialog.dart';
 import '../../widgets/post_source_dialog.dart';
+import '../../widgets/post_body.dart';
 import 'inline_media.dart';
 import 'link_preview_card.dart';
 import 'media_widgets.dart';
@@ -146,11 +147,10 @@ class PostCard extends StatelessWidget {
                         ),
                         if (plaintext.isNotEmpty) ...[
                           const SizedBox(height: 4),
-                          Text(
-                            plaintext,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              height: 1.4,
-                            ),
+                          PostBodyText(
+                            html: post.body,
+                            style: theme.textTheme.bodyMedium
+                                ?.copyWith(height: 1.4),
                           ),
                         ],
                         if (isBookmark && post.url != null) ...[

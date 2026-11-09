@@ -2,7 +2,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-/// One segment of a parsed post body: either plain text or a link.
+// ── Parsed body runs ──────────────────────────────────────────────────────
+
 class _BodyRun {
   final String text;
   final String? href;
@@ -19,24 +20,24 @@ class _BodyRun {
 ///   * `<p>…</p>` → paragraph breaks
 ///   * bare URLs in non-link text → link runs (href == display)
 ///
-/// Non-link text is HTML-unescaped. Link display and href values are also
-/// unescaped. Trailing punctuation on bare URLs (`.`, `,`, `;`, unmatched
-/// closing brackets) is stripped from the URL and re-emitted as text, so
-/// "see https://example.com." links `https://example.com` and leaves the
-/// period outside.
+/// Non-link text is HTML-unescaped. Link display and href values are
+/// also unescaped. Trailing punctuation on bare URLs (`.`, `,`, `;`,
+/// unmatched closing brackets) is stripped from the URL and re-emitted
+/// as text, so "see https://example.com." links `https://example.com`
+/// and leaves the period outside.
 List<_BodyRun> _parseBodyRuns(String html) {
   if (html.trim().isEmpty) return const [];
 
   var s = html;
 
-  // Normalize paragraph boundaries to exactly one blank line ("\n\n").
+  // Normalise paragraph boundaries to exactly one blank line ("\n\n").
   // The on-disk format emits "<p>…</p>\n<p>…</p>", so blindly replacing
-  // "</p>" with "\n\n" leaves the input's own "\n" in place and produces
-  // three newlines per boundary. Extracting each <p>'s inner content and
-  // re-joining with a single separator ignores whatever whitespace sits
-  // between tags, so the gap is always exactly two newlines.
-  final pRe =
-      RegExp(r'<p[^>]*>(.*?)</p\s*>', caseSensitive: false, dotAll: true);
+  // "</p>" with "\n\n" would leave the input's own "\n" in place and
+  // produce three newlines per boundary. Extracting each <p>'s inner
+  // content and re-joining with a single separator ignores whatever
+  // whitespace sits between tags.
+  final pRe = RegExp(r'<p[^>]*>(.*?)</p\s*>',
+      caseSensitive: false, dotAll: true);
   final paragraphMatches = pRe.allMatches(s).toList();
   if (paragraphMatches.isNotEmpty) {
     final sb = StringBuffer();
@@ -47,8 +48,7 @@ List<_BodyRun> _parseBodyRuns(String html) {
     s = sb.toString();
   }
 
-  // Inside-paragraph line breaks (from `<br>` in the source or the script's
-  // multi-line facet rendering).
+  // Inside-paragraph line breaks (from `<br>` in the source).
   s = s.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
 
   final runs = <_BodyRun>[];
@@ -74,12 +74,14 @@ List<_BodyRun> _parseBodyRuns(String html) {
   }
 
   // Trim leading/trailing whitespace on the boundary runs only.
-  while (
-      runs.isNotEmpty && !runs.first.isLink && runs.first.text.trim().isEmpty) {
+  while (runs.isNotEmpty &&
+      !runs.first.isLink &&
+      runs.first.text.trim().isEmpty) {
     runs.removeAt(0);
   }
-  while (
-      runs.isNotEmpty && !runs.last.isLink && runs.last.text.trim().isEmpty) {
+  while (runs.isNotEmpty &&
+      !runs.last.isLink &&
+      runs.last.text.trim().isEmpty) {
     runs.removeLast();
   }
   if (runs.isNotEmpty && !runs.first.isLink) {
@@ -119,9 +121,9 @@ void _emitText(String raw, List<_BodyRun> out) {
 /// Splits trailing punctuation off [raw], returning (url, trailing).
 ///
 /// `.,;:!?` and quotes are always stripped. Closing brackets `)]}` are
-/// stripped only when unbalanced — `https://example.com/a_(b)` keeps its
-/// balanced `)`, while `(see https://example.com/a)` strips the unmatched
-/// outer `)`.
+/// stripped only when unbalanced — `https://example.com/a_(b)` keeps
+/// its balanced `)`, while `(see https://example.com/a)` strips the
+/// unmatched outer `)`.
 (String, String) _splitTrailing(String raw) {
   var url = raw;
   var trailing = '';
@@ -154,6 +156,8 @@ String _unescape(String s) => s
     .replaceAll('&#39;', "'")
     .replaceAll('&amp;', '&');
 
+// ── Widget ────────────────────────────────────────────────────────────────
+
 /// Renders a post body with inline clickable links.
 ///
 /// Reads from [html] (the post's on-disk body) rather than plaintext, so
@@ -179,8 +183,8 @@ class _PostBodyTextState extends State<PostBodyText> {
   List<_BodyRun>? _cachedRuns;
   String? _cachedHtml;
 
-  // Recognizers are recreated on every build (cheap) but must be disposed
-  // to avoid leaks. The list is replaced wholesale each build.
+  // Recognizers are recreated on every build (cheap) but must be
+  // disposed to avoid leaks. The list is replaced wholesale each build.
   List<TapGestureRecognizer> _recognizers = const [];
 
   @override
