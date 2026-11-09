@@ -243,53 +243,35 @@ class _InlineVideoState extends State<_InlineVideo> {
   VideoController? _controller;
   String? _uri;
   String? _error;
-  bool _loading = false;
+  bool _downloading = false;
 
-  Future<void> _start() async {
-    if (_loading || _player != null) return;
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
 
-    final offloaded =
-        widget.store.offloadedFileIds(widget.spaceId).contains(widget.file.id);
+  Future<void> _init() async {
+    final offloaded = widget.store
+        .offloadedFileIds(widget.spaceId)
+        .contains(widget.file.id);
 
-    if (offloaded) {
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Download from remote?'),
-          content: Text('"${widget.file.name}" is not on this device. '
-              'Fetch it now?'),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Cancel')),
-            FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Download')),
-          ],
-        ),
-      );
-      if (ok != true) return;
-      if (!mounted) return;
-      try {
-        await widget.store.fetchOffloadedFile(widget.spaceId, widget.file.id);
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text('Download failed: $e')));
-        }
-        return;
-      }
-      if (!mounted) return;
-    }
+    // Don't eager-load offloaded videos — reading them would trigger a
+    // network fetch every time the card enters the viewport. They show
+    // the poster card instead and load on tap.
+    if (offloaded) return;
 
-    setState(() => _loading = true);
     try {
       final bytes =
           await widget.store.readFileBytes(widget.spaceId, widget.file.id);
       final uri = await prepareMediaUri(bytes, widget.file.name);
       final player = Player();
       final controller = VideoController(player);
-      await player.open(Media(uri));
+      // Load paused. The decoder produces frame 0, which renders as
+      // the preview. Tapping the play button (via the built-in
+      // MaterialPlayOrPauseButton) starts playback without any extra
+      // user gesture — the player is already warm.
+      await player.open(Media(uri), play: false);
       if (!mounted) {
         await player.dispose();
         await releaseMediaUri(uri);
@@ -298,14 +280,46 @@ class _InlineVideoState extends State<_InlineVideo> {
       _uri = uri;
       _player = player;
       _controller = controller;
-      setState(() => _loading = false);
+      setState(() {});
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    }
+  }
+
+  Future<void> _downloadThenInit() async {
+    if (_downloading) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Download from remote?'),
+        content: Text('"${widget.file.name}" is not on this device. '
+            'Fetch it now?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Download')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _downloading = true);
+    try {
+      await widget.store.fetchOffloadedFile(widget.spaceId, widget.file.id);
+      if (!mounted) return;
+      setState(() {});  // triggers rebuild; init runs next via didUpdateWidget path
+      await _init();
     } catch (e) {
       if (mounted) {
-        setState(() {
-          _loading = false;
-          _error = e.toString();
-        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Download failed: $e')),
+        );
       }
+    } finally {
+      if (mounted) setState(() => _downloading = false);
     }
   }
 
@@ -323,29 +337,43 @@ class _InlineVideoState extends State<_InlineVideo> {
       return MediaErrorCard(
         file: widget.file,
         message: 'Cannot play video',
-        onRetry: () => setState(() => _error = null),
+        onRetry: () => setState(() {
+          _error = null;
+          _init();
+        }),
       );
     }
+
     final controller = _controller;
     final player = _player;
+
     if (controller == null || player == null) {
+      // Either still loading, failed silently, or offloaded. The preview
+      // card doubles as the loading placeholder.
       final offloaded = widget.store
           .offloadedFileIds(widget.spaceId)
           .contains(widget.file.id);
       return _VideoPreviewCard(
         file: widget.file,
         isOffloaded: offloaded,
-        loading: _loading,
-        onTap: _start,
+        loading: _downloading,
+        onTap: offloaded ? _downloadThenInit : () {},
       );
     }
+
+    // Video loaded, paused, first frame visible. Controls let the user
+    // play/pause/seek. No outer InkWell — Video's own controls handle
+    // taps so play/pause works normally.
     return Align(
       alignment: Alignment.centerLeft,
       child: FittedBox(
         fit: BoxFit.scaleDown,
         child: ConstrainedBox(
           constraints: const BoxConstraints(
-              minWidth: 300, maxWidth: 600, maxHeight: 320),
+            minWidth: 300,
+            maxWidth: 600,
+            maxHeight: 320,
+          ),
           child: StreamBuilder<int?>(
             stream: player.stream.width,
             initialData: player.state.width,
@@ -356,9 +384,10 @@ class _InlineVideoState extends State<_InlineVideo> {
                 builder: (context, hSnap) {
                   final w = wSnap.data;
                   final h = hSnap.data;
-                  final ratio = (w != null && h != null && w > 0 && h > 0)
-                      ? w / h
-                      : 16.0 / 9.0;
+                  final ratio =
+                      (w != null && h != null && w > 0 && h > 0)
+                          ? w / h
+                          : 16.0 / 9.0;
                   return AspectRatio(
                     aspectRatio: ratio,
                     child: MaterialVideoControlsTheme(
