@@ -139,6 +139,13 @@ class Hook {
   final List<HookRule> rules;
   final int timeoutSeconds;
 
+  /// Named constants available to templates as `{{vars.<name>}}`.
+  /// Values are literal — they are not re-interpolated, so a value
+  /// containing `{{...}}` renders as the literal text. Useful for
+  /// tokens, chat IDs, base URLs, or anything reused across several
+  /// rules.
+  final Map<String, String> variables;
+
   const Hook({
     required this.id,
     required this.key,
@@ -150,6 +157,7 @@ class Hook {
     this.tagFilters = const {},
     required this.rules,
     this.timeoutSeconds = 15,
+    this.variables = const {},
   });
 
   Hook withEnabled(bool value) => Hook(
@@ -163,6 +171,7 @@ class Hook {
         tagFilters: tagFilters,
         rules: rules,
         timeoutSeconds: timeoutSeconds,
+        variables: variables,
       );
 
   bool matches({
@@ -192,6 +201,7 @@ class Hook {
         'postKinds': postKinds.map((k) => k.name).toList(),
         'tagFilters': tagFilters.toList(),
         'timeoutSeconds': timeoutSeconds,
+        if (variables.isNotEmpty) 'variables': variables,
         'rules': rules.map((r) => r.toJson()).toList(),
       };
 
@@ -222,6 +232,8 @@ class Hook {
           ((j['tagFilters'] as List?) ?? const []).cast<String>().toSet(),
       rules: rules,
       timeoutSeconds: (j['timeoutSeconds'] as int?) ?? 15,
+      variables: ((j['variables'] as Map?) ?? const {})
+          .cast<String, String>(),
     );
   }
 }

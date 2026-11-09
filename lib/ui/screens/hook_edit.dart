@@ -27,6 +27,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
   late Set<HookTrigger> _triggers;
   late Set<PostKind> _postKinds;
   late List<_RuleRow> _rules;
+  late List<_VarRow> _variables;
 
   String? _error;
   bool _saving = false;
@@ -55,10 +56,16 @@ class _HookEditScreenState extends State<HookEditScreen> {
     _tagFilters =
         TextEditingController(text: (hook?.tagFilters ?? const {}).join(','));
     _spaceIds = {...(hook?.spaceIds ?? const {})};
-    _triggers = {...(hook?.triggers ?? {HookTrigger.create})};
+    _triggers = {
+      ...(hook?.triggers ?? {HookTrigger.create})
+    };
     _postKinds = {...(hook?.postKinds ?? const {})};
     _rules = (hook?.rules ?? const [HookRule(urlTemplate: '')])
         .map(_RuleRow.fromRule)
+        .toList();
+    _variables = (hook?.variables ?? const <String, String>{})
+        .entries
+        .map((e) => _VarRow.fromEntry(e.key, e.value))
         .toList();
   }
 
@@ -69,6 +76,9 @@ class _HookEditScreenState extends State<HookEditScreen> {
     _tagFilters.dispose();
     for (final r in _rules) {
       r.dispose();
+    }
+    for (final v in _variables) {
+      v.dispose();
     }
   }
 
@@ -87,6 +97,16 @@ class _HookEditScreenState extends State<HookEditScreen> {
       _disposeCurrent();
       _loadFrom(result);
     });
+  }
+
+  Map<String, String> _collectVariables() {
+    final out = <String, String>{};
+    for (final v in _variables) {
+      final name = v.name.text.trim();
+      if (name.isEmpty) continue;
+      out[name] = v.value.text;
+    }
+    return out;
   }
 
   /// Best-effort snapshot of the current form state for the JSON view.
@@ -114,6 +134,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
       postKinds: _postKinds,
       tagFilters: tags,
       rules: rules,
+      variables: _collectVariables(),
       timeoutSeconds: int.tryParse(_timeout.text.trim()) ?? 15,
     );
   }
@@ -129,17 +150,12 @@ class _HookEditScreenState extends State<HookEditScreen> {
           parts.add(HookMultipartPart(
             name: pname,
             filePath: p.value.text.trim(),
-            filename: p.filename.text.trim().isEmpty
-                ? null
-                : p.filename.text.trim(),
+            filename:
+                p.filename.text.trim().isEmpty ? null : p.filename.text.trim(),
             repeat: p.repeat ? 'post.files' : null,
             join: p.repeat && p.join.text.isNotEmpty ? p.join.text : null,
-            prefix: p.repeat && p.prefix.text.isNotEmpty
-                ? p.prefix.text
-                : null,
-            suffix: p.repeat && p.suffix.text.isNotEmpty
-                ? p.suffix.text
-                : null,
+            prefix: p.repeat && p.prefix.text.isNotEmpty ? p.prefix.text : null,
+            suffix: p.repeat && p.suffix.text.isNotEmpty ? p.suffix.text : null,
           ));
         } else {
           parts.add(HookMultipartPart(
@@ -147,12 +163,8 @@ class _HookEditScreenState extends State<HookEditScreen> {
             template: p.value.text,
             repeat: p.repeat ? 'post.files' : null,
             join: p.repeat && p.join.text.isNotEmpty ? p.join.text : null,
-            prefix: p.repeat && p.prefix.text.isNotEmpty
-                ? p.prefix.text
-                : null,
-            suffix: p.repeat && p.suffix.text.isNotEmpty
-                ? p.suffix.text
-                : null,
+            prefix: p.repeat && p.prefix.text.isNotEmpty ? p.prefix.text : null,
+            suffix: p.repeat && p.suffix.text.isNotEmpty ? p.suffix.text : null,
           ));
         }
       } catch (_) {
@@ -200,8 +212,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
       var key = _key.text.trim();
       if (key.isEmpty) key = _suggestKey(name);
       if (!RegExp(r'^[a-z][a-z0-9_]*$').hasMatch(key)) {
-        throw ArgumentError(
-            'Key must be lowercase letters/digits/underscore');
+        throw ArgumentError('Key must be lowercase letters/digits/underscore');
       }
       if (_triggers.isEmpty) {
         throw ArgumentError('Select at least one trigger');
@@ -229,6 +240,27 @@ class _HookEditScreenState extends State<HookEditScreen> {
           .where((s) => s.isNotEmpty)
           .toSet();
 
+// Validate variables.
+      final seenNames = <String>{};
+      for (var i = 0; i < _variables.length; i++) {
+        final v = _variables[i];
+        final name = v.name.text.trim();
+        if (name.isEmpty) {
+          // Skip empty rows silently — the user might have tapped "Add"
+          // without filling in the name yet.
+          continue;
+        }
+        if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$').hasMatch(name)) {
+          throw ArgumentError(
+              'Variable ${i + 1}: name must start with a letter or '
+              'underscore and contain only letters, digits, and underscores');
+        }
+        if (!seenNames.add(name)) {
+          throw ArgumentError('Variable ${i + 1}: name "$name" is duplicated');
+        }
+      }
+      final variables = _collectVariables();
+
       final hook = Hook(
         id: _workingId,
         key: key,
@@ -239,8 +271,8 @@ class _HookEditScreenState extends State<HookEditScreen> {
         postKinds: _postKinds,
         tagFilters: tags,
         rules: rules,
-        timeoutSeconds:
-            int.tryParse(_timeout.text.trim())?.clamp(1, 120) ?? 15,
+        variables: variables,
+        timeoutSeconds: int.tryParse(_timeout.text.trim())?.clamp(1, 120) ?? 15,
       );
       await widget.store.saveHook(hook);
       if (mounted) Navigator.pop(context);
@@ -281,8 +313,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
               child: Text(_error!,
-                  style: TextStyle(
-                      color: Theme.of(context).colorScheme.error)),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
             ),
           TextField(
             controller: _name,
@@ -370,6 +401,33 @@ class _HookEditScreenState extends State<HookEditScreen> {
               border: OutlineInputBorder(),
             ),
             keyboardType: TextInputType.number,
+          ),
+          const SizedBox(height: 24),
+          _section('Variables'),
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8),
+            child: Text(
+              'Named constants usable in any template as {{vars.NAME}}. '
+              'Values are literal — they are not re-interpolated. '
+              'Useful for tokens, chat IDs, or anything reused across rules.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ),
+          ..._variables.asMap().entries.map((e) => _VariableRow(
+                key: ValueKey(e.value.id),
+                row: e.value,
+                onChanged: () => setState(() {}),
+                onDelete: () => setState(() {
+                  e.value.dispose();
+                  _variables.removeAt(e.key);
+                }),
+              )),
+          TextButton.icon(
+            onPressed: () => setState(() {
+              _variables.add(_VarRow.empty());
+            }),
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Add variable'),
           ),
           const SizedBox(height: 24),
           _section('Rules'),
@@ -610,6 +668,35 @@ class _PartRow {
   }
 }
 
+class _VarRow {
+  final String id;
+  final TextEditingController name;
+  final TextEditingController value;
+
+  _VarRow({
+    required this.id,
+    required this.name,
+    required this.value,
+  });
+
+  factory _VarRow.empty() => _VarRow(
+        id: const Uuid().v4(),
+        name: TextEditingController(),
+        value: TextEditingController(),
+      );
+
+  factory _VarRow.fromEntry(String name, String value) => _VarRow(
+        id: const Uuid().v4(),
+        name: TextEditingController(text: name),
+        value: TextEditingController(text: value),
+      );
+
+  void dispose() {
+    name.dispose();
+    value.dispose();
+  }
+}
+
 // ── Rule card ──────────────────────────────────────────────────────────────
 
 class _RuleCard extends StatelessWidget {
@@ -670,8 +757,7 @@ class _RuleCard extends StatelessWidget {
                     value: row.method,
                     decoration: const InputDecoration(labelText: 'Method'),
                     items: const ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
-                        .map((m) =>
-                            DropdownMenuItem(value: m, child: Text(m)))
+                        .map((m) => DropdownMenuItem(value: m, child: Text(m)))
                         .toList(),
                     onChanged: (v) {
                       row.method = v ?? 'POST';
@@ -715,16 +801,14 @@ class _RuleCard extends StatelessWidget {
                     Expanded(
                       child: TextField(
                         controller: pair.key,
-                        decoration:
-                            const InputDecoration(labelText: 'Name'),
+                        decoration: const InputDecoration(labelText: 'Name'),
                       ),
                     ),
                     const SizedBox(width: 6),
                     Expanded(
                       child: TextField(
                         controller: pair.value,
-                        decoration:
-                            const InputDecoration(labelText: 'Value'),
+                        decoration: const InputDecoration(labelText: 'Value'),
                       ),
                     ),
                     IconButton(
@@ -922,6 +1006,69 @@ class _PartCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _VariableRow extends StatelessWidget {
+  final _VarRow row;
+  final VoidCallback onChanged;
+  final VoidCallback onDelete;
+
+  const _VariableRow({
+    super.key,
+    required this.row,
+    required this.onChanged,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 160,
+            child: TextField(
+              controller: row.name,
+              decoration: const InputDecoration(
+                labelText: 'Name',
+                hintText: 'bot_token',
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 13,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: row.value,
+              decoration: const InputDecoration(
+                labelText: 'Value',
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 13,
+              ),
+              minLines: 1,
+              maxLines: 4,
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.remove_circle_outline),
+            tooltip: 'Remove variable',
+            onPressed: onDelete,
+          ),
+        ],
       ),
     );
   }

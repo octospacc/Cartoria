@@ -93,6 +93,9 @@ class TemplateContext {
           case 'name': return hook.name;
         }
         return null;
+      case 'vars':
+        if (parts.length != 2) return null;
+        return hook.variables[parts[1]];
       case 'trigger':
         return trigger.name;
       case 'now':
