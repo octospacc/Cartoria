@@ -677,36 +677,55 @@ class SyncService {
 
   /// SHA-only variant used by pull, which never needs the sizes.
   Future<Map<String, String>> _collectLocalFileShas() async {
+    final cached = await cacheStore?.loadLocalShas(config.cacheKey) ?? const {};
+
     final out = <String, String>{};
+    final updated = <String, ({int size, DateTime mtime, String sha})>{};
     final root = fs.directory(vaultPath);
     if (!await root.exists()) return out;
+
     final files = await walkFiles(root);
     var sinceYield = 0;
+    var reused = 0;
+    var rescanned = 0;
+
     for (final f in files) {
       final rel = p.relative(f.path, from: vaultPath);
       if (_isExcluded(rel)) continue;
-
-      // Drive files don't need SHAs during pull. Phase 2 handles them by
-      // directory listing + remote SHA. Removing them from the scan cuts
-      // transient allocations by 90%+ on a media-heavy vault — the
-      // difference between surviving and OOM on iOS Safari.
       if (_isDrivePath(rel)) continue;
 
       try {
+        final stat = await f.stat();
+        final cachedEntry = cached[rel];
+        if (cachedEntry != null &&
+            cachedEntry.size == stat.size &&
+            cachedEntry.mtime == stat.modified) {
+          // File unchanged since last scan — reuse cached SHA without
+          // reading content. This is the fast path for repeated pulls:
+          // stat() on IndexedDB is ~50× faster than readAsBytes().
+          out[rel] = cachedEntry.sha;
+          updated[rel] = cachedEntry;
+          reused++;
+          continue;
+        }
+        // File is new or changed — read and hash.
         final bytes = await f.readAsBytes();
-        out[rel] = gitBlobSha(bytes);
+        final sha = gitBlobSha(bytes);
+        out[rel] = sha;
+        updated[rel] = (size: stat.size, mtime: stat.modified, sha: sha);
+        rescanned++;
       } catch (_) {}
 
       sinceYield++;
-      // `Duration.zero` schedules a microtask that WebKit's timer-based
-      // collector never sees. 20 ms reaches the timer queue and actually
-      // triggers GC. Every 30 files keeps the added latency to ~20 ms ×
-      // (file count / 30), which is ~380 ms for a 569-file scan.
-      if (kIsWeb && sinceYield >= 30) {
+      if (kIsWeb && sinceYield >= 10) {
         sinceYield = 0;
         await Future<void>.delayed(const Duration(milliseconds: 20));
       }
     }
+
+    // Persist the updated cache for the next pull.
+    await cacheStore?.saveLocalShas(config.cacheKey, updated);
+    debugPrint('Scan: $reused reused, $rescanned rescanned');
     return out;
   }
 

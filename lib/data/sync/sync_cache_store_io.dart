@@ -39,14 +39,55 @@ class SyncCacheStore {
     final dir = await getApplicationSupportDirectory();
     await fs.directory(dir.path).create(recursive: true);
     await fs.file(await _path(cacheKey)).writeAsString(jsonEncode({
-      'files': files,
-      'commitSha': commitSha,
-      'savedAt': DateTime.now().toUtc().toIso8601String(),
-    }));
+          'files': files,
+          'commitSha': commitSha,
+          'savedAt': DateTime.now().toUtc().toIso8601String(),
+        }));
   }
 
   Future<void> clear(String cacheKey) async {
     final f = fs.file(await _path(cacheKey));
     if (await f.exists()) await f.delete();
+  }
+
+  Future<Map<String, ({int size, DateTime mtime, String sha})>> loadLocalShas(
+      String cacheKey) async {
+    final f = fs.file(await _shaPath(cacheKey));
+    if (!await f.exists()) return {};
+    try {
+      final raw = jsonDecode(await f.readAsString()) as Map;
+      return raw.map((k, v) {
+        final m = (v as Map).cast<String, dynamic>();
+        return MapEntry(k as String, (
+          size: m['size'] as int,
+          mtime: DateTime.parse(m['mtime'] as String),
+          sha: m['sha'] as String,
+        ));
+      });
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> saveLocalShas(
+    String cacheKey,
+    Map<String, ({int size, DateTime mtime, String sha})> data,
+  ) async {
+    final dir = await getApplicationSupportDirectory();
+    await fs.directory(dir.path).create(recursive: true);
+    final safe = cacheKey.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+    final path = p.join(dir.path, 'local_shas_$safe.json');
+    final json = data.map((k, v) => MapEntry(k, {
+          'size': v.size,
+          'mtime': v.mtime.toIso8601String(),
+          'sha': v.sha,
+        }));
+    await fs.file(path).writeAsString(jsonEncode(json));
+  }
+
+  Future<String> _shaPath(String cacheKey) async {
+    final dir = await getApplicationSupportDirectory();
+    final safe = cacheKey.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+    return p.join(dir.path, 'local_shas_$safe.json');
   }
 }
