@@ -1291,24 +1291,22 @@ class VaultStore extends ChangeNotifier {
           provider: provider,
           cacheStore: _syncCacheStore,
           scope: scope);
+      clearImageCacheForSync();
       final result = await service.pull(
           token: token,
           onProgress: onProgress,
           offloadedStore: _offloadedStore);
-      await saveSyncConfig(
-          config.copyWith(lastSyncedAt: DateTime.now().toUtc()));
+      await saveSyncConfig(config.copyWith(
+        lastSyncedAt: DateTime.now().toUtc(),
+      ));
 
-      // Only re-parse the vault if pull actually changed something. A pull
-      // with no changes is the common second-in-a-row case, and reloading
-      // 26K posts costs ~30 seconds and a large allocation burst on web —
-      // exactly the peak that pushed iOS Safari over its memory limit in
-      // the alternating crash pattern.
       final changed =
           result.pulled > 0 || result.deleted > 0 || result.offloaded > 0;
       if (changed) {
         await reload();
+        clearImageCacheForSync(); // see Fix D
       } else {
-        notifyListeners(); // update lastSyncedAt in the UI
+        notifyListeners();
       }
       return result;
     } finally {
@@ -1321,13 +1319,33 @@ class VaultStore extends ChangeNotifier {
     final root = fs.directory(vaultPath);
     if (!await root.exists()) return;
     final files = await walkFiles(root);
+
     for (final f in files) {
       try {
         final rel = p.relative(f.path, from: vaultPath);
+
+        // On web, skip drive blobs from the pre-pull backup. They are:
+        //  (a) the source of the memory blowup — summing 182 media files
+        //      into the Archive + encoding the zip needs 2× their size,
+        //      which exceeds iOS Safari's heap budget;
+        //  (b) recoverable from the sync remote, which is exactly where
+        //      pull just fetched them from.
+        // The critical data — posts, drive_meta.json, space.json, hooks,
+        // settings — is a few MB and is what the backup actually protects.
+        if (kIsWeb && _isDriveBlob(rel)) continue;
+
         final bytes = await f.readAsBytes();
         archive.addFile(ArchiveFile(rel, bytes.length, bytes));
+
+        // Even non-drive files should yield on web to keep the heap
+        // bounded. 569 posts is ~1 MB total, but the yield costs nothing
+        // and prevents regressions if posts ever grow in size.
+        if (kIsWeb) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
       } catch (_) {}
     }
+
     final stamp = DateTime.now()
         .toIso8601String()
         .replaceAll(RegExp(r'[^0-9T]'), '')
@@ -1345,7 +1363,21 @@ class VaultStore extends ChangeNotifier {
     await fs
         .file(p.join(backupDir.path, 'pre-pull-$stamp.zip'))
         .writeAsBytes(zipBytes);
+    debugPrint('Pre-pull backup: '
+        '${(zipBytes.length / 1024).toStringAsFixed(0)} KB, '
+        '${archive.files.length} file(s)');
+
     await _pruneOldBackups(backupDir, keep: kIsWeb ? 3 : 10);
+  }
+
+  /// True if [relPath] is a drive blob (the binary file under
+  /// `<spaceId>/drive/`), as opposed to drive_meta.json or any other file.
+  bool _isDriveBlob(String relPath) {
+    // Path shape: "<spaceId>/drive/<fileId>[.<ext>]"
+    // The drive directory itself is one level deep.
+    final parts = relPath.split('/');
+    if (parts.length != 3) return false;
+    return parts[1] == 'drive';
   }
 
   Future<void> _pruneOldBackups(Directory dir, {required int keep}) async {
@@ -1378,6 +1410,18 @@ class VaultStore extends ChangeNotifier {
       if (p.createdAt.isAfter(max)) max = p.createdAt;
     }
     return max;
+  }
+
+  /// Frees full-resolution image bytes cached from browsing. Pull can be
+  /// memory-intensive on web; reclaiming these before starting gives the
+  /// sync path the full tab budget. Images reload on next view — slightly
+  /// slower afterwards, but pull stops crashing.
+  ///
+  /// The thumbnail cache is intentionally NOT cleared: it's bounded to
+  /// ~10 MB and regenerating it costs more than the memory it reclaims.
+  void clearImageCacheForSync() {
+    _imageCache.clear();
+    notifyListeners();
   }
 
   // ── Migrations ─────────────────────────────────────────────────────────

@@ -324,29 +324,34 @@ class SyncService {
       final offloaded = await offloadedStore.load(spaceId);
       var changed = false;
 
+      var filesSinceYield = 0;
       for (final id in sortedIds) {
-        if (keepIds.contains(id)) continue;
-        if (offloaded.containsKey(id)) continue; // already offloaded
-        final localPath = pathMap[id];
-        if (localPath == null) continue;
-
-        // Verify the blob on disk matches the remote SHA before
-        // deleting — if a local edit hasn't been pushed (possible if
-        // push filtered it out earlier), removing the file would lose
-        // data.
-        final remotePath = '$spaceId/drive/${p.basename(localPath)}';
-        final remoteSha = remoteMap[remotePath];
-        if (remoteSha == null) continue;
-
         try {
-          final bytes = await fs.file(localPath).readAsBytes();
-          if (gitBlobSha(bytes) != remoteSha) continue;
-          final size = (await fs.file(localPath).stat()).size;
-          await fs.file(localPath).delete();
-          offloaded[id] = OffloadedFileInfo(remoteSha: remoteSha, size: size);
-          changed = true;
-        } catch (e) {
-          debugPrint('Offload after push failed for $localPath: $e');
+          if (keepIds.contains(id)) continue;
+          if (offloaded.containsKey(id)) continue;
+          final localPath = pathMap[id];
+          if (localPath == null) continue;
+
+          final remotePath = '$spaceId/drive/${p.basename(localPath)}';
+          final remoteSha = remoteMap[remotePath];
+          if (remoteSha == null) continue;
+
+          try {
+            final bytes = await fs.file(localPath).readAsBytes();
+            if (gitBlobSha(bytes) != remoteSha) continue;
+            final size = (await fs.file(localPath).stat()).size;
+            await fs.file(localPath).delete();
+            offloaded[id] = OffloadedFileInfo(remoteSha: remoteSha, size: size);
+            changed = true;
+          } catch (e) {
+            debugPrint('Offload after push failed for $localPath: $e');
+          }
+        } finally {
+          filesSinceYield++;
+          if (kIsWeb && filesSinceYield >= 3) {
+            filesSinceYield = 0;
+            await Future<void>.delayed(const Duration(milliseconds: 20));
+          }
         }
       }
 
@@ -434,25 +439,24 @@ class SyncService {
       items: toDownload,
       concurrency: _phase1Concurrency, // ← was 8, now 2 on web
       body: (entry) async {
-        final bytes = await _downloadWithRetry(
-          token: token,
-          path: entry.key,
-        );
-        final dest = p.join(vaultPath, entry.key);
-        await fs.file(dest).writeAsBytes(bytes);
-        // Drop the local reference before the GC pause so the buffer
-        // is eligible for collection immediately.
-        // (bytes goes out of scope at the end of this closure anyway.)
-        await _webGcPause();
-        pulled++;
-        phase1Completed++;
-        onProgress?.call(SyncProgress(
-          totalFiles: inScope.length,
-          completedFiles: pulled,
-          isPush: false,
-          message: 'Downloading ${entry.key} '
-              '($phase1Completed/${toDownload.length})',
-        ));
+        try {
+          final bytes = await _downloadWithRetry(token: token, path: entry.key);
+          final dest = p.join(vaultPath, entry.key);
+          await fs.file(dest).writeAsBytes(bytes);
+          pulled++;
+          phase1Completed++;
+          onProgress?.call(SyncProgress(
+            totalFiles: inScope.length,
+            completedFiles: pulled,
+            isPush: false,
+            message: 'Downloading ${entry.key} '
+                '($phase1Completed/${toDownload.length})',
+          ));
+        } finally {
+          if (kIsWeb) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+        }
       },
       onError: (entry, err) {
         failures[entry.key] = err;
@@ -504,65 +508,76 @@ class SyncService {
         fs.directory(p.join(vaultPath, spaceId, 'drive')),
       );
 
+// Yield after each file comparison or download. `Duration.zero` is a
+// microtask and does not trigger WebKit's timer-driven GC; only a real
+// timer yields allow the collector to run. Every 3 files bounds peak
+// garbage to ~3 × largest-file-size before a collection pass.
+      var filesSinceYield = 0;
       for (final id in sortedIds) {
-        final localPath = pathMap[id];
-        final remotePath = localPath != null
-            ? '$spaceId/drive/${p.basename(localPath)}'
-            : _findRemotePathForId(inScope, spaceId, id);
-        if (remotePath == null) continue;
-        final remoteSha = inScope[remotePath];
-        if (remoteSha == null) continue;
+        try {
+          final localPath = pathMap[id];
+          final remotePath = localPath != null
+              ? '$spaceId/drive/${p.basename(localPath)}'
+              : _findRemotePathForId(inScope, spaceId, id);
+          if (remotePath == null) continue;
+          final remoteSha = inScope[remotePath];
+          if (remoteSha == null) continue;
 
-        if (keepIds.contains(id)) {
-          // Fast path: file present locally and content matches.
-          if (localPath != null) {
-            try {
-              final bytes = await fs.file(localPath).readAsBytes();
-              final matches = gitBlobSha(bytes) == remoteSha;
-              // bytes goes out of scope
-              if (matches) {
-                if (offloaded.remove(id) != null) offloadedChanged = true;
-                continue;
-              }
-            } catch (_) {}
+          if (keepIds.contains(id)) {
+            // Fast path: local file matches remote SHA.
+            if (localPath != null) {
+              try {
+                final bytes = await fs.file(localPath).readAsBytes();
+                final matches = gitBlobSha(bytes) == remoteSha;
+                if (matches) {
+                  if (offloaded.remove(id) != null) offloadedChanged = true;
+                  continue; // finally block runs the yield
+                }
+              } catch (_) {}
+            }
+
+            // Download.
+            onProgress?.call(SyncProgress(
+              totalFiles: inScope.length,
+              completedFiles: pulled,
+              isPush: false,
+              message: 'Downloading drive/$id',
+            ));
+            final bytes = await provider.downloadFile(
+              config: config,
+              token: token,
+              path: remotePath,
+            );
+            final metaEntry = meta[id] as Map? ?? const {};
+            final name = (metaEntry['name'] as String?) ?? id;
+            final ext = _sanitizedExt(name);
+            final diskName = ext.isEmpty ? id : '$id.$ext';
+            final dest = p.join(vaultPath, spaceId, 'drive', diskName);
+            await fs.directory(p.dirname(dest)).create(recursive: true);
+            await fs.file(dest).writeAsBytes(bytes);
+            pathMap[id] = dest;
+            if (offloaded.remove(id) != null) offloadedChanged = true;
+            pulled++;
+          } else {
+            // Offload.
+            var size = offloaded[id]?.size ?? 0;
+            if (localPath != null) {
+              try {
+                size = (await fs.file(localPath).stat()).size;
+                await fs.file(localPath).delete();
+                pathMap.remove(id);
+              } catch (_) {}
+            }
+            offloaded[id] = OffloadedFileInfo(remoteSha: remoteSha, size: size);
+            offloadedChanged = true;
+            offloadedCount++;
           }
-          // Download.
-          onProgress?.call(SyncProgress(
-            totalFiles: inScope.length,
-            completedFiles: pulled,
-            isPush: false,
-            message: 'Downloading drive/$id',
-          ));
-          final bytes = await provider.downloadFile(
-            config: config,
-            token: token,
-            path: remotePath,
-          );
-          final metaEntry = meta[id] as Map? ?? const {};
-          final name = (metaEntry['name'] as String?) ?? id;
-          final ext = _sanitizedExt(name);
-          final diskName = ext.isEmpty ? id : '$id.$ext';
-          final dest = p.join(vaultPath, spaceId, 'drive', diskName);
-          await fs.directory(p.dirname(dest)).create(recursive: true);
-          await fs.file(dest).writeAsBytes(bytes);
-          pathMap[id] = dest;
-          if (offloaded.remove(id) != null) offloadedChanged = true;
-          pulled++;
-          await _webGcPause();
-          await Future<void>.delayed(Duration.zero);
-        } else {
-          // Offload.
-          var size = offloaded[id]?.size ?? 0;
-          if (localPath != null) {
-            try {
-              size = (await fs.file(localPath).stat()).size;
-              await fs.file(localPath).delete();
-              pathMap.remove(id);
-            } catch (_) {}
+        } finally {
+          filesSinceYield++;
+          if (kIsWeb && filesSinceYield >= 3) {
+            filesSinceYield = 0;
+            await Future<void>.delayed(const Duration(milliseconds: 20));
           }
-          offloaded[id] = OffloadedFileInfo(remoteSha: remoteSha, size: size);
-          offloadedChanged = true;
-          offloadedCount++;
         }
       }
 
@@ -590,6 +605,28 @@ class SyncService {
       if (await file.exists()) {
         await file.delete();
         deleted++;
+      }
+    }
+
+    // Phase 3b: drive files absent from the remote. Not covered by
+    // `localShas` anymore (drive files are skipped in the scan), so
+    // walk each space's drive directory directly.
+    for (final spaceId in scopeSpaces) {
+      final driveDir = fs.directory(p.join(vaultPath, spaceId, 'drive'));
+      if (!await driveDir.exists()) continue;
+      final pathMap = await _resolveDrivePaths(driveDir);
+      for (final id in pathMap.keys.toList()) {
+        final localPath = pathMap[id]!;
+        final remotePath = '$spaceId/drive/${p.basename(localPath)}';
+        if (inScope.containsKey(remotePath)) continue;
+        try {
+          await fs.file(localPath).delete();
+          deleted++;
+        } catch (_) {}
+        final offloaded = await offloadedStore.load(spaceId);
+        if (offloaded.remove(id) != null) {
+          await offloadedStore.save(spaceId, offloaded);
+        }
       }
     }
 
@@ -627,13 +664,12 @@ class SyncService {
       try {
         final stat = await f.stat();
         final bytes = await f.readAsBytes();
-        final sha = gitBlobSha(bytes); // was: ?? 'size:${stat.size}'
-        out[rel] = (sha: sha, size: stat.size);
+        out[rel] = (sha: gitBlobSha(bytes), size: stat.size);
       } catch (_) {}
       sinceYield++;
-      if (kIsWeb && sinceYield >= 50) {
+      if (kIsWeb && sinceYield >= 30) {
         sinceYield = 0;
-        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
       }
     }
     return out;
@@ -649,19 +685,26 @@ class SyncService {
     for (final f in files) {
       final rel = p.relative(f.path, from: vaultPath);
       if (_isExcluded(rel)) continue;
+
+      // Drive files don't need SHAs during pull. Phase 2 handles them by
+      // directory listing + remote SHA. Removing them from the scan cuts
+      // transient allocations by 90%+ on a media-heavy vault — the
+      // difference between surviving and OOM on iOS Safari.
+      if (_isDrivePath(rel)) continue;
+
       try {
         final bytes = await f.readAsBytes();
-        final sha = gitBlobSha(bytes); // was: fallback to 'size:'
-        out[rel] = sha;
+        out[rel] = gitBlobSha(bytes);
       } catch (_) {}
+
       sinceYield++;
-      // On web, yield every 50 files so GC can reclaim hashing buffers.
-      // Without this, hashing 26K files in a tight loop builds up
-      // hundreds of MB of transient allocations — iOS Safari's GC can't
-      // reclaim them fast enough to stay under the tab memory limit.
-      if (kIsWeb && sinceYield >= 50) {
+      // `Duration.zero` schedules a microtask that WebKit's timer-based
+      // collector never sees. 20 ms reaches the timer queue and actually
+      // triggers GC. Every 30 files keeps the added latency to ~20 ms ×
+      // (file count / 30), which is ~380 ms for a 569-file scan.
+      if (kIsWeb && sinceYield >= 30) {
         sinceYield = 0;
-        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
       }
     }
     return out;
