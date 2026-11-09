@@ -44,6 +44,18 @@ export 'services/space_stats.dart' show SpaceStats;
 export 'space_archive.dart' show ExtractedFile, ExtractedSpace;
 export 'sync/sync_provider.dart' show SyncProgress, SyncProgressCallback;
 export 'sync/sync_service.dart' show SyncPushResult, SyncPullResult;
+export 'app_settings.dart' show AppSettings;
+
+class BackupInfo {
+  final String name;
+  final int sizeBytes;
+  final DateTime modified;
+  const BackupInfo({
+    required this.name,
+    required this.sizeBytes,
+    required this.modified,
+  });
+}
 
 class SpaceImportResult {
   final int total;
@@ -928,6 +940,124 @@ class VaultStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The retention count actually in effect: user override if set,
+  /// otherwise a platform default (10 on desktop, 3 on web — web backups
+  /// go into IndexedDB and share space with the vault).
+  int get effectiveBackupRetentionCount =>
+      _settings.backupRetentionCount ?? (kIsWeb ? 3 : 10);
+
+  /// The user's explicit override, or null when using the default.
+  int? get backupRetentionCountOverride => _settings.backupRetentionCount;
+
+  /// Updates the backup retention count. Null resets to the platform
+  /// default. Zero disables pre-pull backups entirely. Prunes existing
+  /// backups immediately if the new count is lower than the current one.
+  Future<void> setBackupRetentionCount(int? count) async {
+    if (count != null && count < 0) {
+      throw ArgumentError('Retention count cannot be negative');
+    }
+    if (count != null && count > 100) {
+      throw ArgumentError('Retention count cannot exceed 100');
+    }
+    _settings = _settings.copyWith(backupRetentionCount: count);
+    try {
+      await _settingsStore.save(_settings);
+    } catch (e) {
+      debugPrint('Could not persist backup retention: $e');
+    }
+    // Prune immediately so lowering the count has visible effect.
+    await _pruneOldBackups(await _backupDir(),
+        keep: effectiveBackupRetentionCount);
+    notifyListeners();
+  }
+
+  /// Lists the pre-pull backup zips, newest first.
+  Future<List<BackupInfo>> listBackups() async {
+    final dir = await _backupDir();
+    if (!await dir.exists()) return const [];
+    final result = <BackupInfo>[];
+    try {
+      await for (final e in dir.list(followLinks: false)) {
+        if (e is! File || !e.path.endsWith('.zip')) continue;
+        try {
+          final stat = await e.stat();
+          result.add(BackupInfo(
+            name: p.basename(e.path),
+            sizeBytes: stat.size,
+            modified: stat.modified,
+          ));
+        } catch (_) {}
+      }
+    } catch (e) {
+      debugPrint('Error listing backups: $e');
+    }
+    result.sort((a, b) => b.modified.compareTo(a.modified));
+    return result;
+  }
+
+  /// Deletes every pre-pull backup zip. Current vault data is untouched.
+  Future<void> clearAllBackups() async {
+    final dir = await _backupDir();
+    if (!await dir.exists()) return;
+    try {
+      await for (final e in dir.list(followLinks: false)) {
+        if (e is! File || !e.path.endsWith('.zip')) continue;
+        try {
+          await e.delete();
+        } catch (err) {
+          debugPrint('Could not delete backup ${e.path}: $err');
+        }
+      }
+    } catch (e) {
+      debugPrint('Error clearing backups: $e');
+    }
+    notifyListeners();
+  }
+
+  /// Resolves the platform-specific backup directory.
+  Future<Directory> _backupDir() async {
+    if (kIsWeb) return fs.directory('/pre-pull-backups');
+    final supportDir = await getApplicationSupportDirectory();
+    return fs.directory(p.join(supportDir.path, 'vault_backups'));
+  }
+
+  /// Reads a single backup's bytes. Used by the settings screen's
+  /// per-row Export action, which hands the bytes to `saveOrShareFile`
+  /// (native save dialog on desktop, share sheet on mobile, download on
+  /// web).
+  ///
+  /// Name is sanitised via `p.basename` and a `..` check before use —
+  /// callers come from `listBackups()` in practice, but a defensive
+  /// boundary here means a future caller can't traverse out of the
+  /// backup directory.
+  Future<Uint8List> readBackupBytes(String name) async {
+    final safeName = p.basename(name);
+    if (safeName != name || name.contains('..')) {
+      throw ArgumentError('Invalid backup name');
+    }
+    final dir = await _backupDir();
+    final file = fs.file(p.join(dir.path, safeName));
+    if (!await file.exists()) {
+      throw StateError('Backup $safeName not found');
+    }
+    return file.readAsBytes();
+  }
+
+  /// Deletes a single backup by name. Other backups and current vault
+  /// data are untouched.
+  Future<void> deleteBackup(String name) async {
+    final safeName = p.basename(name);
+    if (safeName != name || name.contains('..')) {
+      throw ArgumentError('Invalid backup name');
+    }
+    final dir = await _backupDir();
+    final file = fs.file(p.join(dir.path, safeName));
+    if (await file.exists()) {
+      await file.delete();
+    }
+    notifyListeners();
+  }
+
   Future<T> _withPostLock<T>(String postId, Future<T> Function() fn) {
     final prev = _postLocks[postId] ?? Future<void>.value();
     final completer = Completer<T>();
@@ -1373,50 +1503,34 @@ class VaultStore extends ChangeNotifier {
   }
 
   Future<void> _backupVault() async {
+    final retention = effectiveBackupRetentionCount;
+    // retention == 0 means "don't create pre-pull backups".
+    if (retention <= 0) return;
+
     final archive = Archive();
     final root = fs.directory(vaultPath);
     if (!await root.exists()) return;
     final files = await walkFiles(root);
-
     for (final f in files) {
       try {
         final rel = p.relative(f.path, from: vaultPath);
-
-        // On web, skip drive blobs from the pre-pull backup. They are:
-        //  (a) the source of the memory blowup — summing 182 media files
-        //      into the Archive + encoding the zip needs 2× their size,
-        //      which exceeds iOS Safari's heap budget;
-        //  (b) recoverable from the sync remote, which is exactly where
-        //      pull just fetched them from.
-        // The critical data — posts, drive_meta.json, space.json, hooks,
-        // settings — is a few MB and is what the backup actually protects.
+        // On web, skip drive blobs — they're recoverable from the remote
+        // and dominate the memory budget when compressed in-memory.
         if (kIsWeb && _isDriveBlob(rel)) continue;
-
         final bytes = await f.readAsBytes();
         archive.addFile(ArchiveFile(rel, bytes.length, bytes));
-
-        // Even non-drive files should yield on web to keep the heap
-        // bounded. 569 posts is ~1 MB total, but the yield costs nothing
-        // and prevents regressions if posts ever grow in size.
         if (kIsWeb) {
           await Future<void>.delayed(const Duration(milliseconds: 5));
         }
       } catch (_) {}
     }
-
     final stamp = DateTime.now()
         .toIso8601String()
         .replaceAll(RegExp(r'[^0-9T]'), '')
         .substring(0, 15);
     final zipBytes = Uint8List.fromList(ZipEncoder().encode(archive)!);
 
-    final Directory backupDir;
-    if (kIsWeb) {
-      backupDir = fs.directory('/pre-pull-backups');
-    } else {
-      final supportDir = await getApplicationSupportDirectory();
-      backupDir = fs.directory(p.join(supportDir.path, 'vault_backups'));
-    }
+    final backupDir = await _backupDir();
     await backupDir.create(recursive: true);
     await fs
         .file(p.join(backupDir.path, 'pre-pull-$stamp.zip'))
@@ -1425,7 +1539,7 @@ class VaultStore extends ChangeNotifier {
         '${(zipBytes.length / 1024).toStringAsFixed(0)} KB, '
         '${archive.files.length} file(s)');
 
-    await _pruneOldBackups(backupDir, keep: kIsWeb ? 3 : 10);
+    await _pruneOldBackups(backupDir, keep: retention);
   }
 
   /// True if [relPath] is a drive blob (the binary file under
@@ -1445,10 +1559,18 @@ class VaultStore extends ChangeNotifier {
         if (e is File && e.path.endsWith('.zip')) entries.add(e);
       }
       if (entries.length <= keep) return;
-      entries.sort((a, b) => a.path.compareTo(b.path));
-      for (var i = 0; i < entries.length - keep; i++) {
+
+      final stats = <({File f, DateTime modified})>[];
+      for (final f in entries) {
         try {
-          await entries[i].delete();
+          stats.add((f: f, modified: (await f.stat()).modified));
+        } catch (_) {}
+      }
+      stats.sort((a, b) => a.modified.compareTo(b.modified));
+      final toDelete = stats.take(stats.length - keep);
+      for (final s in toDelete) {
+        try {
+          await s.f.delete();
         } catch (_) {}
       }
     } catch (e) {

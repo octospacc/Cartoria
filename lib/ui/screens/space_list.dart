@@ -16,6 +16,7 @@ import '../widgets/app_footer.dart';
 import 'hooks_list.dart';
 import 'space_feed.dart';
 import 'sync_screen.dart';
+import 'settings_screen.dart';
 
 class SpaceListScreen extends StatelessWidget {
   final VaultStore store;
@@ -52,6 +53,14 @@ class SpaceListScreen extends StatelessWidget {
             // per-space "Import…" action lives inside each space's menu.
             tooltip: 'New space from file…',
             onPressed: () => _importFile(context),
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Settings',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => SettingsScreen(store: store)),
+            ),
           ),
         ],
       ),
