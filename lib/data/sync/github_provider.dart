@@ -513,9 +513,20 @@ class GitHubProvider extends SyncProvider {
     final newTreeSha =
         (jsonDecode(treeResp.body) as Map<String, dynamic>)['sha'] as String;
 
+    // Skip the commit entirely when the tree is identical to its parent.
+    // Prevents "empty" commits that GitHub would otherwise accept
+    // silently. On push, if the diff was falsely positive (stale cache,
+    // SHA mismatch), the actual tree ends up unchanged — skipping here
+    // avoids polluting history with a no-op commit.
+    if (parentSha != null && newTreeSha == baseTreeSha) {
+      debugPrint('Push: skipping empty commit (tree unchanged)');
+      return parentSha;
+    }
+
     // Create commit.
     final commitUri =
         _api(config, '/repos/${config.owner}/${config.repo}/git/commits');
+    // …rest unchanged…
     final newCommitResp = await client.post(
       commitUri,
       headers: _headers(token),

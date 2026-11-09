@@ -142,7 +142,8 @@ class SyncService {
       }
       final remoteSha = remoteMap[path];
       // size: sentinel means "we couldn't compute a SHA — always push"
-      if (remoteSha == info.sha && !info.sha.startsWith('size:')) continue;
+      if (remoteSha == info.sha)
+        continue; // was: && !info.sha.startsWith('size:')
       pendingChanges.add(_PendingChange(
         path: path,
         kind: remoteSha == null ? FileChangeKind.create : FileChangeKind.update,
@@ -258,6 +259,18 @@ class SyncService {
       await cacheStore?.save(config.cacheKey, newCacheFiles, newSha);
     }
 
+    // Apply the same offload policy as pull, now that every file is
+    // confirmed on the remote. Without this, uploading new media leaves
+    // every local file local — the policy is only enforced on pull —
+    // and the "keep N newest" setting accumulates drift with each push.
+    if (config.keepLocalFileCount != null) {
+      await _applyOffloadPolicy(
+        remoteMap: newCacheFiles,
+        offloadedStore: offloadedStore,
+        onProgress: onProgress,
+      );
+    }
+
     onProgress?.call(SyncProgress(
       totalFiles: pendingChanges.length,
       completedFiles: completed,
@@ -272,6 +285,73 @@ class SyncService {
       skippedOffloaded: skippedOffloaded,
       commitSha: newSha,
     );
+  }
+
+  /// Offloads local drive files beyond `keepLocalFileCount` for each
+  /// space in scope, using [remoteMap] as the authority for what's safe
+  /// to remove from disk (every included file is on the remote).
+  Future<void> _applyOffloadPolicy({
+    required Map<String, String> remoteMap,
+    required OffloadedStore offloadedStore,
+    SyncProgressCallback? onProgress,
+  }) async {
+    final keepCount = config.keepLocalFileCount;
+    if (keepCount == null) return;
+
+    final spaces = <String>{};
+    for (final path in remoteMap.keys) {
+      if (!scope.includes(path)) continue;
+      final slash = path.indexOf('/');
+      if (slash > 0) spaces.add(path.substring(0, slash));
+    }
+
+    for (final spaceId in spaces) {
+      final meta = await _readDriveMeta(spaceId);
+      if (meta.isEmpty) continue;
+
+      final sortedIds = meta.keys.toList()
+        ..sort((a, b) {
+          final ca = (meta[a] as Map)['created'] as String? ?? '';
+          final cb = (meta[b] as Map)['created'] as String? ?? '';
+          return cb.compareTo(ca);
+        });
+      final keepIds = sortedIds.take(keepCount).toSet();
+
+      final driveDir = fs.directory(p.join(vaultPath, spaceId, 'drive'));
+      if (!await driveDir.exists()) continue;
+      final pathMap = await _resolveDrivePaths(driveDir);
+
+      final offloaded = await offloadedStore.load(spaceId);
+      var changed = false;
+
+      for (final id in sortedIds) {
+        if (keepIds.contains(id)) continue;
+        if (offloaded.containsKey(id)) continue; // already offloaded
+        final localPath = pathMap[id];
+        if (localPath == null) continue;
+
+        // Verify the blob on disk matches the remote SHA before
+        // deleting — if a local edit hasn't been pushed (possible if
+        // push filtered it out earlier), removing the file would lose
+        // data.
+        final remotePath = '$spaceId/drive/${p.basename(localPath)}';
+        final remoteSha = remoteMap[remotePath];
+        if (remoteSha == null) continue;
+
+        try {
+          final bytes = await fs.file(localPath).readAsBytes();
+          if (gitBlobSha(bytes) != remoteSha) continue;
+          final size = (await fs.file(localPath).stat()).size;
+          await fs.file(localPath).delete();
+          offloaded[id] = OffloadedFileInfo(remoteSha: remoteSha, size: size);
+          changed = true;
+        } catch (e) {
+          debugPrint('Offload after push failed for $localPath: $e');
+        }
+      }
+
+      if (changed) await offloadedStore.save(spaceId, offloaded);
+    }
   }
 
   // ── Pull ───────────────────────────────────────────────────────────────
@@ -547,7 +627,7 @@ class SyncService {
       try {
         final stat = await f.stat();
         final bytes = await f.readAsBytes();
-        final sha = gitBlobSha(bytes) ?? 'size:${stat.size}';
+        final sha = gitBlobSha(bytes); // was: ?? 'size:${stat.size}'
         out[rel] = (sha: sha, size: stat.size);
       } catch (_) {}
       sinceYield++;
@@ -571,8 +651,8 @@ class SyncService {
       if (_isExcluded(rel)) continue;
       try {
         final bytes = await f.readAsBytes();
-        final sha = gitBlobSha(bytes);
-        out[rel] = sha ?? 'size:${bytes.length}';
+        final sha = gitBlobSha(bytes); // was: fallback to 'size:'
+        out[rel] = sha;
       } catch (_) {}
       sinceYield++;
       // On web, yield every 50 files so GC can reclaim hashing buffers.
