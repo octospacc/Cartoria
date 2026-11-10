@@ -66,31 +66,46 @@ class TemplateContext {
         }
         if (parts.length != 2) return null;
         switch (parts[1]) {
-          case 'id': return post.id;
-          case 'parentId': return post.parentId; // null for root posts
-          case 'url': return post.url ?? '';
-          case 'title': return post.title ?? '';
-          case 'description': return post.description ?? '';
-          case 'body': return post.plaintext;
-          case 'tags': return post.tags.join(',');
-          case 'kind': return post.kind.name;
-          case 'createdAt': return post.createdAt.toIso8601String();
+          case 'id':
+            return post.id;
+          case 'parentId':
+            return post.parentId; // null for root posts
+          case 'url':
+            return post.url ?? '';
+          case 'title':
+            return post.title ?? '';
+          case 'description':
+            return post.description ?? '';
+          case 'body':
+            return post.plaintext;
+          case 'tags':
+            return post.tags.join(',');
+          case 'kind':
+            return post.kind.name;
+          case 'createdAt':
+            return post.createdAt.toIso8601String();
         }
         return null;
       case 'space':
         if (parts.length != 2) return null;
         switch (parts[1]) {
-          case 'id': return space.id;
-          case 'name': return space.name;
-          case 'icon': return space.icon;
+          case 'id':
+            return space.id;
+          case 'name':
+            return space.name;
+          case 'icon':
+            return space.icon;
         }
         return null;
       case 'hook':
         if (parts.length != 2) return null;
         switch (parts[1]) {
-          case 'id': return hook.id;
-          case 'key': return hook.key;
-          case 'name': return hook.name;
+          case 'id':
+            return hook.id;
+          case 'key':
+            return hook.key;
+          case 'name':
+            return hook.name;
         }
         return null;
       case 'vars':
@@ -104,10 +119,14 @@ class TemplateContext {
         final o = original;
         if (o == null || parts.length != 2) return null;
         switch (parts[1]) {
-          case 'url': return o.url ?? '';
-          case 'title': return o.title ?? '';
-          case 'description': return o.description ?? '';
-          case 'body': return o.plaintext;
+          case 'url':
+            return o.url ?? '';
+          case 'title':
+            return o.title ?? '';
+          case 'description':
+            return o.description ?? '';
+          case 'body':
+            return o.plaintext;
         }
         return null;
       case 'parent':
@@ -115,15 +134,24 @@ class TemplateContext {
         if (p == null || parts.length < 3) return null;
         if (parts[1] == 'post') {
           switch (parts[2]) {
-            case 'id': return p.id;
-            case 'parentId': return p.parentId;
-            case 'url': return p.url ?? '';
-            case 'title': return p.title ?? '';
-            case 'description': return p.description ?? '';
-            case 'body': return p.plaintext;
-            case 'tags': return p.tags.join(',');
-            case 'kind': return p.kind.name;
-            case 'createdAt': return p.createdAt.toIso8601String();
+            case 'id':
+              return p.id;
+            case 'parentId':
+              return p.parentId;
+            case 'url':
+              return p.url ?? '';
+            case 'title':
+              return p.title ?? '';
+            case 'description':
+              return p.description ?? '';
+            case 'body':
+              return p.plaintext;
+            case 'tags':
+              return p.tags.join(',');
+            case 'kind':
+              return p.kind.name;
+            case 'createdAt':
+              return p.createdAt.toIso8601String();
           }
           return null;
         }
@@ -255,7 +283,8 @@ class TemplateRenderer {
   }
 
   static String _applyFunction(String value, String spec) {
-    final m = RegExp(r'^(\w+)(?:\((.*)\))?$').firstMatch(spec.trim());
+    final m =
+        RegExp(r'^(\w+)(?:\((.*)\))?$', dotAll: true).firstMatch(spec.trim());
     if (m == null) return value;
     final name = m.group(1)!;
     final argsRaw = m.group(2);
@@ -323,8 +352,7 @@ class TemplateRenderer {
     if (s.length >= 2) {
       final first = s[0];
       final last = s[s.length - 1];
-      if ((first == '"' && last == '"') ||
-          (first == "'" && last == "'")) {
+      if ((first == '"' && last == '"') || (first == "'" && last == "'")) {
         return s.substring(1, s.length - 1);
       }
     }

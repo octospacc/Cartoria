@@ -88,7 +88,7 @@ class _DriveScreenState extends State<DriveScreen> {
         final used = widget.store.usedFileIds(widget.space.id);
         final offloadedCount =
             files.where((f) => offloadedIds.contains(f.id)).length;
-        final localCount = files.length - offloadedCount;
+        final unusedCount = files.where((f) => !used.contains(f.id)).length;
 
         return Scaffold(
           appBar: _selectionMode
@@ -155,25 +155,27 @@ class _DriveScreenState extends State<DriveScreen> {
                 )
               : Column(
                   children: [
-                    if (offloadedCount > 0)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 8),
-                        color: theme.colorScheme.surfaceContainerHighest,
-                        child: Row(
-                          children: [
-                            Icon(Icons.cloud,
-                                size: 14,
-                                color: theme.colorScheme.onSurfaceVariant),
-                            const SizedBox(width: 6),
-                            Text(
-                              '$localCount local · $offloadedCount offloaded',
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      color: theme.colorScheme.surfaceContainerHighest,
+                      child: Row(
+                        children: [
+                          Icon(Icons.folder_outlined,
+                              size: 14,
+                              color: theme.colorScheme.onSurfaceVariant),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              _driveSummary(
+                                  files.length, offloadedCount, unusedCount),
                               style: theme.textTheme.bodySmall,
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
+                    ),
                     Expanded(
                       child: _grid
                           ? _buildGrid(files, offloadedIds, used)
@@ -190,6 +192,19 @@ class _DriveScreenState extends State<DriveScreen> {
         );
       },
     );
+  }
+
+  /// "N files" always, then "M offloaded" and "K unused" only when
+  /// non-zero. `unused` counts any file not referenced by a post,
+  /// regardless of state (on-disk, offloaded, or missing) — so it's a
+  /// direct "how much can I clean up" number.
+  String _driveSummary(int total, int offloaded, int unused) {
+    final parts = <String>[
+      '$total ${total == 1 ? "file" : "files"}',
+      if (offloaded > 0) '$offloaded offloaded',
+      if (unused > 0) '$unused unused',
+    ];
+    return parts.join(' · ');
   }
 
   Widget _buildGrid(
