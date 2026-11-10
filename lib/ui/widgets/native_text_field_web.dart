@@ -110,41 +110,61 @@ class _NativeTextFieldState extends State<NativeTextField> {
     final style = web.HTMLStyleElement()
       ..id = 'cartoria-native-textarea-style'
       ..textContent = '''
+      .$_cssClass {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid rgba(121, 116, 126, 0.55);
+        border-radius: 8px;
+        background: transparent;
+        color: #1C1B1F;
+        font-family: inherit;
+        font-size: 16px;
+        line-height: 1.375;
+        outline: none;
+        resize: none;
+        overflow-y: auto;
+        box-sizing: border-box;
+        -webkit-appearance: none;
+        color-scheme: light dark;
+        -webkit-user-select: text;
+        user-select: text;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .$_cssClass:focus {
+        border-color: #A0432B;
+      }
+      .$_cssClass::placeholder {
+        color: rgba(0, 0, 0, 0.42);
+      }
+      .$_cssClass::selection {
+        background: rgba(160, 67, 43, 0.35) !important;
+        color: #1C1B1F !important;
+      }
+      .$_cssClass::-moz-selection {
+        background: rgba(160, 67, 43, 0.35) !important;
+        color: #1C1B1F !important;
+      }
+      @media (prefers-color-scheme: dark) {
         .$_cssClass {
-          width: 100%;
-          padding: 12px;
-          border: 1px solid rgba(121, 116, 126, 0.55);
-          border-radius: 8px;
-          background: transparent;
-          color: #1C1B1F;
-          font-family: inherit;
-          font-size: 16px;
-          line-height: 1.375;
-          outline: none;
-          resize: none;
-          overflow-y: auto;
-          box-sizing: border-box;
-          -webkit-appearance: none;
+          color: #E6E1E5;
+          border-color: rgba(200, 200, 200, 0.3);
         }
         .$_cssClass:focus {
-          border-color: #A0432B;
+          border-color: #FFB4A2;
         }
         .$_cssClass::placeholder {
-          color: rgba(0, 0, 0, 0.42);
+          color: rgba(255, 255, 255, 0.42);
         }
-        @media (prefers-color-scheme: dark) {
-          .$_cssClass {
-            color: #E6E1E5;
-            border-color: rgba(200, 200, 200, 0.3);
-          }
-          .$_cssClass:focus {
-            border-color: #FFB4A2;
-          }
-          .$_cssClass::placeholder {
-            color: rgba(255, 255, 255, 0.42);
-          }
+        .$_cssClass::selection {
+          background: rgba(255, 180, 162, 0.4) !important;
+          color: #E6E1E5 !important;
         }
-      ''';
+        .$_cssClass::-moz-selection {
+          background: rgba(255, 180, 162, 0.4) !important;
+          color: #E6E1E5 !important;
+        }
+      }
+    ''';
     web.document.head?.append(style);
     _cssInjected = true;
   }
