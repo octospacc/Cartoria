@@ -27,6 +27,11 @@ class NativeTextField extends StatefulWidget {
   final VoidCallback? onSubmitted;
   final TextStyle? style;
 
+  /// When true, the textarea fills its parent's height and scrolls
+  /// internally. The auto-grow measurement is skipped; CSS `height:
+  /// 100%` takes over.
+  final bool expands;
+
   const NativeTextField({
     super.key,
     required this.controller,
@@ -39,6 +44,7 @@ class NativeTextField extends StatefulWidget {
     this.onChanged,
     this.onSubmitted,
     this.style,
+    this.expands = false,
   });
 
   @override
@@ -97,8 +103,7 @@ class _NativeTextFieldState extends State<NativeTextField> {
 
   void _ensureCssInjected() {
     if (_cssInjected) return;
-    if (web.document.getElementById('cartoria-native-textarea-style') !=
-        null) {
+    if (web.document.getElementById('cartoria-native-textarea-style') != null) {
       _cssInjected = true;
       return;
     }
@@ -145,6 +150,15 @@ class _NativeTextFieldState extends State<NativeTextField> {
   }
 
   void _applySizing(web.HTMLTextAreaElement ta) {
+    if (widget.expands) {
+      // Fill the parent. The SizedBox in build() takes the parent's
+      // height constraint; the textarea fills that at 100%.
+      ta.style
+        ..height = '100%'
+        ..minHeight = '0'
+        ..maxHeight = 'none';
+      return;
+    }
     ta.style
       ..minHeight = '${widget.minLines * _lineHeight + _verticalPadding}px'
       ..maxHeight = widget.maxLines == null
@@ -211,6 +225,7 @@ class _NativeTextFieldState extends State<NativeTextField> {
   }
 
   void _autoResize() {
+    if (widget.expands) return;
     final ta = _textarea;
     if (ta == null) return;
     ta.style.height = 'auto';
@@ -257,10 +272,21 @@ class _NativeTextFieldState extends State<NativeTextField> {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      height: _computeHeight(),
-      child: HtmlElementView(viewType: _viewId),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        final ta = _textarea;
+        if (ta != null) {
+          try {
+            ta.focus();
+          } catch (_) {}
+        }
+      },
+      child: SizedBox(
+        width: double.infinity,
+        height: widget.expands ? double.infinity : _computeHeight(),
+        child: HtmlElementView(viewType: _viewId),
+      ),
     );
   }
 }

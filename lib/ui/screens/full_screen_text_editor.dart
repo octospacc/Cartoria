@@ -1,5 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../widgets/native_text_field.dart';
+
+/// Flip to false to fall back to a regular TextField if NativeTextField
+/// misbehaves on iOS Safari in this context. Provides a one-line revert
+/// without touching the rest of the file.
+const bool _kUseNativeTextField = true;
+
 /// Full-screen text editing view.
 ///
 /// Pushed from a composer (inline or sheet) when the user wants a
@@ -64,9 +71,8 @@ class FullScreenTextEditor extends StatelessWidget {
               builder: (_, value, __) {
                 final text = value.text;
                 final trimmed = text.trim();
-                final words = trimmed.isEmpty
-                    ? 0
-                    : trimmed.split(RegExp(r'\s+')).length;
+                final words =
+                    trimmed.isEmpty ? 0 : trimmed.split(RegExp(r'\s+')).length;
                 // `runes.length` counts code points (one per visible
                 // symbol for most emoji), which is closer to what users
                 // expect than UTF-16 code units (`String.length`).
@@ -86,28 +92,38 @@ class FullScreenTextEditor extends StatelessWidget {
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: TextField(
-            controller: controller,
-            autofocus: true,
-            // Fill the screen; scroll internally when text exceeds it.
-            // `expands: true` requires both minLines and maxLines null.
-            expands: true,
-            minLines: null,
-            maxLines: null,
-            textAlignVertical: TextAlignVertical.top,
-            keyboardType: TextInputType.multiline,
-            textCapitalization: TextCapitalization.sentences,
-            style: TextStyle(
-              fontSize: 16,
-              height: 1.5,
-              color: theme.colorScheme.onSurface,
-            ),
-            decoration: InputDecoration(
-              hintText: hintText,
-              border: InputBorder.none,
-              contentPadding: EdgeInsets.zero,
-            ),
-          ),
+          child: _kUseNativeTextField
+              ? NativeTextField(
+                  controller: controller,
+                  autofocus: true,
+                  expands: true,
+                  hintText: hintText,
+                  style: TextStyle(
+                    fontSize: 16,
+                    height: 1.5,
+                    color: theme.colorScheme.onSurface,
+                  ),
+                )
+              : TextField(
+                  controller: controller,
+                  autofocus: true,
+                  expands: true,
+                  minLines: null,
+                  maxLines: null,
+                  textAlignVertical: TextAlignVertical.top,
+                  keyboardType: TextInputType.multiline,
+                  textCapitalization: TextCapitalization.sentences,
+                  style: TextStyle(
+                    fontSize: 16,
+                    height: 1.5,
+                    color: theme.colorScheme.onSurface,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: hintText,
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
         ),
       ),
     );

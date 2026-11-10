@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
 
-/// Non-web fallback. Wraps a regular [TextField] and matches the web
-/// implementation's API surface so the composer code doesn't need to
-/// branch.
 class NativeTextField extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode? focusNode;
@@ -14,6 +11,11 @@ class NativeTextField extends StatelessWidget {
   final ValueChanged<String>? onChanged;
   final VoidCallback? onSubmitted;
   final TextStyle? style;
+
+  /// When true, the field fills its parent's height and scrolls
+  /// internally. Requires [minLines] and [maxLines] to be ignored —
+  /// Flutter's TextField rejects `expands: true` with non-null values.
+  final bool expands;
 
   const NativeTextField({
     super.key,
@@ -27,6 +29,7 @@ class NativeTextField extends StatelessWidget {
     this.onChanged,
     this.onSubmitted,
     this.style,
+    this.expands = false,
   });
 
   @override
@@ -35,8 +38,9 @@ class NativeTextField extends StatelessWidget {
       controller: controller,
       focusNode: focusNode,
       autofocus: autofocus,
-      minLines: minLines,
-      maxLines: maxLines,
+      expands: expands,
+      minLines: expands ? null : minLines,
+      maxLines: expands ? null : maxLines,
       onChanged: onChanged,
       onSubmitted: onSubmitted == null ? null : (_) => onSubmitted!(),
       style: style,
