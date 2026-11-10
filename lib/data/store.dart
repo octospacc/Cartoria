@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:fs_shim/fs_shim.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
@@ -293,6 +295,12 @@ class VaultStore extends ChangeNotifier {
     } catch (e) {
       debugPrint('Settings load failed: $e');
       _settings = const AppSettings();
+    }
+
+    // This should be called after the vaultPath is determined.
+    if (Platform.isAndroid) {
+      const channel = MethodChannel('cartoria/documents_provider');
+      await channel.invokeMethod('setVaultPath', {'path': vaultPath});
     }
 
     await reload();
