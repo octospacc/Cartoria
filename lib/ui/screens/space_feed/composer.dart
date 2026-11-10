@@ -182,18 +182,15 @@ class InlineComposer extends StatelessWidget {
             border: InputBorder.none,
           ),
         ),
-        // NativeTextField(
-        //   controller: bodyCtrl,
-        //   minLines: 1,
-        //   maxLines: 6,
-        //   hintText:
-        //       kind == PostKind.note ? 'Write something…' : 'Why save this?',
-        // ),
-        // const SizedBox(height: 12),
         const SizedBox(height: 2),
-        Row(
-          children: [
-            SegmentedButton<PostKind>(
+        LayoutBuilder(
+          builder: (context, constraints) {
+            // Below 420pt the single-row layout doesn't fit once the datetime
+            // chip has a date in it. Two rows guarantee no overflow at any
+            // width and read naturally on mobile.
+            final narrow = constraints.maxWidth < 420;
+
+            final modeSelector = SegmentedButton<PostKind>(
               segments: const [
                 ButtonSegment(
                     value: PostKind.note,
@@ -211,9 +208,9 @@ class InlineComposer extends StatelessWidget {
                 visualDensity: VisualDensity.compact,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-            ),
-            const Spacer(),
-            IconButton(
+            );
+
+            final hooksButton = IconButton(
               icon:
                   Icon(skipHooks ? Icons.flash_off : Icons.flash_on, size: 20),
               tooltip: skipHooks
@@ -222,28 +219,76 @@ class InlineComposer extends StatelessWidget {
               color: skipHooks
                   ? Theme.of(context).colorScheme.onSurfaceVariant
                   : Theme.of(context).colorScheme.primary,
+              visualDensity: VisualDensity.compact,
               onPressed: () => onSkipHooksChanged(!skipHooks),
-            ),
-            _DateTimeChip(
-              value: postDateTime,
-              onChanged: onPostDateTimeChanged,
-            ),
-            IconButton(
+            );
+
+            final fullscreenButton = IconButton(
               icon: const Icon(Icons.open_in_full, size: 20),
               tooltip: 'Expand to full screen',
+              visualDensity: VisualDensity.compact,
               onPressed: () => _openFullScreenEditor(context, bodyCtrl),
-            ),
-            IconButton(
+            );
+
+            final attachButton = IconButton(
               icon: const Icon(Icons.attach_file),
               tooltip: 'Attach',
+              visualDensity: VisualDensity.compact,
               onPressed: onAttach,
-            ),
-            IconButton.filled(
+            );
+
+            final sendButton = IconButton.filled(
               icon: const Icon(Icons.send, size: 18),
+              visualDensity: VisualDensity.compact,
               onPressed: onSend,
-            ),
-          ],
-        )
+            );
+
+            if (!narrow) {
+              return Row(
+                children: [
+                  modeSelector,
+                  const Spacer(),
+                  hooksButton,
+                  _DateTimeChip(
+                    value: postDateTime,
+                    onChanged: onPostDateTimeChanged,
+                  ),
+                  fullscreenButton,
+                  attachButton,
+                  sendButton,
+                ],
+              );
+            }
+
+            // Narrow: mode + hooks on top, utilities + send on bottom.
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    modeSelector,
+                    const Spacer(),
+                    hooksButton,
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    _DateTimeChip(
+                      value: postDateTime,
+                      onChanged: onPostDateTimeChanged,
+                    ),
+                    fullscreenButton,
+                    attachButton,
+                    const Spacer(),
+                    sendButton,
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
       ],
     );
   }
@@ -642,12 +687,6 @@ class _ComposerSheetState extends State<ComposerSheet> {
                 ],
               ],
               const SizedBox(height: 12),
-              // NativeTextField(
-              //   controller: _body,
-              //   minLines: 3,
-              //   maxLines: 12,
-              //   hintText: 'Body',
-              // ),
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Row(
