@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../../data/models.dart';
 import '../../../data/store.dart';
 import '../../../util/html_utils.dart';
+import '../../widgets/native_text_field.dart';
+import '../../screens/full_screen_text_editor.dart';
 import 'attachment_picker.dart';
 
 // ── Shared: date/time picker + formatter ──────────────────────────────────
@@ -180,6 +182,14 @@ class InlineComposer extends StatelessWidget {
             border: InputBorder.none,
           ),
         ),
+        // NativeTextField(
+        //   controller: bodyCtrl,
+        //   minLines: 1,
+        //   maxLines: 6,
+        //   hintText:
+        //       kind == PostKind.note ? 'Write something…' : 'Why save this?',
+        // ),
+        // const SizedBox(height: 12),
         const SizedBox(height: 2),
         Row(
           children: [
@@ -219,6 +229,11 @@ class InlineComposer extends StatelessWidget {
               onChanged: onPostDateTimeChanged,
             ),
             IconButton(
+              icon: const Icon(Icons.open_in_full, size: 20),
+              tooltip: 'Expand to full screen',
+              onPressed: () => _openFullScreenEditor(context, bodyCtrl),
+            ),
+            IconButton(
               icon: const Icon(Icons.attach_file),
               tooltip: 'Attach',
               onPressed: onAttach,
@@ -230,6 +245,21 @@ class InlineComposer extends StatelessWidget {
           ],
         )
       ],
+    );
+  }
+
+  Future<void> _openFullScreenEditor(
+    BuildContext context,
+    TextEditingController ctrl,
+  ) async {
+    // Unfocus the inline field so the push transition doesn't compete
+    // with an active keyboard. The full-screen editor will autofocus.
+    FocusScope.of(context).unfocus();
+    await FullScreenTextEditor.show(
+      context,
+      controller: ctrl,
+      title: kind == PostKind.note ? 'Note' : 'Why save this',
+      hintText: kind == PostKind.note ? 'Write something…' : 'Why save this?',
     );
   }
 }
@@ -612,12 +642,36 @@ class _ComposerSheetState extends State<ComposerSheet> {
                 ],
               ],
               const SizedBox(height: 12),
+              // NativeTextField(
+              //   controller: _body,
+              //   minLines: 3,
+              //   maxLines: 12,
+              //   hintText: 'Body',
+              // ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    Text('Body', style: theme.textTheme.labelLarge),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.open_in_full, size: 18),
+                      tooltip: 'Expand to full screen',
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints:
+                          const BoxConstraints(minWidth: 32, minHeight: 32),
+                      onPressed: () => _openFullScreenEditor(context),
+                    ),
+                  ],
+                ),
+              ),
               TextField(
                 controller: _body,
                 minLines: 3,
                 maxLines: 12,
                 decoration: const InputDecoration(
-                  labelText: 'Body',
+                  hintText: 'Write the body…',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -675,6 +729,22 @@ class _ComposerSheetState extends State<ComposerSheet> {
           ),
         ),
       ),
+    );
+  }
+
+  Future<void> _openFullScreenEditor(BuildContext context) async {
+    FocusScope.of(context).unfocus();
+    await FullScreenTextEditor.show(
+      context,
+      controller: _body,
+      title: widget.editing != null
+          ? 'Edit post body'
+          : widget.replyTo != null
+              ? 'Reply body'
+              : widget.quoting != null
+                  ? 'Quote body'
+                  : 'Post body',
+      hintText: 'Write the body…',
     );
   }
 }
