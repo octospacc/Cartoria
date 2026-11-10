@@ -16,6 +16,8 @@ import '../util/hook_outcome.dart';
 import '../util/mime.dart';
 import 'app_settings.dart';
 import 'bookmarks.dart';
+import 'composer_draft.dart';
+import 'composer_draft_store.dart';
 import 'hooks.dart';
 import 'models.dart';
 import 'repos/archive_service.dart';
@@ -95,6 +97,8 @@ class VaultStore extends ChangeNotifier {
 
   late final AppSettingsStore _settingsStore;
   AppSettings _settings = const AppSettings();
+
+  late final ComposerDraftStore _composerDraftStore;
 
   final http.Client _httpClient = http.Client();
 
@@ -264,6 +268,7 @@ class VaultStore extends ChangeNotifier {
     _syncCacheStore = SyncCacheStore(fs: fs);
     _offloadedStore = const OffloadedStore();
     _thumbnailCache = const ThumbnailCache();
+    _composerDraftStore = const ComposerDraftStore();
     _link = LinkMetadataService(
       proxyUrl: kIsWeb ? 'https://corsproxy.io/?url={url}' : null,
     );
@@ -939,6 +944,15 @@ class VaultStore extends ChangeNotifier {
     }
     notifyListeners();
   }
+
+  Future<ComposerDraft?> loadComposerDraft(String fieldKey) =>
+      _composerDraftStore.load(fieldKey);
+
+  Future<void> saveComposerDraft(ComposerDraft draft) =>
+      _composerDraftStore.save(draft);
+
+  Future<void> deleteComposerDraft(String fieldKey) =>
+      _composerDraftStore.delete(fieldKey);
 
   /// The retention count actually in effect: user override if set,
   /// otherwise a platform default (10 on desktop, 3 on web — web backups

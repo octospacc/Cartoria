@@ -5,6 +5,8 @@ import '../../../data/store.dart';
 import '../../../util/html_utils.dart';
 import '../../widgets/native_text_field.dart';
 import '../../screens/full_screen_text_editor.dart';
+import '../../../data/composer_draft.dart';
+import 'composer_draft_controller.dart';
 import 'attachment_picker.dart';
 
 // ── Shared: date/time picker + formatter ──────────────────────────────────
@@ -84,6 +86,12 @@ class ComposerResult {
   /// that reuses the previous value (currently always false for both).
   final bool skipHooks;
 
+  /// Field key used by the sheet's draft controller. Parents clear the
+  /// draft via `store.deleteComposerDraft(result.draftFieldKey)` after
+  /// the post is successfully persisted — this preserves the draft if
+  /// post creation fails.
+  final String draftFieldKey;
+
   const ComposerResult({
     required this.kind,
     required this.body,
@@ -95,6 +103,7 @@ class ComposerResult {
     this.createdAt,
     this.quotedPostId,
     this.skipHooks = false,
+    required this.draftFieldKey,
   });
 }
 
@@ -119,6 +128,8 @@ class InlineComposer extends StatelessWidget {
   final bool skipHooks;
   final ValueChanged<bool> onSkipHooksChanged;
 
+  final VoidCallback onReset;
+
   const InlineComposer({
     super.key,
     required this.kind,
@@ -135,6 +146,7 @@ class InlineComposer extends StatelessWidget {
     required this.onPostDateTimeChanged,
     this.skipHooks = false,
     required this.onSkipHooksChanged,
+    required this.onReset,
   });
 
   @override
@@ -255,6 +267,7 @@ class InlineComposer extends StatelessWidget {
                   ),
                   fullscreenButton,
                   attachButton,
+                  _buildResetButton(context),
                   sendButton,
                 ],
               );
@@ -281,6 +294,7 @@ class InlineComposer extends StatelessWidget {
                     ),
                     fullscreenButton,
                     attachButton,
+                    _buildResetButton(context),
                     const Spacer(),
                     sendButton,
                   ],
@@ -305,6 +319,31 @@ class InlineComposer extends StatelessWidget {
       controller: ctrl,
       title: kind == PostKind.note ? 'Note' : 'Why save this',
       hintText: kind == PostKind.note ? 'Write something…' : 'Why save this?',
+    );
+  }
+
+  Widget _buildResetButton(BuildContext context) {
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: bodyCtrl,
+      builder: (_, __, ___) => ValueListenableBuilder<TextEditingValue>(
+        valueListenable: urlCtrl,
+        builder: (_, __, ___) {
+          // Matches `ComposerDraft.isEmpty` — reset is enabled only when
+          // there's something worth discarding.
+          final hasContent = bodyCtrl.text.isNotEmpty ||
+              urlCtrl.text.isNotEmpty ||
+              pendingFileIds.isNotEmpty ||
+              postDateTime != null ||
+              skipHooks ||
+              kind != PostKind.note;
+          return IconButton(
+            icon: const Icon(Icons.restart_alt, size: 20),
+            tooltip: hasContent ? 'Discard draft' : null,
+            visualDensity: VisualDensity.compact,
+            onPressed: hasContent ? onReset : null,
+          );
+        },
+      ),
     );
   }
 }
@@ -419,6 +458,9 @@ class _ComposerSheetState extends State<ComposerSheet> {
   DateTime? _postDateTime;
   bool _skipHooks = false;
 
+  late final ComposerDraftController _draftCtrl;
+  bool _loadingDraft = false;
+
   @override
   void initState() {
     super.initState();
@@ -435,10 +477,23 @@ class _ComposerSheetState extends State<ComposerSheet> {
     // No datetime for edits: creation time is preserved by updatePost,
     // and there's no way to change it without stranding the UUIDv7 order.
     _postDateTime = null;
+
+    _draftCtrl = ComposerDraftController(
+      store: widget.store,
+      fieldKey: _draftFieldKey,
+    );
+
+    _body.addListener(_onAnyFieldChanged);
+    _url.addListener(_onAnyFieldChanged);
+    _title.addListener(_onAnyFieldChanged);
+    _description.addListener(_onAnyFieldChanged);
+
+    _loadDraft();
   }
 
   @override
   void dispose() {
+    _draftCtrl.dispose();
     _body.dispose();
     _url.dispose();
     _title.dispose();
@@ -528,6 +583,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
         createdAt: widget.editing == null ? _postDateTime : null,
         quotedPostId: widget.editing == null ? widget.quoting?.id : null,
         skipHooks: _skipHooks,
+        draftFieldKey: _draftFieldKey,
       ),
     );
   }
@@ -687,6 +743,47 @@ class _ComposerSheetState extends State<ComposerSheet> {
                 ],
               ],
               const SizedBox(height: 12),
+              AnimatedBuilder(
+                animation: _draftCtrl,
+                builder: (context, _) {
+                  if (!_draftCtrl.hasRestoredDraft)
+                    return const SizedBox.shrink();
+                  final savedAt = _draftCtrl.restoredDraftSavedAt;
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.tertiaryContainer
+                          .withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.restore,
+                            size: 16,
+                            color: theme.colorScheme.onSurfaceVariant),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Unsaved draft'
+                            '${savedAt != null ? " from ${_formatRelative(savedAt)}" : ""}',
+                            style: theme.textTheme.bodySmall,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: _discardDraft,
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            foregroundColor: theme.colorScheme.error,
+                          ),
+                          child: const Text('Reset'),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Row(
@@ -785,6 +882,104 @@ class _ComposerSheetState extends State<ComposerSheet> {
                   : 'Post body',
       hintText: 'Write the body…',
     );
+  }
+
+  String get _draftFieldKey {
+    if (widget.editing != null) return 'post:${widget.editing!.id}:edit';
+    if (widget.replyTo != null) return 'post:${widget.replyTo!.id}:reply';
+    if (widget.quoting != null) return 'post:${widget.quoting!.id}:quote';
+    return 'post:new:${DateTime.now().millisecondsSinceEpoch}';
+  }
+
+  void _onAnyFieldChanged() {
+    if (_loadingDraft) return;
+    _draftCtrl.scheduleSave(_buildDraft());
+  }
+
+  ComposerDraft _buildDraft() {
+    return ComposerDraft(
+      fieldKey: _draftFieldKey,
+      kind: _kind,
+      body: _body.text,
+      url: _url.text.isEmpty ? null : _url.text,
+      title: _title.text.isEmpty ? null : _title.text,
+      description: _description.text.isEmpty ? null : _description.text,
+      thumbnail: _thumbnail,
+      fileIds: List.of(_fileIds),
+      postDateTime: _postDateTime,
+      skipHooks: _skipHooks,
+      savedAt: DateTime.now().toUtc(),
+    );
+  }
+
+  Future<void> _loadDraft() async {
+    final draft = await _draftCtrl.loadRestored();
+    if (draft == null || !mounted) return;
+    _loadingDraft = true;
+    try {
+      setState(() {
+        _kind = draft.kind;
+        _body.text = draft.body;
+        _url.text = draft.url ?? '';
+        _title.text = draft.title ?? '';
+        _description.text = draft.description ?? '';
+        _thumbnail = draft.thumbnail;
+        _fileIds
+          ..clear()
+          ..addAll(draft.fileIds);
+        _postDateTime = draft.postDateTime;
+        _skipHooks = draft.skipHooks;
+      });
+    } finally {
+      _loadingDraft = false;
+    }
+  }
+
+  Future<void> _discardDraft() async {
+    await _draftCtrl.clear();
+    if (!mounted) return;
+    _loadingDraft = true;
+    try {
+      setState(() {
+        if (widget.editing != null) {
+          final post = widget.editing!;
+          _kind = post.kind;
+          _body.text = bodyFromHtml(post.body);
+          _url.text = post.url ?? '';
+          _title.text = post.title ?? '';
+          _description.text = post.description ?? '';
+          _thumbnail = post.thumbnail;
+          _fileIds
+            ..clear()
+            ..addAll(post.fileIds);
+          _postDateTime = null;
+          _skipHooks = false;
+        } else {
+          _kind = PostKind.note;
+          _body.clear();
+          _url.clear();
+          _title.clear();
+          _description.clear();
+          _thumbnail = null;
+          _fileIds.clear();
+          _postDateTime = null;
+          _skipHooks = false;
+        }
+      });
+    } finally {
+      _loadingDraft = false;
+    }
+  }
+
+  String _formatRelative(DateTime t) {
+    final diff = DateTime.now().difference(t);
+    if (diff.inSeconds < 60) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 30) return '${diff.inDays}d ago';
+    final local = t.toLocal();
+    return '${local.year}-${local.month.toString().padLeft(2, '0')}-'
+        '${local.day.toString().padLeft(2, '0')}';
   }
 }
 

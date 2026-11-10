@@ -16,6 +16,8 @@ import 'drive.dart';
 import 'space_feed/attachment_picker.dart';
 import 'space_feed/composer.dart';
 import 'space_feed/post_card.dart';
+import '../../data/composer_draft.dart';
+import 'space_feed/composer_draft_controller.dart';
 
 /// Number of direct replies shown under a top-level post by default.
 const int kPreviewReplyCount = 2;
@@ -48,6 +50,9 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   bool _sending = false;
   bool _searchActive = false;
   bool _skipHooks = false;
+
+  late final ComposerDraftController _inlineDraftCtrl;
+  bool _loadingInlineDraft = false;
 
   final ItemScrollController _feedScroll = ItemScrollController();
   final ItemScrollController _searchScroll = ItemScrollController();
@@ -125,7 +130,20 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _inlineDraftCtrl = ComposerDraftController(
+      store: widget.store,
+      fieldKey: 'space:${widget.space.id}:inline',
+    );
+    _bodyCtrl.addListener(_onInlineFieldChanged);
+    _urlCtrl.addListener(_onInlineFieldChanged);
+    _loadInlineDraft();
+  }
+
+  @override
   void dispose() {
+    _inlineDraftCtrl.dispose();
     _bodyCtrl.dispose();
     _urlCtrl.dispose();
     _searchCtrl.dispose();
@@ -378,6 +396,11 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         skipHooks: _skipHooks,
       );
       if (!mounted) return;
+      // Clear the draft before the controllers: their listeners fire on
+      // `.clear()` and would schedule a save of the empty composer. The
+      // explicit `clear()` cancels any pending debounce timer first.
+      await _inlineDraftCtrl.clear();
+      if (!mounted) return;
       _bodyCtrl.clear();
       _urlCtrl.clear();
       setState(() {
@@ -398,6 +421,62 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         if (!_pendingFileIds.contains(id)) _pendingFileIds.add(id);
       }
     });
+  }
+
+  Future<void> _loadInlineDraft() async {
+    final draft = await _inlineDraftCtrl.loadRestored();
+    if (draft == null || !mounted) return;
+    _loadingInlineDraft = true;
+    try {
+      setState(() {
+        _kind = draft.kind;
+        _pendingFileIds
+          ..clear()
+          ..addAll(draft.fileIds);
+        _postDateTime = draft.postDateTime;
+        _skipHooks = draft.skipHooks;
+      });
+      _bodyCtrl.text = draft.body;
+      _urlCtrl.text = draft.url ?? '';
+    } finally {
+      _loadingInlineDraft = false;
+    }
+  }
+
+  void _onInlineFieldChanged() {
+    if (_loadingInlineDraft) return;
+    _inlineDraftCtrl.scheduleSave(_buildInlineDraft());
+  }
+
+  ComposerDraft _buildInlineDraft() {
+    return ComposerDraft(
+      fieldKey: _inlineDraftCtrl.fieldKey,
+      kind: _kind,
+      body: _bodyCtrl.text,
+      url: _urlCtrl.text.isEmpty ? null : _urlCtrl.text,
+      fileIds: List.of(_pendingFileIds),
+      postDateTime: _postDateTime,
+      skipHooks: _skipHooks,
+      savedAt: DateTime.now().toUtc(),
+    );
+  }
+
+  Future<void> _resetInlineComposer() async {
+    await _inlineDraftCtrl.clear();
+    if (!mounted) return;
+    _loadingInlineDraft = true;
+    try {
+      setState(() {
+        _kind = PostKind.note;
+        _pendingFileIds.clear();
+        _postDateTime = null;
+        _skipHooks = false;
+      });
+      _bodyCtrl.clear();
+      _urlCtrl.clear();
+    } finally {
+      _loadingInlineDraft = false;
+    }
   }
 
   Future<void> _reply(Post parent) async {
@@ -443,6 +522,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       createdAt: result.createdAt,
       skipHooks: result.skipHooks,
     );
+    await widget.store.deleteComposerDraft(result.draftFieldKey);
     if (mounted) setState(() => _expanded.add(parent.id));
   }
 
@@ -489,6 +569,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       quotedPostId: result.quotedPostId,
       skipHooks: result.skipHooks,
     );
+    await widget.store.deleteComposerDraft(result.draftFieldKey);
   }
 
   Future<void> _edit(Post post) async {
@@ -515,6 +596,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       fileIds: result.fileIds,
       skipHooks: result.skipHooks,
     );
+    await widget.store.deleteComposerDraft(result.draftFieldKey);
   }
 
   // ── Search / tree ──────────────────────────────────────────────────────
@@ -907,6 +989,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                         setState(() => _postDateTime = v),
                     skipHooks: _skipHooks,
                     onSkipHooksChanged: (v) => setState(() => _skipHooks = v),
+                    onReset: _resetInlineComposer,
                   ),
                 ),
             ],
