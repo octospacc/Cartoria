@@ -16,6 +16,7 @@ import '../platform/fs.dart';
 import '../util/fs_walk.dart';
 import '../util/hook_outcome.dart';
 import '../util/mime.dart';
+import '../util/platform.dart';
 import 'app_settings.dart';
 import 'bookmarks.dart';
 import 'composer_draft.dart';
@@ -298,9 +299,16 @@ class VaultStore extends ChangeNotifier {
     }
 
     // This should be called after the vaultPath is determined.
-    if (Platform.isAndroid) {
-      const channel = MethodChannel('cartoria/documents_provider');
-      await channel.invokeMethod('setVaultPath', {'path': vaultPath});
+    if (isNativeAndroid) {
+      try {
+        const channel = MethodChannel('cartoria/documents_provider');
+        await channel.invokeMethod<void>(
+          'setVaultPath',
+          {'path': vaultPath},
+        );
+      } catch (e) {
+        debugPrint('Could not register vault path with DocumentsProvider: $e');
+      }
     }
 
     await reload();
