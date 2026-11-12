@@ -1,27 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
-import '../widgets/native_text_field.dart';
 import '../widgets/emoji_picker_sheet.dart';
+import '../widgets/native_text_field.dart';
 
-/// Flip to false to fall back to a regular TextField if NativeTextField
-/// misbehaves on iOS Safari in this context. Provides a one-line revert
-/// without touching the rest of the file.
 const bool _kUseNativeTextField = true;
 
-/// Full-screen text editing view.
-///
-/// Pushed from a composer (inline or sheet) when the user wants a
-/// larger canvas. On iOS Safari, a bare Scaffold with a single
-/// `TextField` avoids both bug-triggering contexts: no modal route
-/// resize, no parent `SingleChildScrollView`. The field's own internal
-/// scroll is the only scrollable, which is the case the underlying
-/// Flutter `TextField` handles correctly.
-///
-/// The text is shared with the caller via [controller] — no snapshot /
-/// revert semantics. Back arrow returns to the caller with whatever
-/// text was last typed. Users who want to abandon a change can use the
-/// field's own undo (three-finger tap on iOS, Ctrl+Z / Cmd+Z
-/// elsewhere).
 class FullScreenTextEditor extends StatelessWidget {
   final TextEditingController controller;
   final String title;
@@ -34,9 +18,6 @@ class FullScreenTextEditor extends StatelessWidget {
     this.hintText,
   });
 
-  /// Pushes the editor as a full-screen modal route. Returns when the
-  /// user dismisses it. The [controller] reflects whatever text was
-  /// last typed.
   static Future<void> show(
     BuildContext context, {
     required TextEditingController controller,
@@ -59,79 +40,103 @@ class FullScreenTextEditor extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(
-        leading: const CloseButton(),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(title, style: theme.textTheme.titleMedium),
-            ValueListenableBuilder<TextEditingValue>(
-              valueListenable: controller,
-              builder: (_, value, __) {
-                final text = value.text;
-                final trimmed = text.trim();
-                final words =
-                    trimmed.isEmpty ? 0 : trimmed.split(RegExp(r'\s+')).length;
-                // `runes.length` counts code points (one per visible
-                // symbol for most emoji), which is closer to what users
-                // expect than UTF-16 code units (`String.length`).
-                final chars = text.runes.length;
-                return Text(
-                  '$words word${words == 1 ? "" : "s"} · '
-                  '$chars char${chars == 1 ? "" : "s"}',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                );
-              },
+
+    void close() {
+      final route = ModalRoute.of(context);
+      if (route?.isCurrent == true) {
+        Navigator.of(context).maybePop();
+      }
+    }
+
+    return Focus(
+      // Request focus on mount so that when no text field has focus,
+      // this node is the primary and its onKeyEvent catches ESC.
+      autofocus: true,
+      // The inner TextField also has autofocus: true. It's deeper in
+      // the tree, so its focus request runs later and wins. This outer
+      // Focus only holds primary in the gap before the field mounts,
+      // and after the user taps a non-focusable area.
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.escape) {
+          close();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: const CloseButton(),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(title, style: theme.textTheme.titleMedium),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: controller,
+                builder: (_, value, __) {
+                  final text = value.text;
+                  final trimmed = text.trim();
+                  final words = trimmed.isEmpty
+                      ? 0
+                      : trimmed.split(RegExp(r'\s+')).length;
+                  final chars = text.runes.length;
+                  return Text(
+                    '$words word${words == 1 ? "" : "s"} · '
+                    '$chars char${chars == 1 ? "" : "s"}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.emoji_emotions_outlined),
+              tooltip: 'Emoji',
+              onPressed: () => showEmojiPickerSheet(context, controller),
             ),
           ],
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.emoji_emotions_outlined),
-            tooltip: 'Emoji',
-            onPressed: () => showEmojiPickerSheet(context, controller),
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: _kUseNativeTextField
-              ? NativeTextField(
-                  controller: controller,
-                  autofocus: true,
-                  expands: true,
-                  hintText: hintText,
-                  style: TextStyle(
-                    fontSize: 16,
-                    height: 1.5,
-                    color: theme.colorScheme.onSurface,
-                  ),
-                )
-              : TextField(
-                  controller: controller,
-                  autofocus: true,
-                  expands: true,
-                  minLines: null,
-                  maxLines: null,
-                  textAlignVertical: TextAlignVertical.top,
-                  keyboardType: TextInputType.multiline,
-                  textCapitalization: TextCapitalization.sentences,
-                  style: TextStyle(
-                    fontSize: 16,
-                    height: 1.5,
-                    color: theme.colorScheme.onSurface,
-                  ),
-                  decoration: InputDecoration(
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: _kUseNativeTextField
+                ? NativeTextField(
+                    controller: controller,
+                    autofocus: true,
+                    expands: true,
                     hintText: hintText,
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.zero,
+                    onEscape: close,
+                    style: TextStyle(
+                      fontSize: 16,
+                      height: 1.5,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  )
+                : TextField(
+                    controller: controller,
+                    autofocus: true,
+                    expands: true,
+                    minLines: null,
+                    maxLines: null,
+                    textAlignVertical: TextAlignVertical.top,
+                    keyboardType: TextInputType.multiline,
+                    textCapitalization: TextCapitalization.sentences,
+                    style: TextStyle(
+                      fontSize: 16,
+                      height: 1.5,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: hintText,
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.zero,
+                    ),
                   ),
-                ),
+          ),
         ),
       ),
     );

@@ -11,11 +11,12 @@ class NativeTextField extends StatelessWidget {
   final ValueChanged<String>? onChanged;
   final VoidCallback? onSubmitted;
   final TextStyle? style;
-
-  /// When true, the field fills its parent's height and scrolls
-  /// internally. Requires [minLines] and [maxLines] to be ignored —
-  /// Flutter's TextField rejects `expands: true` with non-null values.
   final bool expands;
+
+  /// Ignored on non-web. ESC is handled by `CallbackShortcuts` in the
+  /// full-screen editor. The parameter exists for API parity with the
+  /// web implementation.
+  final VoidCallback? onEscape;
 
   const NativeTextField({
     super.key,
@@ -30,6 +31,7 @@ class NativeTextField extends StatelessWidget {
     this.onSubmitted,
     this.style,
     this.expands = false,
+    this.onEscape,
   });
 
   @override

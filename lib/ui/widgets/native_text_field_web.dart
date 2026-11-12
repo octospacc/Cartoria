@@ -32,6 +32,12 @@ class NativeTextField extends StatefulWidget {
   /// 100%` takes over.
   final bool expands;
 
+  /// Invoked when the user presses ESC with the textarea focused.
+  /// Handled here rather than via `CallbackShortcuts` because the DOM
+  /// textarea takes focus outside Flutter's focus tree — a Shortcuts
+  /// widget above the platform view never sees the key event.
+  final VoidCallback? onEscape;
+
   const NativeTextField({
     super.key,
     required this.controller,
@@ -45,6 +51,7 @@ class NativeTextField extends StatefulWidget {
     this.onSubmitted,
     this.style,
     this.expands = false,
+    this.onEscape,
   });
 
   @override
@@ -246,6 +253,16 @@ class _NativeTextFieldState extends State<NativeTextField> {
       'keydown',
       ((web.Event e) {
         final ke = e as web.KeyboardEvent;
+
+        // ESC → close the editor. preventDefault is safe: browsers do
+        // nothing with ESC on a focused textarea.
+        if (ke.key == 'Escape' && widget.onEscape != null) {
+          ke.preventDefault();
+          widget.onEscape!();
+          return;
+        }
+
+        // Ctrl/Cmd+Enter → submit (existing behaviour)
         if (ke.key == 'Enter' && (ke.metaKey || ke.ctrlKey)) {
           ke.preventDefault();
           widget.onSubmitted?.call();
