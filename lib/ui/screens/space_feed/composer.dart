@@ -10,6 +10,7 @@ import '../../widgets/native_text_field.dart';
 import '../../widgets/emoji_picker_sheet.dart';
 import '../../screens/full_screen_text_editor.dart';
 import '../../../data/composer_draft.dart';
+import '../drive/file_viewer.dart';
 import 'composer_draft_controller.dart';
 import 'attachment_picker.dart';
 
@@ -166,9 +167,11 @@ class InlineComposer extends StatelessWidget {
               runSpacing: 4,
               children: pendingFileIds.map((id) {
                 final f = store.fileById(space.id, id);
-                return Chip(
+                return InputChip(
                   label: Text(f?.name ?? id, overflow: TextOverflow.ellipsis),
                   onDeleted: () => onRemoveFile(id),
+                  onPressed:
+                      f == null ? null : () => _openFileViewer(context, f),
                 );
               }).toList(),
             ),
@@ -359,6 +362,27 @@ class InlineComposer extends StatelessWidget {
         },
       ),
     );
+  }
+
+  Future<void> _openFileViewer(BuildContext context, DriveFile f) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => FileViewerScreen(
+          store: store,
+          space: space,
+          file: f,
+        ),
+      ),
+    );
+    // The viewer's app bar has a Delete action. If the file is gone on
+    // return, remove the chip so a submit doesn't reference a
+    // nonexistent file. `onRemoveFile` routes through the parent's
+    // `_updateInlineState`, so the draft is re-saved correctly.
+    if (store.fileById(space.id, f.id) == null) {
+      onRemoveFile(f.id);
+    }
   }
 }
 
@@ -884,11 +908,13 @@ class _ComposerSheetState extends State<ComposerSheet> {
                   runSpacing: 4,
                   children: _fileIds.map((id) {
                     final f = widget.store.fileById(widget.space.id, id);
-                    return Chip(
+                    return InputChip(
                       label:
                           Text(f?.name ?? id, overflow: TextOverflow.ellipsis),
                       onDeleted: () =>
                           _updateSheetState(() => _fileIds.remove(id)),
+                      onPressed:
+                          f == null ? null : () => _openFileViewer(context, f),
                     );
                   }).toList(),
                 ),
@@ -1082,6 +1108,24 @@ class _ComposerSheetState extends State<ComposerSheet> {
         ctx,
         const PasteTextIntent(SelectionChangedCause.keyboard),
       );
+    }
+  }
+
+  Future<void> _openFileViewer(BuildContext context, DriveFile f) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => FileViewerScreen(
+          store: widget.store,
+          space: widget.space,
+          file: f,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (widget.store.fileById(widget.space.id, f.id) == null) {
+      _updateSheetState(() => _fileIds.remove(f.id));
     }
   }
 }
