@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
@@ -35,27 +36,49 @@ class FileViewerScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final category = categoryFor(file.name);
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(file.name, overflow: TextOverflow.ellipsis),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.ios_share),
-            tooltip: 'Share / download',
-            onPressed: () async {
-              final bytes = await store.readFileBytes(space.id, file.id);
-              await saveOrShareFile(bytes, file.name);
-            },
-          ),
-          if (allowDelete)
+
+    void close() {
+      // `isCurrent` guard: if a share sheet or delete confirmation is
+      // open on top (both are Routes pushed on the same Navigator), ESC
+      // should close that instead — not both at once.
+      final route = ModalRoute.of(context);
+      if (route?.isCurrent == true) {
+        Navigator.of(context).maybePop();
+      }
+    }
+
+    return Focus(
+      autofocus: true,
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.escape) {
+          close();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(file.name, overflow: TextOverflow.ellipsis),
+          actions: [
             IconButton(
-              icon: const Icon(Icons.delete_outline),
-              tooltip: 'Delete',
-              onPressed: () => _delete(context),
+              icon: const Icon(Icons.ios_share),
+              tooltip: 'Share / download',
+              onPressed: () async {
+                final bytes = await store.readFileBytes(space.id, file.id);
+                await saveOrShareFile(bytes, file.name);
+              },
             ),
-        ],
+            if (allowDelete)
+              IconButton(
+                icon: const Icon(Icons.delete_outline),
+                tooltip: 'Delete',
+                onPressed: () => _delete(context),
+              ),
+          ],
+        ),
+        body: _buildContent(category),
       ),
-      body: _buildContent(category),
     );
   }
 
@@ -283,8 +306,7 @@ class _ViewerAudioState extends State<_ViewerAudio> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.audiotrack,
-                size: 96, color: theme.colorScheme.primary),
+            Icon(Icons.audiotrack, size: 96, color: theme.colorScheme.primary),
             const SizedBox(height: 16),
             Text(widget.file.name,
                 style: theme.textTheme.titleMedium,
@@ -297,8 +319,7 @@ class _ViewerAudioState extends State<_ViewerAudio> {
                 final playing = snap.data ?? false;
                 return IconButton.filled(
                   iconSize: 48,
-                  onPressed: () =>
-                      playing ? player.pause() : player.play(),
+                  onPressed: () => playing ? player.pause() : player.play(),
                   icon: Icon(playing ? Icons.pause : Icons.play_arrow),
                 );
               },
