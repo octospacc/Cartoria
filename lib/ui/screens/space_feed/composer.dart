@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
+import '../../../platform/clipboard_files.dart';
 import '../../../data/models.dart';
 import '../../../data/store.dart';
 import '../../../util/html_utils.dart';
@@ -602,7 +605,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
+    return _withPasteShortcut(Padding(
       padding:
           EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SafeArea(
@@ -885,7 +888,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
           ),
         ),
       ),
-    );
+    ));
   }
 
   Future<void> _openFullScreenEditor(BuildContext context) async {
@@ -1000,6 +1003,62 @@ class _ComposerSheetState extends State<ComposerSheet> {
     final local = t.toLocal();
     return '${local.year}-${local.month.toString().padLeft(2, '0')}-'
         '${local.day.toString().padLeft(2, '0')}';
+  }
+
+  Widget _withPasteShortcut(Widget child) {
+    if (kIsWeb) return child;
+
+    return Focus(
+      canRequestFocus: false,
+      onKeyEvent: (node, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        final hk = HardwareKeyboard.instance;
+        final isMac = defaultTargetPlatform == TargetPlatform.macOS;
+        final mod = isMac ? hk.isMetaPressed : hk.isControlPressed;
+        if (!mod || event.logicalKey != LogicalKeyboardKey.keyV) {
+          return KeyEventResult.ignored;
+        }
+        _handlePasteShortcut();
+        return KeyEventResult.handled;
+      },
+      child: child,
+    );
+  }
+
+  Future<void> _handlePasteShortcut() async {
+    final files = await readClipboardFiles();
+    if (!mounted) return;
+    if (files.isNotEmpty) {
+      final newIds = <String>[];
+      for (final f in files) {
+        try {
+          final file = await widget.store.addFileFromBytes(
+            spaceId: widget.space.id,
+            bytes: f.bytes,
+            name: f.name,
+          );
+          newIds.add(file.id);
+        } catch (e) {
+          debugPrint('Paste failed: $e');
+        }
+      }
+      if (mounted && newIds.isNotEmpty) {
+        setState(() {
+          for (final id in newIds) {
+            if (!_fileIds.contains(id)) _fileIds.add(id);
+          }
+        });
+      }
+      return;
+    }
+    final focused = FocusManager.instance.primaryFocus;
+    final ctx = focused?.context;
+    if (ctx != null) {
+      await Actions.maybeInvoke(
+        ctx,
+        const PasteTextIntent(SelectionChangedCause.keyboard),
+      );
+    }
   }
 }
 

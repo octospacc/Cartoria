@@ -3,11 +3,14 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
+import 'package:flutter/foundation.dart'; // defaultTargetPlatform
+import 'package:flutter/services.dart'; // HardwareKeyboard, KeyDownEvent, etc.
 
 import '../../data/bookmarks.dart';
 import '../../data/models.dart';
 import '../../data/store.dart';
 import '../../util/html_utils.dart';
+import '../../platform/clipboard_files.dart';
 import '../bookmark_import_helpers.dart';
 import '../space_actions.dart';
 import '../space_dialogs.dart';
@@ -955,48 +958,128 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: widget.store,
-      builder: (context, _) {
-        return Scaffold(
-          appBar: _buildAppBar(),
-          body: Column(
-            children: [
-              Expanded(
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 760),
-                    child: _buildContent(),
+    return withClipboardPasteListener(
+        onFiles: _onPastedFiles,
+        child: AnimatedBuilder(
+          animation: widget.store,
+          builder: (context, _) {
+            return Scaffold(
+              appBar: _buildAppBar(),
+              body: Column(
+                children: [
+                  Expanded(
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 760),
+                        child: _buildContent(),
+                      ),
+                    ),
                   ),
-                ),
+                  if (!_searchActive && !_selectionMode)
+                    _withPasteShortcut(
+                      _ComposerFooter(
+                        child: InlineComposer(
+                          kind: _kind,
+                          onKindChanged: (k) => setState(() => _kind = k),
+                          bodyCtrl: _bodyCtrl,
+                          urlCtrl: _urlCtrl,
+                          pendingFileIds: _pendingFileIds,
+                          store: widget.store,
+                          space: widget.space,
+                          onAttach: _attach,
+                          onSend: _sending ? null : _send,
+                          onRemoveFile: (id) =>
+                              setState(() => _pendingFileIds.remove(id)),
+                          postDateTime: _postDateTime,
+                          onPostDateTimeChanged: (v) =>
+                              setState(() => _postDateTime = v),
+                          skipHooks: _skipHooks,
+                          onSkipHooksChanged: (v) =>
+                              setState(() => _skipHooks = v),
+                          onReset: _resetInlineComposer,
+                        ),
+                      ),
+                    )
+                ],
               ),
-              if (!_searchActive)
-                _ComposerFooter(
-                  child: InlineComposer(
-                    kind: _kind,
-                    onKindChanged: (k) => setState(() => _kind = k),
-                    bodyCtrl: _bodyCtrl,
-                    urlCtrl: _urlCtrl,
-                    pendingFileIds: _pendingFileIds,
-                    store: widget.store,
-                    space: widget.space,
-                    onAttach: _attach,
-                    onSend: _sending ? null : _send,
-                    onRemoveFile: (id) =>
-                        setState(() => _pendingFileIds.remove(id)),
-                    postDateTime: _postDateTime,
-                    onPostDateTimeChanged: (v) =>
-                        setState(() => _postDateTime = v),
-                    skipHooks: _skipHooks,
-                    onSkipHooksChanged: (v) => setState(() => _skipHooks = v),
-                    onReset: _resetInlineComposer,
-                  ),
-                ),
-            ],
-          ),
+            );
+          },
+        ));
+  }
+
+  Future<void> _onPastedFiles(List<ClipboardFile> files) async {
+    if (files.isEmpty || !mounted) return;
+    final newIds = <String>[];
+    for (final f in files) {
+      try {
+        final file = await widget.store.addFileFromBytes(
+          spaceId: widget.space.id,
+          bytes: f.bytes,
+          name: f.name,
         );
+        newIds.add(file.id);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Paste failed: $e')),
+          );
+        }
+      }
+    }
+    if (mounted && newIds.isNotEmpty) {
+      setState(() {
+        for (final id in newIds) {
+          if (!_pendingFileIds.contains(id)) _pendingFileIds.add(id);
+        }
+      });
+    }
+  }
+
+  Widget _withPasteShortcut(Widget child) {
+    // Web already handles Ctrl+V through the DOM `paste` event listener
+    // installed by `withClipboardPasteListener` on the scaffold. Returning
+    // `handled` here would call preventDefault() on the underlying
+    // keydown, suppress the browser's synthesized paste event, and break
+    // both text paste and file paste. The wrapper is native-only.
+    if (kIsWeb) return child;
+
+    return Focus(
+      canRequestFocus: false,
+      onKeyEvent: (node, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        final hk = HardwareKeyboard.instance;
+        final isMac = defaultTargetPlatform == TargetPlatform.macOS;
+        final mod = isMac ? hk.isMetaPressed : hk.isControlPressed;
+        if (!mod || event.logicalKey != LogicalKeyboardKey.keyV) {
+          return KeyEventResult.ignored;
+        }
+        _handlePasteShortcut();
+        return KeyEventResult.handled;
       },
+      child: child,
     );
+  }
+
+  Future<void> _handlePasteShortcut() async {
+    final files = await readClipboardFiles();
+    if (!mounted) return;
+    if (files.isNotEmpty) {
+      await _onPastedFiles(files);
+      return;
+    }
+    // No files: fall back to text paste by invoking the standard intent
+    // on the currently focused node (the text field the user is typing
+    // into). `Actions.maybeInvoke` walks up from that node and finds the
+    // EditableText's paste action, so the paste is recorded in the undo
+    // history normally.
+    final focused = FocusManager.instance.primaryFocus;
+    final ctx = focused?.context;
+    if (ctx != null) {
+      await Actions.maybeInvoke(
+        ctx,
+        const PasteTextIntent(SelectionChangedCause.keyboard),
+      );
+    }
   }
 }
 

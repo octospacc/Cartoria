@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../data/models.dart';
 import '../../data/store.dart';
 import '../../platform/file_save.dart';
+import '../../platform/clipboard_files.dart';
 import '../../util/file_category.dart';
 import '../widgets/file_thumbnail.dart';
 import 'drive/file_viewer.dart';
@@ -77,6 +78,57 @@ class _DriveScreenState extends State<DriveScreen> {
     if (mounted) _exitSelectionMode();
   }
 
+  Future<void> _pasteFromClipboard() async {
+    try {
+      final files = await readClipboardFiles();
+      if (files.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'No image or file found in clipboard. On web, try pasting '
+                'into a composer.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      var added = 0;
+      for (final f in files) {
+        try {
+          await widget.store.addFileFromBytes(
+            spaceId: widget.space.id,
+            bytes: f.bytes,
+            name: f.name,
+          );
+          added++;
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Paste failed: $e')),
+            );
+          }
+        }
+      }
+      if (mounted && added > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Added $added file${added == 1 ? "" : "s"} from clipboard.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Paste failed: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -130,6 +182,11 @@ class _DriveScreenState extends State<DriveScreen> {
               : AppBar(
                   title: Text('${widget.space.name} · Drive'),
                   actions: [
+                    IconButton(
+                      icon: const Icon(Icons.content_paste),
+                      tooltip: 'Paste from clipboard',
+                      onPressed: () => _pasteFromClipboard(),
+                    ),
                     IconButton(
                       icon: const Icon(Icons.checklist),
                       tooltip: 'Select',
