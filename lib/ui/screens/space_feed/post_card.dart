@@ -171,6 +171,7 @@ class PostCard extends StatelessWidget {
                                           store: store,
                                           spaceId: space.id,
                                           file: f,
+                                          siblings: files, // ← new
                                         ),
                                       ))
                                   .toList(),

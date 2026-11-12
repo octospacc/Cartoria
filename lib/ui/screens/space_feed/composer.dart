@@ -365,6 +365,11 @@ class InlineComposer extends StatelessWidget {
   }
 
   Future<void> _openFileViewer(BuildContext context, DriveFile f) async {
+    final siblings = <DriveFile>[];
+    for (final id in pendingFileIds) {
+      final df = store.fileById(space.id, id);
+      if (df != null) siblings.add(df);
+    }
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -373,18 +378,18 @@ class InlineComposer extends StatelessWidget {
           store: store,
           space: space,
           file: f,
-          // Delete is allowed from the composer preview: the user
-          // explicitly tapped delete and confirmed. After returning, if
-          // the file is gone, drop the chip so submitting doesn't
-          // reference a nonexistent file. `onRemoveFile` routes through
-          // the parent's `_updateInlineState`, so the draft is re-saved
-          // without the missing ID.
           allowDelete: true,
+          siblings: siblings,
         ),
       ),
     );
-    if (store.fileById(space.id, f.id) == null) {
-      onRemoveFile(f.id);
+    // Any of the pending files may have been deleted while the viewer
+    // was open (not just the initially-tapped one). Sweep them all so
+    // no chip lingers on a nonexistent file.
+    for (final id in List.of(pendingFileIds)) {
+      if (store.fileById(space.id, id) == null) {
+        onRemoveFile(id);
+      }
     }
   }
 }
@@ -1115,6 +1120,11 @@ class _ComposerSheetState extends State<ComposerSheet> {
   }
 
   Future<void> _openFileViewer(BuildContext context, DriveFile f) async {
+    final siblings = <DriveFile>[];
+    for (final id in _fileIds) {
+      final df = widget.store.fileById(widget.space.id, id);
+      if (df != null) siblings.add(df);
+    }
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -1124,12 +1134,15 @@ class _ComposerSheetState extends State<ComposerSheet> {
           space: widget.space,
           file: f,
           allowDelete: true,
+          siblings: siblings,
         ),
       ),
     );
     if (!mounted) return;
-    if (widget.store.fileById(widget.space.id, f.id) == null) {
-      _updateSheetState(() => _fileIds.remove(f.id));
+    for (final id in List.of(_fileIds)) {
+      if (widget.store.fileById(widget.space.id, id) == null) {
+        _updateSheetState(() => _fileIds.remove(id));
+      }
     }
   }
 }

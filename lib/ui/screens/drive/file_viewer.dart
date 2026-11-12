@@ -13,17 +13,38 @@ import '../../../platform/media.dart';
 import '../../../util/file_category.dart';
 import '../../widgets/video_aspect.dart';
 
-class FileViewerScreen extends StatelessWidget {
+/// Full-screen viewer for a single file, or a set of files that can be
+/// navigated between with arrow keys and on-screen chevrons.
+///
+/// ## Navigation
+///
+/// If [siblings] is provided (a list of drive files, including [file]),
+/// the viewer starts on [file] and allows navigating to the others via:
+///   - ← and → arrow keys on a hardware keyboard
+///   - On-screen chevron buttons (visible when a prev/next exists)
+///   - Horizontal swipe on video/audio/text/PDF pages (PageView)
+///
+/// Swipe does not work on image pages: `InteractiveViewer` claims
+/// horizontal drag gestures for panning when zoomed. Use buttons or
+/// arrow keys on image pages.
+///
+/// A `3 / 12` counter in the app bar and a dot row (up to 10 items)
+/// at the bottom give navigation context.
+class FileViewerScreen extends StatefulWidget {
   final VaultStore store;
   final Space space;
+
+  /// The file to show first.
   final DriveFile file;
 
-  /// When true (drive screen context), the app bar shows a delete
-  /// action. When false (feed inline preview, composer attachment
-  /// preview), delete is hidden — the user should remove the file from
-  /// the drive screen if they actually want it gone, not from a
-  /// read-only preview.
+  /// Whether the app bar shows a delete action. If [siblings] is
+  /// provided, delete removes the *current* file, not necessarily
+  /// [file] — use case: user navigated away from [file].
   final bool allowDelete;
+
+  /// All files navigable from here, in display order. Must contain
+  /// [file] if non-null. Null means single-file mode (no navigation).
+  final List<DriveFile>? siblings;
 
   const FileViewerScreen({
     super.key,
@@ -31,45 +52,137 @@ class FileViewerScreen extends StatelessWidget {
     required this.space,
     required this.file,
     this.allowDelete = true,
+    this.siblings,
   });
 
   @override
-  Widget build(BuildContext context) {
-    final category = categoryFor(file.name);
+  State<FileViewerScreen> createState() => _FileViewerScreenState();
+}
 
-    void close() {
-      // `isCurrent` guard: if a share sheet or delete confirmation is
-      // open on top (both are Routes pushed on the same Navigator), ESC
-      // should close that instead — not both at once.
-      final route = ModalRoute.of(context);
-      if (route?.isCurrent == true) {
-        Navigator.of(context).maybePop();
+class _FileViewerScreenState extends State<FileViewerScreen> {
+  late final List<DriveFile> _files;
+  late final PageController _pageController;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    final sib = widget.siblings;
+    if (sib != null && sib.isNotEmpty) {
+      final idx = sib.indexWhere((f) => f.id == widget.file.id);
+      if (idx >= 0) {
+        _files = List.unmodifiable(sib);
+        _currentIndex = idx;
+      } else {
+        _files = List.unmodifiable([widget.file]);
+        _currentIndex = 0;
       }
+    } else {
+      _files = List.unmodifiable([widget.file]);
+      _currentIndex = 0;
     }
+    _pageController = PageController(initialPage: _currentIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  DriveFile get _currentFile => _files[_currentIndex];
+  bool get _hasPrev => _currentIndex > 0;
+  bool get _hasNext => _currentIndex < _files.length - 1;
+  bool get _isMulti => _files.length > 1;
+
+  void _goPrev() {
+    if (!_hasPrev || !_pageController.hasClients) return;
+    _pageController.animateToPage(
+      _currentIndex - 1,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _goNext() {
+    if (!_hasNext || !_pageController.hasClients) return;
+    _pageController.animateToPage(
+      _currentIndex + 1,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _onPageChanged(int index) {
+    setState(() => _currentIndex = index);
+  }
+
+  void _close() {
+    final route = ModalRoute.of(context);
+    if (route?.isCurrent == true) Navigator.of(context).maybePop();
+  }
+
+  KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final k = event.logicalKey;
+    if (k == LogicalKeyboardKey.escape) {
+      _close();
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowLeft && _hasPrev) {
+      _goPrev();
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowRight && _hasNext) {
+      _goNext();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final file = _currentFile;
+    final theme = Theme.of(context);
 
     return Focus(
       autofocus: true,
-      onKeyEvent: (node, event) {
-        if (event is KeyDownEvent &&
-            event.logicalKey == LogicalKeyboardKey.escape) {
-          close();
-          return KeyEventResult.handled;
-        }
-        return KeyEventResult.ignored;
-      },
+      onKeyEvent: _handleKey,
       child: Scaffold(
         appBar: AppBar(
-          title: Text(file.name, overflow: TextOverflow.ellipsis),
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(file.name, overflow: TextOverflow.ellipsis),
+              ),
+              if (_isMulti) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '${_currentIndex + 1} / ${_files.length}',
+                    style: theme.textTheme.labelSmall,
+                  ),
+                ),
+              ],
+            ],
+          ),
           actions: [
             IconButton(
               icon: const Icon(Icons.ios_share),
               tooltip: 'Share / download',
               onPressed: () async {
-                final bytes = await store.readFileBytes(space.id, file.id);
+                final bytes = await widget.store
+                    .readFileBytes(widget.space.id, file.id);
                 await saveOrShareFile(bytes, file.name);
               },
             ),
-            if (allowDelete)
+            if (widget.allowDelete)
               IconButton(
                 icon: const Icon(Icons.delete_outline),
                 tooltip: 'Delete',
@@ -77,12 +190,115 @@ class FileViewerScreen extends StatelessWidget {
               ),
           ],
         ),
-        body: _buildContent(category),
+        body: Stack(
+          children: [
+            if (_isMulti)
+              PageView.builder(
+                controller: _pageController,
+                onPageChanged: _onPageChanged,
+                itemCount: _files.length,
+                itemBuilder: (context, index) {
+                  final f = _files[index];
+                  return KeyedSubtree(
+                    key: ValueKey(f.id),
+                    child: _buildPage(f),
+                  );
+                },
+              )
+            else
+              _buildPage(file),
+            if (_hasPrev)
+              _NavArrow(
+                alignment: Alignment.centerLeft,
+                icon: Icons.chevron_left,
+                onTap: _goPrev,
+              ),
+            if (_hasNext)
+              _NavArrow(
+                alignment: Alignment.centerRight,
+                icon: Icons.chevron_right,
+                onTap: _goNext,
+              ),
+            if (_isMulti)
+              Positioned(
+                bottom: 16,
+                left: 0,
+                right: 0,
+                child: Center(child: _buildIndicator(theme)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPage(DriveFile file) {
+    switch (categoryFor(file.name)) {
+      case FileCategory.image:
+        return _ViewerImage(
+          store: widget.store,
+          spaceId: widget.space.id,
+          file: file,
+        );
+      case FileCategory.video:
+        return _ViewerVideo(
+          store: widget.store,
+          spaceId: widget.space.id,
+          file: file,
+        );
+      case FileCategory.audio:
+        return _ViewerAudio(
+          store: widget.store,
+          spaceId: widget.space.id,
+          file: file,
+        );
+      case FileCategory.text:
+        return _ViewerText(
+          store: widget.store,
+          spaceId: widget.space.id,
+          file: file,
+        );
+      case FileCategory.pdf:
+      case FileCategory.other:
+        return _ViewerGeneric(
+          store: widget.store,
+          space: widget.space,
+          file: file,
+        );
+    }
+  }
+
+  Widget _buildIndicator(ThemeData theme) {
+    if (_files.length <= 1 || _files.length > 10) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black45,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: List.generate(_files.length, (i) {
+          final active = i == _currentIndex;
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            width: active ? 8 : 6,
+            height: active ? 8 : 6,
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            decoration: BoxDecoration(
+              color: active ? Colors.white : Colors.white54,
+              shape: BoxShape.circle,
+            ),
+          );
+        }),
       ),
     );
   }
 
   Future<void> _delete(BuildContext context) async {
+    final file = _currentFile;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -100,25 +316,43 @@ class FileViewerScreen extends StatelessWidget {
       ),
     );
     if (ok == true) {
-      await store.deleteFile(space.id, file.id);
-      if (context.mounted) Navigator.pop(context);
+      await widget.store.deleteFile(widget.space.id, file.id);
+      if (mounted) Navigator.pop(context);
     }
   }
+}
 
-  Widget _buildContent(FileCategory category) {
-    switch (category) {
-      case FileCategory.image:
-        return _ViewerImage(store: store, spaceId: space.id, file: file);
-      case FileCategory.video:
-        return _ViewerVideo(store: store, spaceId: space.id, file: file);
-      case FileCategory.audio:
-        return _ViewerAudio(store: store, spaceId: space.id, file: file);
-      case FileCategory.text:
-        return _ViewerText(store: store, spaceId: space.id, file: file);
-      case FileCategory.pdf:
-      case FileCategory.other:
-        return _ViewerGeneric(store: store, space: space, file: file);
-    }
+class _NavArrow extends StatelessWidget {
+  final Alignment alignment;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _NavArrow({
+    required this.alignment,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: alignment,
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Material(
+          color: Colors.black45,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Icon(icon, size: 28, color: Colors.white),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

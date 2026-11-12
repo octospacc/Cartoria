@@ -467,6 +467,7 @@ class _DriveScreenState extends State<DriveScreen> {
       if (!mounted) return;
     }
 
+    if (!mounted) return;
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -476,6 +477,9 @@ class _DriveScreenState extends State<DriveScreen> {
           space: widget.space,
           file: f,
           allowDelete: true,
+          // Navigate between all files in the space, in creation order
+          // (which is the same order the drive grid renders).
+          siblings: widget.store.filesForSpace(widget.space.id),
         ),
       ),
     );

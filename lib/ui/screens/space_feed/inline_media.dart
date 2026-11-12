@@ -17,19 +17,28 @@ class InlineMedia extends StatelessWidget {
   final VaultStore store;
   final String spaceId;
   final DriveFile file;
+  final List<DriveFile>? siblings;
 
   const InlineMedia({
     super.key,
     required this.store,
     required this.spaceId,
     required this.file,
+    this.siblings,
   });
 
   @override
   Widget build(BuildContext context) {
     switch (categoryFor(file.name)) {
       case FileCategory.image:
-        return _InlineImage(store: store, spaceId: spaceId, file: file);
+        return _InlineImage(
+          store: store,
+          spaceId: spaceId,
+          file: file,
+          siblings: siblings,
+        );
+      // video/audio/text unchanged — they don't call the full-screen
+      // viewer, so navigation isn't relevant there.
       case FileCategory.video:
         return _InlineVideo(store: store, spaceId: spaceId, file: file);
       case FileCategory.audio:
@@ -55,10 +64,13 @@ class _InlineImage extends StatefulWidget {
   final VaultStore store;
   final String spaceId;
   final DriveFile file;
+  final List<DriveFile>? siblings;
+
   const _InlineImage({
     required this.store,
     required this.spaceId,
     required this.file,
+    this.siblings,
   });
 
   @override
@@ -180,6 +192,7 @@ class _InlineImageState extends State<_InlineImage> {
           space: space,
           file: widget.file,
           allowDelete: false,
+          siblings: widget.siblings,
         ),
       ),
     );
