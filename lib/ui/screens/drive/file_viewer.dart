@@ -158,8 +158,8 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
               if (_isMulti) ...[
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
                     color: theme.colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(10),
@@ -177,8 +177,8 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
               icon: const Icon(Icons.ios_share),
               tooltip: 'Share / download',
               onPressed: () async {
-                final bytes = await widget.store
-                    .readFileBytes(widget.space.id, file.id);
+                final bytes =
+                    await widget.store.readFileBytes(widget.space.id, file.id);
                 await saveOrShareFile(bytes, file.name);
               },
             ),
@@ -376,7 +376,17 @@ class _ViewerImageState extends State<_ViewerImage> {
   @override
   void initState() {
     super.initState();
-    _future = widget.store.readImageBytes(widget.spaceId, widget.file.id);
+    _future = _load();
+  }
+
+  Future<Uint8List> _load() async {
+    // Auto-download offloaded files to disk on viewer open. The user
+    // is explicitly navigating here; prompting per-file would break
+    // the navigation flow. `ensureFileLocal` writes bytes to disk,
+    // unoffloads, updates caches, and notifies — so the drive screen
+    // stops showing this file as offloaded on the next rebuild.
+    await widget.store.ensureFileLocal(widget.spaceId, widget.file.id);
+    return widget.store.readImageBytes(widget.spaceId, widget.file.id);
   }
 
   @override
@@ -384,11 +394,22 @@ class _ViewerImageState extends State<_ViewerImage> {
     return FutureBuilder<Uint8List>(
       future: _future,
       builder: (context, snap) {
+        if (snap.hasError) {
+          return _ViewerError(
+            message: 'Failed to load image',
+            error: snap.error,
+            onRetry: () => setState(() => _future = _load()),
+          );
+        }
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
         return InteractiveViewer(
-          child: Center(child: Image.memory(snap.data!)),
+          minScale: 1.0,
+          maxScale: 5.0,
+          child: Center(
+            child: Image.memory(snap.data!, fit: BoxFit.contain),
+          ),
         );
       },
     );
@@ -423,6 +444,7 @@ class _ViewerVideoState extends State<_ViewerVideo> {
 
   Future<void> _init() async {
     try {
+      await widget.store.ensureFileLocal(widget.spaceId, widget.file.id);
       final bytes =
           await widget.store.readFileBytes(widget.spaceId, widget.file.id);
       final uri = await prepareMediaUri(bytes, widget.file.name);
@@ -497,6 +519,7 @@ class _ViewerAudioState extends State<_ViewerAudio> {
 
   Future<void> _init() async {
     try {
+      await widget.store.ensureFileLocal(widget.spaceId, widget.file.id);
       final bytes =
           await widget.store.readFileBytes(widget.spaceId, widget.file.id);
       final uri = await prepareMediaUri(bytes, widget.file.name);
@@ -626,6 +649,7 @@ class _ViewerTextState extends State<_ViewerText> {
   }
 
   Future<String> _load() async {
+    await widget.store.ensureFileLocal(widget.spaceId, widget.file.id);
     final bytes =
         await widget.store.readFileBytes(widget.spaceId, widget.file.id);
     return utf8.decode(bytes, allowMalformed: true);
@@ -687,11 +711,60 @@ class _ViewerGeneric extends StatelessWidget {
             const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: () async {
+                await store.ensureFileLocal(space.id, file.id);
                 final bytes = await store.readFileBytes(space.id, file.id);
                 await saveOrShareFile(bytes, file.name);
               },
               icon: const Icon(Icons.ios_share),
               label: const Text('Share / download'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ViewerError extends StatelessWidget {
+  final String message;
+  final Object? error;
+  final VoidCallback onRetry;
+
+  const _ViewerError({
+    required this.message,
+    required this.error,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off, size: 48,
+                color: theme.colorScheme.error),
+            const SizedBox(height: 12),
+            Text(message, style: theme.textTheme.titleMedium),
+            if (error != null) ...[
+              const SizedBox(height: 6),
+              SelectableText(
+                error.toString(),
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
             ),
           ],
         ),

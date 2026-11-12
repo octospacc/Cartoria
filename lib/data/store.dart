@@ -1659,4 +1659,12 @@ class VaultStore extends ChangeNotifier {
       }
     }
   }
+
+  /// Ensures the file is on local disk, downloading it from the sync
+  /// remote if it's currently offloaded. Returns once the file is
+  /// present on disk. No-op for files that are already local.
+  Future<void> ensureFileLocal(String spaceId, String fileId) async {
+    if (!offloadedFileIds(spaceId).contains(fileId)) return;
+    await fetchOffloadedFile(spaceId, fileId);
+  }
 }
