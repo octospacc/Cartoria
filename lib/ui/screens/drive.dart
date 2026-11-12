@@ -7,12 +7,25 @@ import '../../platform/file_save.dart';
 import '../../platform/clipboard_files.dart';
 import '../../util/file_category.dart';
 import '../widgets/file_thumbnail.dart';
+import '../widgets/file_usage_sheet.dart';
 import 'drive/file_viewer.dart';
 
 class DriveScreen extends StatefulWidget {
   final VaultStore store;
   final Space space;
-  const DriveScreen({super.key, required this.store, required this.space});
+
+  /// Optional callback used by the "Show posts using this file…" sheet
+  /// when the user taps a post. Caller (usually the space feed) is
+  /// expected to pop the drive, then scroll to the post. Null disables
+  /// navigation from the sheet — posts still list, just not tappable.
+  final void Function(String postId)? onViewPostInFeed;
+
+  const DriveScreen({
+    super.key,
+    required this.store,
+    required this.space,
+    this.onViewPostInFeed,
+  });
 
   @override
   State<DriveScreen> createState() => _DriveScreenState();
@@ -22,6 +35,15 @@ class _DriveScreenState extends State<DriveScreen> {
   bool _grid = true;
   bool _selectionMode = false;
   final Set<String> _selectedFileIds = {};
+
+  bool _searchActive = false;
+  final TextEditingController _searchCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   void _enterSelectionMode([String? initialId]) {
     setState(() {
@@ -135,72 +157,26 @@ class _DriveScreenState extends State<DriveScreen> {
     return AnimatedBuilder(
       animation: widget.store,
       builder: (context, _) {
-        final files = widget.store.filesForSpace(widget.space.id);
+        final allFiles = widget.store.filesForSpace(widget.space.id);
         final offloadedIds = widget.store.offloadedFileIds(widget.space.id);
         final used = widget.store.usedFileIds(widget.space.id);
+
+        // Filter by filename substring when search is active.
+        final query = _searchActive ? _searchCtrl.text.trim() : '';
+        final files = query.isEmpty
+            ? allFiles
+            : allFiles
+                .where(
+                    (f) => f.name.toLowerCase().contains(query.toLowerCase()))
+                .toList();
+
         final offloadedCount =
             files.where((f) => offloadedIds.contains(f.id)).length;
         final unusedCount = files.where((f) => !used.contains(f.id)).length;
 
         return Scaffold(
-          appBar: _selectionMode
-              ? AppBar(
-                  leading: IconButton(
-                    icon: const Icon(Icons.close),
-                    tooltip: 'Exit selection',
-                    onPressed: _exitSelectionMode,
-                  ),
-                  title: Text(_selectedFileIds.isEmpty
-                      ? 'Select files'
-                      : '${_selectedFileIds.length} selected'),
-                  actions: [
-                    IconButton(
-                      icon: const Icon(Icons.cleaning_services_outlined),
-                      tooltip: 'Select unused',
-                      onPressed: () {
-                        final unused = files
-                            .where((f) => !used.contains(f.id))
-                            .map((f) => f.id)
-                            .toSet();
-                        if (unused.isEmpty) return;
-                        setState(() {
-                          _selectedFileIds
-                            ..clear()
-                            ..addAll(unused);
-                        });
-                      },
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      tooltip: 'Delete selected',
-                      onPressed: _selectedFileIds.isEmpty
-                          ? null
-                          : _deleteSelectedFiles,
-                    ),
-                  ],
-                )
-              : AppBar(
-                  title: Text('${widget.space.name} · Drive'),
-                  actions: [
-                    IconButton(
-                      icon: const Icon(Icons.content_paste),
-                      tooltip: 'Paste from clipboard',
-                      onPressed: () => _pasteFromClipboard(),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.checklist),
-                      tooltip: 'Select',
-                      onPressed:
-                          files.isEmpty ? null : () => _enterSelectionMode(),
-                    ),
-                    IconButton(
-                      icon: Icon(_grid ? Icons.view_list : Icons.grid_view),
-                      tooltip: _grid ? 'List view' : 'Grid view',
-                      onPressed: () => setState(() => _grid = !_grid),
-                    ),
-                  ],
-                ),
-          body: files.isEmpty
+          appBar: _buildAppBar(context, allFiles, used, files.length, query),
+          body: allFiles.isEmpty
               ? const Center(
                   child: Padding(
                     padding: EdgeInsets.all(24),
@@ -210,36 +186,51 @@ class _DriveScreenState extends State<DriveScreen> {
                     ),
                   ),
                 )
-              : Column(
-                  children: [
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 8),
-                      color: theme.colorScheme.surfaceContainerHighest,
-                      child: Row(
-                        children: [
-                          Icon(Icons.folder_outlined,
-                              size: 14,
-                              color: theme.colorScheme.onSurfaceVariant),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              _driveSummary(
-                                  files.length, offloadedCount, unusedCount),
-                              style: theme.textTheme.bodySmall,
-                            ),
-                          ),
-                        ],
+              : files.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          'No files match "$query".',
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.bodyMedium,
+                        ),
                       ),
+                    )
+                  : Column(
+                      children: [
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 8),
+                          color: theme.colorScheme.surfaceContainerHighest,
+                          child: Row(
+                            children: [
+                              Icon(
+                                _searchActive
+                                    ? Icons.search
+                                    : Icons.folder_outlined,
+                                size: 14,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  _driveSummary(files.length, offloadedCount,
+                                      unusedCount),
+                                  style: theme.textTheme.bodySmall,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          child: _grid
+                              ? _buildGrid(files, offloadedIds, used)
+                              : _buildList(files, offloadedIds, used),
+                        ),
+                      ],
                     ),
-                    Expanded(
-                      child: _grid
-                          ? _buildGrid(files, offloadedIds, used)
-                          : _buildList(files, offloadedIds, used),
-                    ),
-                  ],
-                ),
           floatingActionButton: _selectionMode
               ? null
               : FloatingActionButton(
@@ -298,7 +289,7 @@ class _DriveScreenState extends State<DriveScreen> {
               ? () => _toggleSelection(f.id)
               : () => _openViewer(f),
           onLongPress: _selectionMode ? null : () => _enterSelectionMode(f.id),
-          onDelete: () => _confirmDelete(f),
+          onMenuAction: (v) => _handleMenu(v, f),
         );
       },
     );
@@ -378,11 +369,15 @@ class _DriveScreenState extends State<DriveScreen> {
               ? null
               : PopupMenuButton<String>(
                   onSelected: (v) => _handleMenu(v, f),
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'open', child: Text('Open')),
-                    PopupMenuItem(
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(value: 'open', child: Text('Open')),
+                    if (used.contains(f.id))
+                      const PopupMenuItem(
+                          value: 'usage',
+                          child: Text('Show posts using this file…')),
+                    const PopupMenuItem(
                         value: 'share', child: Text('Share / download')),
-                    PopupMenuItem(value: 'delete', child: Text('Delete')),
+                    const PopupMenuItem(value: 'delete', child: Text('Delete')),
                   ],
                 ),
         );
@@ -395,7 +390,11 @@ class _DriveScreenState extends State<DriveScreen> {
       case 'open':
         await _openViewer(f);
         break;
+      case 'usage':
+        await _showFileUsage(f);
+        break;
       case 'share':
+        await widget.store.ensureFileLocal(widget.space.id, f.id);
         final bytes = await widget.store.readFileBytes(widget.space.id, f.id);
         await saveOrShareFile(bytes, f.name);
         break;
@@ -550,6 +549,127 @@ class _DriveScreenState extends State<DriveScreen> {
       }
     }
   }
+
+  PreferredSizeWidget _buildAppBar(
+    BuildContext context,
+    List<DriveFile> allFiles,
+    Set<String> used,
+    int filteredCount,
+    String query,
+  ) {
+    // Selection mode — unchanged behavior, takes priority over search.
+    if (_selectionMode) {
+      return AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.close),
+          tooltip: 'Exit selection',
+          onPressed: _exitSelectionMode,
+        ),
+        title: Text(_selectedFileIds.isEmpty
+            ? 'Select files'
+            : '${_selectedFileIds.length} selected'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.cleaning_services_outlined),
+            tooltip: 'Select unused',
+            onPressed: () {
+              final unused = allFiles
+                  .where((f) => !used.contains(f.id))
+                  .map((f) => f.id)
+                  .toSet();
+              if (unused.isEmpty) return;
+              setState(() {
+                _selectedFileIds
+                  ..clear()
+                  ..addAll(unused);
+              });
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: 'Delete selected',
+            onPressed: _selectedFileIds.isEmpty ? null : _deleteSelectedFiles,
+          ),
+        ],
+      );
+    }
+
+    // Search mode.
+    if (_searchActive) {
+      return AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          tooltip: 'Close search',
+          onPressed: () => setState(() {
+            _searchCtrl.clear();
+            _searchActive = false;
+          }),
+        ),
+        title: TextField(
+          controller: _searchCtrl,
+          autofocus: true,
+          textInputAction: TextInputAction.search,
+          decoration: InputDecoration(
+            hintText: 'Search files…',
+            border: InputBorder.none,
+            suffixText:
+                query.isEmpty ? null : '$filteredCount / ${allFiles.length}',
+          ),
+          onChanged: (_) => setState(() {}),
+        ),
+        actions: [
+          if (_searchCtrl.text.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.close),
+              tooltip: 'Clear',
+              onPressed: () => setState(_searchCtrl.clear),
+            ),
+        ],
+      );
+    }
+
+    // Normal mode.
+    return AppBar(
+      title: Text('${widget.space.name} · Drive'),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.search),
+          tooltip: 'Search',
+          onPressed: allFiles.isEmpty
+              ? null
+              : () => setState(() => _searchActive = true),
+        ),
+        IconButton(
+          icon: const Icon(Icons.content_paste),
+          tooltip: 'Paste from clipboard',
+          onPressed: () => _pasteFromClipboard(),
+        ),
+        IconButton(
+          icon: const Icon(Icons.checklist),
+          tooltip: 'Select',
+          onPressed: allFiles.isEmpty ? null : () => _enterSelectionMode(),
+        ),
+        IconButton(
+          icon: Icon(_grid ? Icons.view_list : Icons.grid_view),
+          tooltip: _grid ? 'List view' : 'Grid view',
+          onPressed: () => setState(() => _grid = !_grid),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showFileUsage(DriveFile f) async {
+    final posts = widget.store
+        .postsForSpace(widget.space.id)
+        .where((p) => p.fileIds.contains(f.id))
+        .toList();
+    await FileUsageSheet.show(
+      context,
+      file: f,
+      posts: posts,
+      onViewPostInFeed: widget.onViewPostInFeed,
+    );
+  }
 }
 
 class _GridTile extends StatelessWidget {
@@ -562,7 +682,7 @@ class _GridTile extends StatelessWidget {
   final bool isSelected;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
-  final VoidCallback onDelete;
+  final void Function(String action) onMenuAction;
 
   const _GridTile({
     super.key,
@@ -575,7 +695,7 @@ class _GridTile extends StatelessWidget {
     required this.isSelected,
     required this.onTap,
     required this.onLongPress,
-    required this.onDelete,
+    required this.onMenuAction,
   });
 
   @override
@@ -646,35 +766,48 @@ class _GridTile extends StatelessWidget {
                 ),
               ),
             Positioned(
-              top: 4,
-              right: 4,
+              top: 0,
+              right: 0,
               child: selectionMode
-                  ? Container(
-                      width: 22,
-                      height: 22,
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? theme.colorScheme.primary
-                            : Colors.black45,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 1.5),
+                  ? Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Container(
+                        width: 22,
+                        height: 22,
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? theme.colorScheme.primary
+                              : Colors.black45,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 1.5),
+                        ),
+                        child: isSelected
+                            ? const Icon(Icons.check,
+                                size: 14, color: Colors.white)
+                            : null,
                       ),
-                      child: isSelected
-                          ? const Icon(Icons.check,
-                              size: 14, color: Colors.white)
-                          : null,
                     )
                   : Material(
                       color: Colors.black54,
                       shape: const CircleBorder(),
-                      child: InkWell(
-                        customBorder: const CircleBorder(),
-                        onTap: onDelete,
-                        child: const Padding(
-                          padding: EdgeInsets.all(4),
-                          child:
-                              Icon(Icons.close, size: 14, color: Colors.white),
-                        ),
+                      child: PopupMenuButton<String>(
+                        padding: EdgeInsets.zero,
+                        iconSize: 16,
+                        icon: const Icon(Icons.more_vert, color: Colors.white),
+                        tooltip: 'More',
+                        onSelected: onMenuAction,
+                        itemBuilder: (_) => [
+                          const PopupMenuItem(
+                              value: 'open', child: Text('Open')),
+                          if (isUsed)
+                            const PopupMenuItem(
+                                value: 'usage',
+                                child: Text('Show posts using this file…')),
+                          const PopupMenuItem(
+                              value: 'share', child: Text('Share / download')),
+                          const PopupMenuItem(
+                              value: 'delete', child: Text('Delete')),
+                        ],
                       ),
                     ),
             ),

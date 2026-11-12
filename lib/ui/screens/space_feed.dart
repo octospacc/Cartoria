@@ -957,6 +957,16 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                     builder: (_) => DriveScreen(
                       store: widget.store,
                       space: _space,
+                      onViewPostInFeed: (postId) {
+                        // Pop the drive, then scroll to the post after the pop
+                        // animation settles. The drive is always pushed from the
+                        // feed, so `Navigator.pop` here unambiguously pops the
+                        // drive route.
+                        Navigator.of(context).pop();
+                        Future.delayed(const Duration(milliseconds: 400), () {
+                          if (mounted) _scrollToPost(postId);
+                        });
+                      },
                     ),
                   ),
                 ),
