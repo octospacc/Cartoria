@@ -111,4 +111,30 @@ class ComposerDraftController extends ChangeNotifier {
     }
     super.dispose();
   }
+
+  /// Cancels any pending debounced save without writing to disk. Used at
+  /// the start of a submit sequence so a save scheduled by the last
+  /// keystroke doesn't land *after* the parent has already deleted the
+  /// draft — which would resurrect the submitted post's text and files
+  /// the next time the composer opens.
+  void discardPending() {
+    _saveDebounce?.cancel();
+    _pendingDraft = null;
+  }
+
+  /// Saves [draft] immediately (fire-and-forget on the write). Used from
+  /// dispose: the debounced state may not reflect changes that came in
+  /// after the last timer was set (attach a file, immediately navigate
+  /// away), so re-reading the composer's live state at teardown time is
+  /// the only way to capture them. `_pendingDraft` is cleared first so
+  /// `dispose()`'s own fallback doesn't double-save.
+  void saveNow(ComposerDraft draft) {
+    _saveDebounce?.cancel();
+    _pendingDraft = null;
+    if (draft.isEmpty) {
+      store.deleteComposerDraft(fieldKey);
+    } else {
+      store.saveComposerDraft(draft);
+    }
+  }
 }

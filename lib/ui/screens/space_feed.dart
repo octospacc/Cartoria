@@ -146,6 +146,14 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
 
   @override
   void dispose() {
+    // Flush the *current* composer state to the draft before the
+    // controllers die. `_draftCtrl.dispose()` only fires the debounced
+    // pending save — which won't exist if the user attached a file and
+    // immediately navigated away (no listener fired for the file
+    // change). Re-reading the state here captures that case.
+    if (!_loadingInlineDraft) {
+      _inlineDraftCtrl.saveNow(_buildInlineDraft());
+    }
     _inlineDraftCtrl.dispose();
     _bodyCtrl.dispose();
     _urlCtrl.dispose();
@@ -399,18 +407,27 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         skipHooks: _skipHooks,
       );
       if (!mounted) return;
-      // Clear the draft before the controllers: their listeners fire on
-      // `.clear()` and would schedule a save of the empty composer. The
-      // explicit `clear()` cancels any pending debounce timer first.
+
+      // Suppress draft listeners during the reset. `_bodyCtrl.clear()` and
+      // `_urlCtrl.clear()` fire `_onInlineFieldChanged`, which would
+      // schedule a save with the *partially* cleared state (body empty,
+      // files still present, kind still bookmark). That stale draft would
+      // then be persisted 500ms later and reappear on reopen.
+      _loadingInlineDraft = true;
+      try {
+        setState(() {
+          _kind = PostKind.note;
+          _pendingFileIds.clear();
+          _postDateTime = null;
+          _skipHooks = false;
+        });
+        _bodyCtrl.clear();
+        _urlCtrl.clear();
+      } finally {
+        _loadingInlineDraft = false;
+      }
+
       await _inlineDraftCtrl.clear();
-      if (!mounted) return;
-      _bodyCtrl.clear();
-      _urlCtrl.clear();
-      setState(() {
-        _pendingFileIds.clear();
-        _postDateTime = null;
-        _skipHooks = false;
-      });
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -419,7 +436,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   Future<void> _attach() async {
     final ids = await pickOrRecallFiles(context, widget.store, widget.space);
     if (!mounted || ids.isEmpty) return;
-    setState(() {
+    _updateInlineState(() {
       for (final id in ids) {
         if (!_pendingFileIds.contains(id)) _pendingFileIds.add(id);
       }
@@ -449,6 +466,18 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   void _onInlineFieldChanged() {
     if (_loadingInlineDraft) return;
     _inlineDraftCtrl.scheduleSave(_buildInlineDraft());
+  }
+
+  /// Runs [fn] in setState, then schedules a debounced draft save. Every
+  /// state change that affects the persisted draft must go through this —
+  /// attaching/removing files, toggling kind, setting datetime, toggling
+  /// skipHooks. Without it, those changes sit only in memory until the
+  /// next keystroke in the body or URL field triggers the listener.
+  void _updateInlineState(VoidCallback fn) {
+    setState(fn);
+    if (!_loadingInlineDraft) {
+      _inlineDraftCtrl.scheduleSave(_buildInlineDraft());
+    }
   }
 
   ComposerDraft _buildInlineDraft() {
@@ -980,7 +1009,8 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                       _ComposerFooter(
                         child: InlineComposer(
                           kind: _kind,
-                          onKindChanged: (k) => setState(() => _kind = k),
+                          onKindChanged: (k) =>
+                              _updateInlineState(() => _kind = k),
                           bodyCtrl: _bodyCtrl,
                           urlCtrl: _urlCtrl,
                           pendingFileIds: _pendingFileIds,
@@ -988,14 +1018,14 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                           space: widget.space,
                           onAttach: _attach,
                           onSend: _sending ? null : _send,
-                          onRemoveFile: (id) =>
-                              setState(() => _pendingFileIds.remove(id)),
+                          onRemoveFile: (id) => _updateInlineState(
+                              () => _pendingFileIds.remove(id)),
                           postDateTime: _postDateTime,
                           onPostDateTimeChanged: (v) =>
-                              setState(() => _postDateTime = v),
+                              _updateInlineState(() => _postDateTime = v),
                           skipHooks: _skipHooks,
                           onSkipHooksChanged: (v) =>
-                              setState(() => _skipHooks = v),
+                              _updateInlineState(() => _skipHooks = v),
                           onReset: _resetInlineComposer,
                         ),
                       ),

@@ -474,6 +474,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
 
   late final ComposerDraftController _draftCtrl;
   bool _loadingDraft = false;
+  bool _submitting = false;
 
   @override
   void initState() {
@@ -507,6 +508,12 @@ class _ComposerSheetState extends State<ComposerSheet> {
 
   @override
   void dispose() {
+    // Capture the current state before teardown, unless we're mid-submit
+    // (in which case the parent's `deleteComposerDraft` is authoritative
+    // and a save here would race it).
+    if (!_submitting && !_loadingDraft) {
+      _draftCtrl.saveNow(_buildDraft());
+    }
     _draftCtrl.dispose();
     _body.dispose();
     _url.dispose();
@@ -542,7 +549,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
   Future<void> _addFile() async {
     final ids = await pickOrRecallFiles(context, widget.store, widget.space);
     if (!mounted || ids.isEmpty) return;
-    setState(() {
+    _updateSheetState(() {
       for (final id in ids) {
         if (!_fileIds.contains(id)) _fileIds.add(id);
       }
@@ -568,6 +575,9 @@ class _ComposerSheetState extends State<ComposerSheet> {
         _thumbnail = meta.image;
       }
     });
+    if (!_loadingDraft) {
+      _draftCtrl.scheduleSave(_buildDraft());
+    }
     if (meta == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not fetch metadata')),
@@ -583,6 +593,11 @@ class _ComposerSheetState extends State<ComposerSheet> {
       );
       return;
     }
+    // Discard any pending debounced save. If we let it fire during the
+    // sheet's exit animation, it races the parent's post-submit
+    // `deleteComposerDraft` and resurrects the draft for the next open.
+    _submitting = true;
+    _draftCtrl.discardPending();
     Navigator.pop(
       context,
       ComposerResult(
@@ -693,7 +708,8 @@ class _ComposerSheetState extends State<ComposerSheet> {
                       label: Text('Link')),
                 ],
                 selected: {_kind},
-                onSelectionChanged: (s) => setState(() => _kind = s.first),
+                onSelectionChanged: (s) =>
+                    _updateSheetState(() => _kind = s.first),
                 showSelectedIcon: false,
               ),
               if (_kind == PostKind.bookmark) ...[
@@ -838,7 +854,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
                 const SizedBox(height: 12),
                 _DateTimeRow(
                   value: _postDateTime,
-                  onChanged: (v) => setState(() => _postDateTime = v),
+                  onChanged: (v) => _updateSheetState(() => _postDateTime = v),
                 ),
               ],
               const SizedBox(height: 12),
@@ -858,7 +874,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
                     style: theme.textTheme.bodySmall,
                   ),
                   value: !_skipHooks,
-                  onChanged: (v) => setState(() => _skipHooks = !v),
+                  onChanged: (v) => _updateSheetState(() => _skipHooks = !v),
                 ),
               ),
               const SizedBox(height: 12),
@@ -871,7 +887,8 @@ class _ComposerSheetState extends State<ComposerSheet> {
                     return Chip(
                       label:
                           Text(f?.name ?? id, overflow: TextOverflow.ellipsis),
-                      onDeleted: () => setState(() => _fileIds.remove(id)),
+                      onDeleted: () =>
+                          _updateSheetState(() => _fileIds.remove(id)),
                     );
                   }).toList(),
                 ),
@@ -917,6 +934,13 @@ class _ComposerSheetState extends State<ComposerSheet> {
   void _onAnyFieldChanged() {
     if (_loadingDraft) return;
     _draftCtrl.scheduleSave(_buildDraft());
+  }
+
+  void _updateSheetState(VoidCallback fn) {
+    setState(fn);
+    if (!_loadingDraft) {
+      _draftCtrl.scheduleSave(_buildDraft());
+    }
   }
 
   ComposerDraft _buildDraft() {
