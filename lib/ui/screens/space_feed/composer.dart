@@ -373,13 +373,16 @@ class InlineComposer extends StatelessWidget {
           store: store,
           space: space,
           file: f,
+          // Delete is allowed from the composer preview: the user
+          // explicitly tapped delete and confirmed. After returning, if
+          // the file is gone, drop the chip so submitting doesn't
+          // reference a nonexistent file. `onRemoveFile` routes through
+          // the parent's `_updateInlineState`, so the draft is re-saved
+          // without the missing ID.
+          allowDelete: true,
         ),
       ),
     );
-    // The viewer's app bar has a Delete action. If the file is gone on
-    // return, remove the chip so a submit doesn't reference a
-    // nonexistent file. `onRemoveFile` routes through the parent's
-    // `_updateInlineState`, so the draft is re-saved correctly.
     if (store.fileById(space.id, f.id) == null) {
       onRemoveFile(f.id);
     }
@@ -1120,6 +1123,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
           store: widget.store,
           space: widget.space,
           file: f,
+          allowDelete: true,
         ),
       ),
     );

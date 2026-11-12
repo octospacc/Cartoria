@@ -16,11 +16,20 @@ class FileViewerScreen extends StatelessWidget {
   final VaultStore store;
   final Space space;
   final DriveFile file;
+
+  /// When true (drive screen context), the app bar shows a delete
+  /// action. When false (feed inline preview, composer attachment
+  /// preview), delete is hidden — the user should remove the file from
+  /// the drive screen if they actually want it gone, not from a
+  /// read-only preview.
+  final bool allowDelete;
+
   const FileViewerScreen({
     super.key,
     required this.store,
     required this.space,
     required this.file,
+    this.allowDelete = true,
   });
 
   @override
@@ -38,11 +47,12 @@ class FileViewerScreen extends StatelessWidget {
               await saveOrShareFile(bytes, file.name);
             },
           ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: 'Delete',
-            onPressed: () => _delete(context),
-          ),
+          if (allowDelete)
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Delete',
+              onPressed: () => _delete(context),
+            ),
         ],
       ),
       body: _buildContent(category),

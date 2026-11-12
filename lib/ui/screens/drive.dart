@@ -475,6 +475,7 @@ class _DriveScreenState extends State<DriveScreen> {
           store: widget.store,
           space: widget.space,
           file: f,
+          allowDelete: true,
         ),
       ),
     );

@@ -10,6 +10,7 @@ import '../../../data/models.dart';
 import '../../../data/store.dart';
 import '../../../platform/media.dart';
 import '../../../util/file_category.dart';
+import '../drive/file_viewer.dart';
 import 'media_widgets.dart';
 
 class InlineMedia extends StatelessWidget {
@@ -162,12 +163,24 @@ class _InlineImageState extends State<_InlineImage> {
       return;
     }
     if (!mounted) return;
-    showDialog(
-      context: context,
-      builder: (_) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.all(12),
-        child: InteractiveViewer(child: Image.memory(data.bytes)),
+    // Reuse the same full-screen viewer as the drive screen. That one
+    // has an X close button in the app bar, share/download, and the
+    // pinch-to-zoom behaviour that was just fixed. The Dialog version
+    // that used to live here had no way to dismiss on tap (it filled
+    // the entire barrier area) and duplicated code that already
+    // existed.
+    final space = widget.store.spaceById(widget.spaceId);
+    if (space == null) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => FileViewerScreen(
+          store: widget.store,
+          space: space,
+          file: widget.file,
+          allowDelete: false,
+        ),
       ),
     );
   }
@@ -252,9 +265,8 @@ class _InlineVideoState extends State<_InlineVideo> {
   }
 
   Future<void> _init() async {
-    final offloaded = widget.store
-        .offloadedFileIds(widget.spaceId)
-        .contains(widget.file.id);
+    final offloaded =
+        widget.store.offloadedFileIds(widget.spaceId).contains(widget.file.id);
 
     // Don't eager-load offloaded videos — reading them would trigger a
     // network fetch every time the card enters the viewport. They show
@@ -310,7 +322,8 @@ class _InlineVideoState extends State<_InlineVideo> {
     try {
       await widget.store.fetchOffloadedFile(widget.spaceId, widget.file.id);
       if (!mounted) return;
-      setState(() {});  // triggers rebuild; init runs next via didUpdateWidget path
+      setState(
+          () {}); // triggers rebuild; init runs next via didUpdateWidget path
       await _init();
     } catch (e) {
       if (mounted) {
@@ -384,10 +397,9 @@ class _InlineVideoState extends State<_InlineVideo> {
                 builder: (context, hSnap) {
                   final w = wSnap.data;
                   final h = hSnap.data;
-                  final ratio =
-                      (w != null && h != null && w > 0 && h > 0)
-                          ? w / h
-                          : 16.0 / 9.0;
+                  final ratio = (w != null && h != null && w > 0 && h > 0)
+                      ? w / h
+                      : 16.0 / 9.0;
                   return AspectRatio(
                     aspectRatio: ratio,
                     child: MaterialVideoControlsTheme(
