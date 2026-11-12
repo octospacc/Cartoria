@@ -4,6 +4,7 @@ import '../../../data/models.dart';
 import '../../../data/store.dart';
 import '../../../util/html_utils.dart';
 import '../../widgets/native_text_field.dart';
+import '../../widgets/emoji_picker_sheet.dart';
 import '../../screens/full_screen_text_editor.dart';
 import '../../../data/composer_draft.dart';
 import 'composer_draft_controller.dart';
@@ -197,10 +198,10 @@ class InlineComposer extends StatelessWidget {
         const SizedBox(height: 2),
         LayoutBuilder(
           builder: (context, constraints) {
-            // Below 420pt the single-row layout doesn't fit once the datetime
+            // Below 520pt the single-row layout doesn't fit once the datetime
             // chip has a date in it. Two rows guarantee no overflow at any
             // width and read naturally on mobile.
-            final narrow = constraints.maxWidth < 420;
+            final narrow = constraints.maxWidth < 520;
 
             final modeSelector = SegmentedButton<PostKind>(
               segments: const [
@@ -220,6 +221,13 @@ class InlineComposer extends StatelessWidget {
                 visualDensity: VisualDensity.compact,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
+            );
+
+            final emojiButton = IconButton(
+              icon: const Icon(Icons.emoji_emotions_outlined, size: 20),
+              tooltip: 'Emoji',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => showEmojiPickerSheet(context, bodyCtrl),
             );
 
             final hooksButton = IconButton(
@@ -255,12 +263,14 @@ class InlineComposer extends StatelessWidget {
               onPressed: onSend,
             );
 
+            // Wide
             if (!narrow) {
               return Row(
                 children: [
                   modeSelector,
                   const Spacer(),
                   hooksButton,
+                  emojiButton,
                   _DateTimeChip(
                     value: postDateTime,
                     onChanged: onPostDateTimeChanged,
@@ -283,6 +293,7 @@ class InlineComposer extends StatelessWidget {
                     modeSelector,
                     const Spacer(),
                     hooksButton,
+                    emojiButton,
                   ],
                 ),
                 const SizedBox(height: 2),
@@ -790,6 +801,15 @@ class _ComposerSheetState extends State<ComposerSheet> {
                   children: [
                     Text('Body', style: theme.textTheme.labelLarge),
                     const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.emoji_emotions_outlined, size: 18),
+                      tooltip: 'Emoji',
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints:
+                          const BoxConstraints(minWidth: 32, minHeight: 32),
+                      onPressed: () => showEmojiPickerSheet(context, _body),
+                    ),
                     IconButton(
                       icon: const Icon(Icons.open_in_full, size: 18),
                       tooltip: 'Expand to full screen',

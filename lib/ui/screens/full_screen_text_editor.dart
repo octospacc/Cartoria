@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../widgets/native_text_field.dart';
+import '../widgets/emoji_picker_sheet.dart';
 
 /// Flip to false to fall back to a regular TextField if NativeTextField
 /// misbehaves on iOS Safari in this context. Provides a one-line revert
@@ -88,6 +89,13 @@ class FullScreenTextEditor extends StatelessWidget {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.emoji_emotions_outlined),
+            tooltip: 'Emoji',
+            onPressed: () => showEmojiPickerSheet(context, controller),
+          ),
+        ],
       ),
       body: SafeArea(
         child: Padding(

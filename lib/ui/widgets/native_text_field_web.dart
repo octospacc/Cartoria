@@ -71,6 +71,7 @@ class _NativeTextFieldState extends State<NativeTextField> {
   void initState() {
     super.initState();
     _lastKnownText = widget.controller.text;
+    widget.controller.addListener(_onControllerChanged);
     _viewId = 'cartoria-textarea-'
         '${DateTime.now().microsecondsSinceEpoch}-'
         '${identityHashCode(this)}';
@@ -99,6 +100,30 @@ class _NativeTextFieldState extends State<NativeTextField> {
       }
       return ta;
     });
+  }
+
+  void _onControllerChanged() {
+    final ta = _textarea;
+    if (ta == null) return;
+    final newText = widget.controller.text;
+    if (newText == _lastKnownText) return;
+    _lastKnownText = newText;
+    if (ta.value != newText) {
+      // Preserve the DOM's cursor when possible. An external insertion
+      // (emoji picker) moves it to the end, which is what the picker
+      // expects; a same-length edit keeps the existing position.
+      final hadFocus = web.document.activeElement == ta;
+      final previousCursor = hadFocus ? ta.selectionStart : null;
+      ta.value = newText;
+      if (hadFocus &&
+          previousCursor != null &&
+          previousCursor <= newText.length) {
+        try {
+          ta.setSelectionRange(previousCursor, previousCursor);
+        } catch (_) {}
+      }
+    }
+    _autoResize();
   }
 
   void _ensureCssInjected() {
@@ -280,6 +305,7 @@ class _NativeTextFieldState extends State<NativeTextField> {
 
   @override
   void dispose() {
+    widget.controller.removeListener(_onControllerChanged);
     _focusNode.removeListener(_syncDomFocus);
     _internalFocusNode?.dispose();
     super.dispose();
