@@ -22,7 +22,7 @@ dependencies:
   media_kit_libs_video: ^1.0.4
   opengraph: ^1.5.0
   url_launcher: ^6.3.0
-  html: ^0.15.4   # ← add
+  html: ^0.15.4
   http: ^1.2.0
   http_parser: ^4.0.2
   crypto: ^3.0.3

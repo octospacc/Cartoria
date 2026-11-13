@@ -25,19 +25,38 @@ String bodyToHtml(String text) {
 
 String bodyFromHtml(String html) {
   if (html.trim().isEmpty) return '';
-  final paraRegex =
-      RegExp(r'<p>(.*?)</p>', dotAll: true, caseSensitive: false);
-  final paragraphs = paraRegex
-      .allMatches(html)
-      .map((m) => unescapeHtml(m
-          .group(1)!
-          .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
-          .replaceAll(RegExp(r'<[^>]+>'), '')))
-      .toList();
-  if (paragraphs.isEmpty) {
-    return unescapeHtml(html.replaceAll(RegExp(r'<[^>]+>'), '')).trim();
-  }
-  return paragraphs.join('\n\n');
+
+  var s = html;
+
+  // Inline line breaks → single newline.
+  s = s.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
+
+  // Block-level element boundaries → paragraph breaks. Handles open
+  // and close in one pattern. Covers markdown's output (p, h1–h6, li,
+  // tr, pre, blockquote) plus defensive extras (div, section, article)
+  // for hand-edited HTML.
+  s = s.replaceAll(
+    RegExp(
+      r'</?(p|h[1-6]|li|tr|pre|blockquote|div|section|article)[^>]*>',
+      caseSensitive: false,
+    ),
+    '\n\n',
+  );
+
+  // Horizontal rules become an em-dash line so they survive an edit.
+  s = s.replaceAll(
+    RegExp(r'<hr\s*/?>', caseSensitive: false),
+    '\n\n—\n\n',
+  );
+
+  // Strip any remaining tags (inline: strong, em, code, a, img, …).
+  s = s.replaceAll(RegExp(r'<[^>]+>'), '');
+  s = unescapeHtml(s);
+
+  // Normalise whitespace.
+  s = s.replaceAll(RegExp(r'[ \t]+\n'), '\n');
+  s = s.replaceAll(RegExp(r'\n{3,}'), '\n\n');
+  return s.trim();
 }
 
 Map<String, dynamic> parseFrontmatterMeta(String content) {

@@ -1,169 +1,22 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:html/dom.dart' as dom;
+import 'package:html/parser.dart' as html_parser;
 import 'package:url_launcher/url_launcher.dart';
 
-// ── Parsed body runs ──────────────────────────────────────────────────────
-
-class _BodyRun {
-  final String text;
-  final String? href;
-  const _BodyRun.text(this.text) : href = null;
-  const _BodyRun.link(this.text, this.href);
-  bool get isLink => href != null;
-}
-
-/// Parses post body HTML into a flat sequence of text / link runs.
+/// Renders a post body with full HTML support.
 ///
-/// Handles:
-///   * `<a href="X">Y</a>` → link run with display Y
-///   * `<br>` → newline
-///   * `<p>…</p>` → paragraph breaks
-///   * bare URLs in non-link text → link runs (href == display)
+/// Blocks: `<p>`, `<h1>`–`<h6>`, `<ul>`, `<ol>`, `<pre>`, `<blockquote>`,
+/// `<hr>`, `<img>`, `<table>`. Anything else falls through to a
+/// paragraph containing its inline contents, so no text is lost.
 ///
-/// Non-link text is HTML-unescaped. Link display and href values are
-/// also unescaped. Trailing punctuation on bare URLs (`.`, `,`, `;`,
-/// unmatched closing brackets) is stripped from the URL and re-emitted
-/// as text, so "see https://example.com." links `https://example.com`
-/// and leaves the period outside.
-List<_BodyRun> _parseBodyRuns(String html) {
-  if (html.trim().isEmpty) return const [];
-
-  var s = html;
-
-  // Normalise paragraph boundaries to exactly one blank line ("\n\n").
-  // The on-disk format emits "<p>…</p>\n<p>…</p>", so blindly replacing
-  // "</p>" with "\n\n" would leave the input's own "\n" in place and
-  // produce three newlines per boundary. Extracting each <p>'s inner
-  // content and re-joining with a single separator ignores whatever
-  // whitespace sits between tags.
-  final pRe = RegExp(r'<p[^>]*>(.*?)</p\s*>',
-      caseSensitive: false, dotAll: true);
-  final paragraphMatches = pRe.allMatches(s).toList();
-  if (paragraphMatches.isNotEmpty) {
-    final sb = StringBuffer();
-    for (var i = 0; i < paragraphMatches.length; i++) {
-      if (i > 0) sb.write('\n\n');
-      sb.write(paragraphMatches[i].group(1)!);
-    }
-    s = sb.toString();
-  }
-
-  // Inside-paragraph line breaks (from `<br>` in the source).
-  s = s.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
-
-  final runs = <_BodyRun>[];
-  final anchorRe = RegExp(
-    r'<a\s+[^>]*href="([^"]*)"[^>]*>(.*?)</a\s*>',
-    caseSensitive: false,
-    dotAll: true,
-  );
-
-  var cursor = 0;
-  for (final m in anchorRe.allMatches(s)) {
-    if (m.start > cursor) {
-      _emitText(s.substring(cursor, m.start), runs);
-    }
-    final href = _unescape(m.group(1)!);
-    var display = _unescape(m.group(2)!.replaceAll(RegExp(r'<[^>]+>'), ''));
-    if (display.isEmpty) display = href;
-    runs.add(_BodyRun.link(display, href));
-    cursor = m.end;
-  }
-  if (cursor < s.length) {
-    _emitText(s.substring(cursor), runs);
-  }
-
-  // Trim leading/trailing whitespace on the boundary runs only.
-  while (runs.isNotEmpty &&
-      !runs.first.isLink &&
-      runs.first.text.trim().isEmpty) {
-    runs.removeAt(0);
-  }
-  while (runs.isNotEmpty &&
-      !runs.last.isLink &&
-      runs.last.text.trim().isEmpty) {
-    runs.removeLast();
-  }
-  if (runs.isNotEmpty && !runs.first.isLink) {
-    runs[0] = _BodyRun.text(runs[0].text.trimLeft());
-  }
-  if (runs.isNotEmpty && !runs.last.isLink) {
-    runs[runs.length - 1] =
-        _BodyRun.text(runs[runs.length - 1].text.trimRight());
-  }
-  return runs;
-}
-
-final _urlRe = RegExp(r'https?://[^\s<>"]+', caseSensitive: false);
-
-void _emitText(String raw, List<_BodyRun> out) {
-  final text = _unescape(raw);
-  var cursor = 0;
-  for (final m in _urlRe.allMatches(text)) {
-    if (m.start > cursor) {
-      out.add(_BodyRun.text(text.substring(cursor, m.start)));
-    }
-    final (url, trailing) = _splitTrailing(m.group(0)!);
-    final uri = Uri.tryParse(url);
-    if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
-      out.add(_BodyRun.link(url, url));
-      if (trailing.isNotEmpty) out.add(_BodyRun.text(trailing));
-    } else {
-      out.add(_BodyRun.text(m.group(0)!));
-    }
-    cursor = m.end;
-  }
-  if (cursor < text.length) {
-    out.add(_BodyRun.text(text.substring(cursor)));
-  }
-}
-
-/// Splits trailing punctuation off [raw], returning (url, trailing).
+/// Inline: `<strong>`/`<b>`, `<em>`/`<i>`, `<u>`, `<del>`/`<s>`,
+/// `<code>`, `<a href>`, `<br>`, `<img>` (small placeholder).
+/// Bare URLs in text are auto-linked.
 ///
-/// `.,;:!?` and quotes are always stripped. Closing brackets `)]}` are
-/// stripped only when unbalanced — `https://example.com/a_(b)` keeps
-/// its balanced `)`, while `(see https://example.com/a)` strips the
-/// unmatched outer `)`.
-(String, String) _splitTrailing(String raw) {
-  var url = raw;
-  var trailing = '';
-  while (url.isNotEmpty) {
-    final last = url[url.length - 1];
-    final shouldStrip = '.,;:!?\'"'.contains(last) ||
-        (last == ')' && !_balanced(url, '(', ')')) ||
-        (last == ']' && !_balanced(url, '[', ']')) ||
-        (last == '}' && !_balanced(url, '{', '}'));
-    if (!shouldStrip) break;
-    trailing = last + trailing;
-    url = url.substring(0, url.length - 1);
-  }
-  return (url, trailing);
-}
-
-bool _balanced(String s, String open, String close) {
-  var depth = 0;
-  for (var i = 0; i < s.length; i++) {
-    if (s[i] == open) depth++;
-    if (s[i] == close) depth--;
-  }
-  return depth == 0;
-}
-
-String _unescape(String s) => s
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-    .replaceAll('&quot;', '"')
-    .replaceAll('&#39;', "'")
-    .replaceAll('&amp;', '&');
-
-// ── Widget ────────────────────────────────────────────────────────────────
-
-/// Renders a post body with inline clickable links.
-///
-/// Reads from [html] (the post's on-disk body) rather than plaintext, so
-/// `<a href>` markup is preserved. Bare URLs in text are also made
-/// clickable. Works inside the feed's existing [SelectionArea] — drag
-/// selects, tap on a link opens it.
+/// Works inside a parent `SelectionArea` — text selects, tap on a link
+/// opens it. `TapGestureRecognizer`s are tracked and disposed with the
+/// widget or on cache invalidation, so no leak.
 class PostBodyText extends StatefulWidget {
   final String html;
   final TextStyle? style;
@@ -179,13 +32,12 @@ class PostBodyText extends StatefulWidget {
 }
 
 class _PostBodyTextState extends State<PostBodyText> {
-  // Cache the parsed runs so a parent rebuild doesn't re-scan the HTML.
-  List<_BodyRun>? _cachedRuns;
+  List<Widget>? _blocks;
   String? _cachedHtml;
+  Brightness? _cachedBrightness;
+  List<TapGestureRecognizer> _recognizers = [];
 
-  // Recognizers are recreated on every build (cheap) but must be
-  // disposed to avoid leaks. The list is replaced wholesale each build.
-  List<TapGestureRecognizer> _recognizers = const [];
+  static final _urlRe = RegExp(r'https?://[^\s<>"]+', caseSensitive: false);
 
   @override
   void dispose() {
@@ -197,68 +49,613 @@ class _PostBodyTextState extends State<PostBodyText> {
     for (final r in _recognizers) {
       r.dispose();
     }
-    _recognizers = const [];
-  }
-
-  List<_BodyRun> _runs() {
-    if (_cachedHtml == widget.html && _cachedRuns != null) {
-      return _cachedRuns!;
-    }
-    _cachedHtml = widget.html;
-    _cachedRuns = _parseBodyRuns(widget.html);
-    return _cachedRuns!;
+    _recognizers = [];
   }
 
   @override
   Widget build(BuildContext context) {
-    _disposeRecognizers();
-
     final theme = Theme.of(context);
-    final baseStyle = widget.style ?? theme.textTheme.bodyMedium;
-    final linkStyle = (baseStyle ?? const TextStyle()).copyWith(
-      color: theme.colorScheme.primary,
-      decoration: TextDecoration.underline,
-      decorationColor: theme.colorScheme.primary,
-    );
-
-    final runs = _runs();
-    final spans = <InlineSpan>[];
-    final newRecognizers = <TapGestureRecognizer>[];
-
-    for (final run in runs) {
-      if (run.isLink) {
-        final rec = TapGestureRecognizer()
-          ..onTap = () => _openUrl(context, run.href!);
-        newRecognizers.add(rec);
-        spans.add(TextSpan(
-          text: run.text,
-          style: linkStyle,
-          recognizer: rec,
-        ));
-      } else {
-        spans.add(TextSpan(text: run.text, style: baseStyle));
-      }
+    if (_cachedHtml != widget.html || _cachedBrightness != theme.brightness) {
+      _disposeRecognizers();
+      _cachedHtml = widget.html;
+      _cachedBrightness = theme.brightness;
+      _blocks = _buildBlocks(theme);
     }
-    _recognizers = newRecognizers;
-
-    return Text.rich(
-      TextSpan(children: spans),
-      style: baseStyle,
+    if (_blocks == null || _blocks!.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: _blocks!,
     );
   }
 
-  Future<void> _openUrl(BuildContext context, String url) async {
+  // ── Block-level rendering ─────────────────────────────────────────────
+
+  List<Widget> _buildBlocks(ThemeData theme) {
+    if (widget.html.trim().isEmpty) return const [];
+    final doc = html_parser.parse(widget.html);
+    final body = doc.body;
+    if (body == null) return const [];
+    final out = <Widget>[];
+    for (final node in body.nodes) {
+      out.addAll(_renderBlock(node, theme));
+    }
+    return out;
+  }
+
+  List<Widget> _renderBlock(dom.Node node, ThemeData theme) {
+    if (node is dom.Text) {
+      final text = node.text;
+      if (text.trim().isEmpty) return const [];
+      return [_paragraph(_inlineSpanFor(node, theme), theme)];
+    }
+    if (node is! dom.Element) return const [];
+
+    switch (node.localName) {
+      case 'p':
+        final single = _singleImageChild(node);
+        if (single != null) return [_standaloneImage(single, theme)];
+        return [_paragraph(_inlineSpans(node, theme), theme)];
+      case 'h1':
+      case 'h2':
+      case 'h3':
+      case 'h4':
+      case 'h5':
+      case 'h6':
+        return [_heading(node, theme)];
+      case 'ul':
+        return [_list(node, theme, ordered: false)];
+      case 'ol':
+        return [_list(node, theme, ordered: true)];
+      case 'pre':
+        return [_codeBlock(node, theme)];
+      case 'blockquote':
+        return [_blockquote(node, theme)];
+      case 'hr':
+        return [_horizontalRule(theme)];
+      case 'img':
+        return [_standaloneImage(node, theme)];
+      case 'table':
+        return [_table(node, theme)];
+      case 'br':
+        return const [];
+      default:
+        final spans = _inlineSpans(node, theme);
+        if (spans.isEmpty) return const [];
+        return [_paragraph(spans, theme)];
+    }
+  }
+
+  Widget _paragraph(List<InlineSpan> spans, ThemeData theme) {
+    if (spans.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text.rich(
+        TextSpan(children: spans),
+        style: widget.style,
+      ),
+    );
+  }
+
+  Widget _heading(dom.Element h, ThemeData theme) {
+    final level = int.tryParse(h.localName!.substring(1)) ?? 1;
+    final fontSize = switch (level) {
+      1 => 22.0,
+      2 => 19.0,
+      3 => 17.0,
+      4 => 15.0,
+      5 => 14.0,
+      _ => 13.0,
+    };
+    final weight = level <= 2 ? FontWeight.w700 : FontWeight.w600;
+    final style = (widget.style ?? const TextStyle()).copyWith(
+      fontSize: fontSize,
+      fontWeight: weight,
+      height: 1.3,
+    );
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 6),
+      child: Text.rich(
+        TextSpan(children: _inlineSpans(h, theme, baseStyle: style)),
+        style: style,
+      ),
+    );
+  }
+
+  Widget _list(dom.Element node, ThemeData theme, {required bool ordered}) {
+    final items = node.children.where((e) => e.localName == 'li').toList();
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < items.length; i++)
+            _listItem(items[i], theme, ordered: ordered, index: i),
+        ],
+      ),
+    );
+  }
+
+  Widget _listItem(
+    dom.Element li,
+    ThemeData theme, {
+    required bool ordered,
+    required int index,
+  }) {
+    // CommonMark emits one of two shapes for a list item:
+    //   tight:  <li>inline content<ul>nested</ul></li>
+    //   loose:  <li><p>inline content</p><ul>nested</ul></li>
+    // In both cases the FIRST chunk of content goes on the bullet line;
+    // any subsequent block nodes render indented below, recursively
+    // (handles arbitrary nesting depth).
+    //
+    // Leading whitespace-only text nodes (the newlines the parser emits
+    // between tags) are skipped when locating the first meaningful child.
+    final children = li.nodes.toList();
+    var start = 0;
+    while (start < children.length) {
+      final c = children[start];
+      if (c is dom.Text && c.text.trim().isEmpty) {
+        start++;
+      } else {
+        break;
+      }
+    }
+
+    final inlineSpans = <InlineSpan>[];
+    final blockNodes = <dom.Node>[];
+
+    if (start < children.length &&
+        children[start] is dom.Element &&
+        (children[start] as dom.Element).localName == 'p') {
+      // Loose list: pull the first <p>'s contents onto the bullet line.
+      final firstP = children[start] as dom.Element;
+      for (final n in firstP.nodes) {
+        inlineSpans.addAll(_inlineSpanFor(n, theme));
+      }
+      for (var j = start + 1; j < children.length; j++) {
+        blockNodes.add(children[j]);
+      }
+    } else {
+      // Tight list: inline content up to the first block element.
+      const blockTags = {
+        'ul',
+        'ol',
+        'p',
+        'pre',
+        'blockquote',
+        'table',
+        'hr',
+        'div',
+      };
+      var j = start;
+      while (j < children.length) {
+        final c = children[j];
+        if (c is dom.Element && blockTags.contains(c.localName)) break;
+        inlineSpans.addAll(_inlineSpanFor(c, theme));
+        j++;
+      }
+      for (; j < children.length; j++) {
+        blockNodes.add(children[j]);
+      }
+    }
+
+    // Trailing whitespace between the inline content and the first block
+    // renders as a stray blank line otherwise. Only trim when there's a
+    // block below, since trailing whitespace on a leaf item is harmless.
+    if (blockNodes.isNotEmpty && inlineSpans.isNotEmpty) {
+      final last = inlineSpans.last;
+      if (last is TextSpan && last.text != null) {
+        final trimmed = last.text!.trimRight();
+        if (trimmed != last.text) {
+          if (trimmed.isEmpty) {
+            inlineSpans.removeLast();
+          } else {
+            inlineSpans[inlineSpans.length - 1] = TextSpan(
+              text: trimmed,
+              style: last.style,
+              recognizer: last.recognizer,
+            );
+          }
+        }
+      }
+    }
+
+    final bulletText = ordered ? '${index + 1}.' : '•';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 22,
+                child: Text(bulletText, style: widget.style),
+              ),
+              Expanded(
+                child: Text.rich(
+                  TextSpan(children: inlineSpans),
+                  style: widget.style,
+                ),
+              ),
+            ],
+          ),
+          if (blockNodes.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 22),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final n in blockNodes) ..._renderBlock(n, theme),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _codeBlock(dom.Element pre, ThemeData theme) {
+    final code = pre.querySelector('code') ?? pre;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Text(
+          code.text,
+          style: const TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 13,
+            height: 1.4,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _blockquote(dom.Element bq, ThemeData theme) {
+    final children = <Widget>[];
+    for (final node in bq.nodes) {
+      children.addAll(_renderBlock(node, theme));
+    }
+    if (children.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(left: 12),
+      decoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(
+            color: theme.colorScheme.outlineVariant,
+            width: 3,
+          ),
+        ),
+      ),
+      child: DefaultTextStyle.merge(
+        style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: children,
+        ),
+      ),
+    );
+  }
+
+  Widget _horizontalRule(ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Divider(
+        height: 1,
+        thickness: 1,
+        color: theme.colorScheme.outlineVariant,
+      ),
+    );
+  }
+
+  dom.Element? _singleImageChild(dom.Element p) {
+    final meaningful = <dom.Node>[];
+    for (final n in p.nodes) {
+      if (n is dom.Text) {
+        if (n.text.trim().isEmpty) continue;
+        return null;
+      }
+      meaningful.add(n);
+    }
+    if (meaningful.length != 1) return null;
+    final first = meaningful.first;
+    if (first is dom.Element && first.localName == 'img') return first;
+    return null;
+  }
+
+  Widget _standaloneImage(dom.Element img, ThemeData theme) {
+    final src = img.attributes['src'] ?? '';
+    final alt = img.attributes['alt'] ?? '';
+    if (src.isEmpty) {
+      return _paragraph(
+        [TextSpan(text: alt.isEmpty ? '[image]' : '[image: $alt]')],
+        theme,
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 400),
+          child: Image.network(
+            src,
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                alt.isEmpty ? '[image]' : '[image: $alt]',
+                style: TextStyle(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+            loadingBuilder: (context, child, progress) {
+              if (progress == null) return child;
+              return Container(
+                height: 120,
+                color: theme.colorScheme.surfaceContainerHighest,
+                child: const Center(
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _table(dom.Element table, ThemeData theme) {
+    final rows = table.querySelectorAll('tr');
+    if (rows.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Table(
+        border: TableBorder(
+          horizontalInside: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+        defaultColumnWidth: const IntrinsicColumnWidth(),
+        children: [
+          for (var r = 0; r < rows.length; r++)
+            TableRow(
+              decoration: r == 0
+                  ? BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest,
+                    )
+                  : null,
+              children: [
+                for (final cell in rows[r]
+                    .children
+                    .where((e) => e.localName == 'td' || e.localName == 'th'))
+                  Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Text.rich(
+                      TextSpan(children: _inlineSpans(cell, theme)),
+                      style: widget.style?.copyWith(
+                        fontWeight: r == 0 ? FontWeight.w600 : null,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ── Inline rendering ──────────────────────────────────────────────────
+
+  List<InlineSpan> _inlineSpans(
+    dom.Element parent,
+    ThemeData theme, {
+    TextStyle? baseStyle,
+  }) {
+    final spans = <InlineSpan>[];
+    for (final child in parent.nodes) {
+      spans.addAll(_inlineSpanFor(child, theme, baseStyle: baseStyle));
+    }
+    return spans;
+  }
+
+  List<InlineSpan> _inlineSpanFor(
+    dom.Node node,
+    ThemeData theme, {
+    TextStyle? baseStyle,
+  }) {
+    if (node is dom.Text) {
+      return _linkifyText(node.text, theme, baseStyle);
+    }
+    if (node is! dom.Element) return const [];
+
+    switch (node.localName) {
+      case 'br':
+        return const [TextSpan(text: '\n')];
+      case 'strong':
+      case 'b':
+        return _inlineSpans(
+          node,
+          theme,
+          baseStyle: (baseStyle ?? const TextStyle())
+              .copyWith(fontWeight: FontWeight.bold),
+        );
+      case 'em':
+      case 'i':
+        return _inlineSpans(
+          node,
+          theme,
+          baseStyle: (baseStyle ?? const TextStyle())
+              .copyWith(fontStyle: FontStyle.italic),
+        );
+      case 'u':
+        return _inlineSpans(
+          node,
+          theme,
+          baseStyle: (baseStyle ?? const TextStyle())
+              .copyWith(decoration: TextDecoration.underline),
+        );
+      case 'del':
+      case 's':
+        return _inlineSpans(
+          node,
+          theme,
+          baseStyle: (baseStyle ?? const TextStyle())
+              .copyWith(decoration: TextDecoration.lineThrough),
+        );
+      case 'code':
+        return [
+          TextSpan(
+            text: node.text,
+            style: (baseStyle ?? const TextStyle()).copyWith(
+              fontFamily: 'monospace',
+              backgroundColor: theme.colorScheme.surfaceContainerHighest,
+              fontSize: 13,
+            ),
+          ),
+        ];
+      case 'a':
+        final href = node.attributes['href'];
+        final childSpans = _inlineSpans(node, theme, baseStyle: baseStyle);
+        if (href == null || href.isEmpty) return childSpans;
+        final rec = TapGestureRecognizer()..onTap = () => _openUrl(href);
+        _recognizers.add(rec);
+        return childSpans.map((s) {
+          if (s is TextSpan) {
+            final effective =
+                (s.style ?? baseStyle ?? const TextStyle()).copyWith(
+              color: theme.colorScheme.primary,
+              decoration: TextDecoration.underline,
+              decorationColor: theme.colorScheme.primary,
+            );
+            return TextSpan(
+              text: s.text,
+              children: s.children,
+              style: effective,
+              recognizer: rec,
+            );
+          }
+          return s;
+        }).toList();
+      case 'img':
+        final alt = node.attributes['alt'] ?? '';
+        final placeholder = alt.isEmpty ? '[image]' : '[image: $alt]';
+        return [TextSpan(text: placeholder, style: baseStyle)];
+      case 'span':
+      case 'sup':
+      case 'sub':
+      case 'mark':
+        return _inlineSpans(node, theme, baseStyle: baseStyle);
+      default:
+        return _inlineSpans(node, theme, baseStyle: baseStyle);
+    }
+  }
+
+  List<InlineSpan> _linkifyText(
+    String text,
+    ThemeData theme,
+    TextStyle? baseStyle,
+  ) {
+    if (text.isEmpty) return const [];
+    final spans = <InlineSpan>[];
+    var cursor = 0;
+    for (final m in _urlRe.allMatches(text)) {
+      if (m.start > cursor) {
+        spans.add(
+            TextSpan(text: text.substring(cursor, m.start), style: baseStyle));
+      }
+      final (url, trailing) = _splitTrailing(m.group(0)!);
+      final uri = Uri.tryParse(url);
+      if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
+        final rec = TapGestureRecognizer()..onTap = () => _openUrl(url);
+        _recognizers.add(rec);
+        final linkStyle = (baseStyle ?? const TextStyle()).copyWith(
+          color: theme.colorScheme.primary,
+          decoration: TextDecoration.underline,
+          decorationColor: theme.colorScheme.primary,
+        );
+        spans.add(TextSpan(
+          text: url,
+          style: linkStyle,
+          recognizer: rec,
+        ));
+        if (trailing.isNotEmpty) {
+          spans.add(TextSpan(text: trailing, style: baseStyle));
+        }
+      } else {
+        spans.add(TextSpan(text: m.group(0)!, style: baseStyle));
+      }
+      cursor = m.end;
+    }
+    if (cursor < text.length) {
+      spans.add(TextSpan(text: text.substring(cursor), style: baseStyle));
+    }
+    return spans;
+  }
+
+  (String, String) _splitTrailing(String raw) {
+    var url = raw;
+    var trailing = '';
+    while (url.isNotEmpty) {
+      final last = url[url.length - 1];
+      final strip = '.,;:!?\'"'.contains(last) ||
+          (last == ')' && !_balanced(url, '(', ')')) ||
+          (last == ']' && !_balanced(url, '[', ']')) ||
+          (last == '}' && !_balanced(url, '{', '}'));
+      if (!strip) break;
+      trailing = last + trailing;
+      url = url.substring(0, url.length - 1);
+    }
+    return (url, trailing);
+  }
+
+  bool _balanced(String s, String open, String close) {
+    var depth = 0;
+    for (var i = 0; i < s.length; i++) {
+      if (s[i] == open) depth++;
+      if (s[i] == close) depth--;
+    }
+    return depth == 0;
+  }
+
+  Future<void> _openUrl(String url) async {
     final uri = Uri.tryParse(url);
     if (uri == null) return;
     try {
       final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!ok && context.mounted) {
+      if (!ok && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not open $url')),
         );
       }
     } catch (e) {
-      if (context.mounted) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not open link: $e')),
         );

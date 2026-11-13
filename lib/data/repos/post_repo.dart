@@ -357,6 +357,15 @@ class PostRepository {
       for (final a in attr.allMatches(m.group(1)!)) {
         attrs[a.group(1)!] = a.group(2)!;
       }
+      // Only semantic quotes carry `data-author` or `data-uri` — those
+      // are what the Bluesky importer emits, and what the app surfaces
+      // as an inner quote card. A plain markdown blockquote (just
+      // `<blockquote>text</blockquote>`, no attributes) is body content
+      // and must stay in place so PostBodyText can render it as a
+      // standard styled quote.
+      if (!attrs.containsKey('author') && !attrs.containsKey('uri')) {
+        return m.group(0)!; // leave in body
+      }
       quotes.add(QuotedExternal(
         author: attrs['author'],
         uri: attrs['uri'],
