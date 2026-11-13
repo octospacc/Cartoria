@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:html/dom.dart' as dom;
@@ -6,6 +9,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_highlight/themes/atom-one-light.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:http/http.dart' as http;
 
 /// Renders a post body with full HTML support.
 ///
@@ -450,12 +455,32 @@ class _PostBodyTextState extends State<PostBodyText> {
   Widget _standaloneImage(dom.Element img, ThemeData theme) {
     final src = img.attributes['src'] ?? '';
     final alt = img.attributes['alt'] ?? '';
-    if (src.isEmpty) {
-      return _paragraph(
-        [TextSpan(text: alt.isEmpty ? '[image]' : '[image: $alt]')],
-        theme,
-      );
+    if (src.isEmpty) return _imagePlaceholder(alt, theme);
+
+    // Data URI: inline bytes, no network.
+    if (src.startsWith('data:')) {
+      return _buildDataUriImage(src, alt, theme);
     }
+
+    // SVG by extension. Query strings are tolerated ("x.svg?v=1").
+    if (_isSvgUrl(src)) {
+      return _buildSvgNetworkImage(src, alt, theme);
+    }
+
+    // Raster fallback. Covers PNG, JPEG, GIF, WebP, BMP — whatever the
+    // platform's image codec supports.
+    return _buildRasterImage(src, alt, theme);
+  }
+
+  bool _isSvgUrl(String src) {
+    final uri = Uri.tryParse(src);
+    if (uri == null) return false;
+    return uri.path.toLowerCase().endsWith('.svg');
+  }
+
+// ── Raster ─────────────────────────────────────────────────────────────
+
+  Widget _buildRasterImage(String src, String alt, ThemeData theme) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: ClipRRect(
@@ -465,32 +490,200 @@ class _PostBodyTextState extends State<PostBodyText> {
           child: Image.network(
             src,
             fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                alt.isEmpty ? '[image]' : '[image: $alt]',
-                style: TextStyle(
-                  color: theme.colorScheme.onSurfaceVariant,
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ),
+            errorBuilder: (_, __, ___) => _imageErrorBox(alt, theme),
             loadingBuilder: (context, child, progress) {
               if (progress == null) return child;
-              return Container(
-                height: 120,
-                color: theme.colorScheme.surfaceContainerHighest,
-                child: const Center(
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              );
+              return _imageLoadingBox(theme);
             },
           ),
         ),
+      ),
+    );
+  }
+
+// ── SVG over network ───────────────────────────────────────────────────
+
+  Widget _buildSvgNetworkImage(String src, String alt, ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 400),
+        child: FutureBuilder<Uint8List?>(
+          // Fetch ourselves rather than using `SvgPicture.network`:
+          // the network constructor has no `errorBuilder`, so a failed
+          // fetch leaves the loading placeholder stuck forever. Fetching
+          // explicitly lets us show a proper error box and retry on the
+          // next mount.
+          future: _fetchSvgBytes(src),
+          builder: (context, snap) {
+            if (snap.connectionState != ConnectionState.done) {
+              return _imageLoadingBox(theme);
+            }
+            final bytes = snap.data;
+            if (bytes == null || !_looksLikeSvg(bytes)) {
+              return _imageErrorBox(alt, theme);
+            }
+            return SvgPicture.memory(
+              bytes,
+              fit: BoxFit.contain,
+              placeholderBuilder: (_) => _imageLoadingBox(theme),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<Uint8List?> _fetchSvgBytes(String url) async {
+    try {
+      final resp = await http.get(Uri.parse(url));
+      if (resp.statusCode != 200) return null;
+      return resp.bodyBytes;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _looksLikeSvg(Uint8List bytes) {
+    // Cheap sanity check: some servers return a 200 with an HTML error
+    // page rather than a 404. Without this, `SvgPicture.memory` throws
+    // during async parse and the framework shows a red error box.
+    try {
+      final prefix = utf8
+          .decode(
+            bytes.length > 500 ? bytes.sublist(0, 500) : bytes,
+            allowMalformed: true,
+          )
+          .toLowerCase();
+      return prefix.contains('<svg') || prefix.contains('<?xml');
+    } catch (_) {
+      return false;
+    }
+  }
+
+// ── Data URIs ──────────────────────────────────────────────────────────
+
+  Widget _buildDataUriImage(String src, String alt, ThemeData theme) {
+    // Shape: `data:<mime>[;base64],<payload>`
+    //   - base64 payload: `iVBORw0…`
+    //   - URL-encoded payload (rare): `%3Csvg%3E…`
+    final commaIdx = src.indexOf(',');
+    if (commaIdx < 0) return _imageErrorBox(alt, theme);
+
+    final header = src.substring('data:'.length, commaIdx);
+    final payload = src.substring(commaIdx + 1);
+    final isBase64 = header.endsWith(';base64');
+    final mimeType =
+        (isBase64 ? header.substring(0, header.length - 7) : header)
+            .toLowerCase();
+
+    Uint8List bytes;
+    try {
+      bytes = isBase64
+          ? base64Decode(payload)
+          : Uint8List.fromList(Uri.decodeFull(payload).codeUnits);
+    } catch (_) {
+      return _imageErrorBox(alt, theme);
+    }
+
+    if (mimeType.startsWith('image/svg')) {
+      if (!_looksLikeSvg(bytes)) return _imageErrorBox(alt, theme);
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 400),
+          child: SvgPicture.memory(
+            bytes,
+            fit: BoxFit.contain,
+            placeholderBuilder: (_) => _imageLoadingBox(theme),
+          ),
+        ),
+      );
+    }
+
+    // Raster data URI: PNG, JPEG, GIF, WebP.
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 400),
+          child: Image.memory(
+            bytes,
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => _imageErrorBox(alt, theme),
+          ),
+        ),
+      ),
+    );
+  }
+
+// ── Shared placeholder / error / loading boxes ─────────────────────────
+
+  Widget _imagePlaceholder(String alt, ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          alt.isEmpty ? '[image]' : '[image: $alt]',
+          style: TextStyle(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _imageErrorBox(String alt, ThemeData theme) {
+    return Container(
+      height: 120,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.broken_image_outlined,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  alt.isEmpty ? 'Image failed to load' : alt,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _imageLoadingBox(ThemeData theme) {
+    return Container(
+      height: 120,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: const Center(
+        child: CircularProgressIndicator(strokeWidth: 2),
       ),
     );
   }
