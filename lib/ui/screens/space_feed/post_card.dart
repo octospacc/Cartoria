@@ -151,6 +151,7 @@ class PostCard extends StatelessWidget {
                             html: post.body,
                             style: theme.textTheme.bodyMedium
                                 ?.copyWith(height: 1.4),
+                            imageCache: store.htmlImageCache,
                           ),
                         ],
                         if (isBookmark && post.url != null) ...[

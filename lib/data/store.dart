@@ -22,6 +22,7 @@ import 'bookmarks.dart';
 import 'composer_draft.dart';
 import 'composer_draft_store.dart';
 import 'hooks.dart';
+import 'html_image_cache.dart';
 import 'models.dart';
 import 'repos/archive_service.dart';
 import 'repos/bookmarks_importer.dart';
@@ -136,6 +137,12 @@ class VaultStore extends ChangeNotifier {
   int _thumbLoadsInFlight = 0;
   static const int _maxConcurrentThumbLoads = 3;
   final List<Completer<void>> _thumbLoadQueue = [];
+
+  /// Disk-backed (desktop/mobile) / in-memory (web) cache for images
+  /// referenced from post HTML bodies. Used by `PostBodyText` to avoid
+  /// re-fetching the same image every time its post scrolls back into
+  /// view. Bounded internally; no manual management needed.
+  final HtmlImageCache htmlImageCache = HtmlImageCache();
 
   Future<void> _acquireThumbSlot() async {
     while (_thumbLoadsInFlight >= _maxConcurrentThumbLoads) {

@@ -12,6 +12,8 @@ import 'package:flutter_highlight/themes/atom-one-light.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:http/http.dart' as http;
 
+import '../../data/html_image_cache.dart';
+
 /// Renders a post body with full HTML support.
 ///
 /// Blocks: `<p>`, `<h1>`–`<h6>`, `<ul>`, `<ol>`, `<pre>`, `<blockquote>`,
@@ -28,11 +30,13 @@ import 'package:http/http.dart' as http;
 class PostBodyText extends StatefulWidget {
   final String html;
   final TextStyle? style;
+  final HtmlImageCache? imageCache;
 
   const PostBodyText({
     super.key,
     required this.html,
     this.style,
+    this.imageCache,
   });
 
   @override
@@ -65,11 +69,14 @@ class _PostBodyTextState extends State<PostBodyText> {
     final theme = Theme.of(context);
     if (_cachedHtml != widget.html || _cachedBrightness != theme.brightness) {
       _disposeRecognizers();
+      _imageFutures.clear();
       _cachedHtml = widget.html;
       _cachedBrightness = theme.brightness;
       _blocks = _buildBlocks(theme);
     }
-    if (_blocks == null || _blocks!.isEmpty) return const SizedBox.shrink();
+    if (_blocks == null || _blocks!.isEmpty) {
+      return const SizedBox.shrink();
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
@@ -481,19 +488,48 @@ class _PostBodyTextState extends State<PostBodyText> {
 // ── Raster ─────────────────────────────────────────────────────────────
 
   Widget _buildRasterImage(String src, String alt, ThemeData theme) {
+    // Fall back to the plain network path if no cache is configured
+    // (defensive; every in-app caller passes one).
+    if (widget.imageCache == null) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 400),
+            child: Image.network(
+              src,
+              fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) => _imageErrorBox(alt, theme),
+              loadingBuilder: (context, child, progress) {
+                if (progress == null) return child;
+                return _imageLoadingBox(theme);
+              },
+            ),
+          ),
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(6),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 400),
-          child: Image.network(
-            src,
-            fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => _imageErrorBox(alt, theme),
-            loadingBuilder: (context, child, progress) {
-              if (progress == null) return child;
-              return _imageLoadingBox(theme);
+          child: FutureBuilder<Uint8List?>(
+            future: _imageFutureFor(src),
+            builder: (context, snap) {
+              if (snap.connectionState != ConnectionState.done) {
+                return _imageLoadingBox(theme);
+              }
+              final bytes = snap.data;
+              if (bytes == null) return _imageErrorBox(alt, theme);
+              return Image.memory(
+                bytes,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => _imageErrorBox(alt, theme),
+              );
             },
           ),
         ),
@@ -509,12 +545,7 @@ class _PostBodyTextState extends State<PostBodyText> {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 400),
         child: FutureBuilder<Uint8List?>(
-          // Fetch ourselves rather than using `SvgPicture.network`:
-          // the network constructor has no `errorBuilder`, so a failed
-          // fetch leaves the loading placeholder stuck forever. Fetching
-          // explicitly lets us show a proper error box and retry on the
-          // next mount.
-          future: _fetchSvgBytes(src),
+          future: _imageFutureFor(src),
           builder: (context, snap) {
             if (snap.connectionState != ConnectionState.done) {
               return _imageLoadingBox(theme);
@@ -532,16 +563,6 @@ class _PostBodyTextState extends State<PostBodyText> {
         ),
       ),
     );
-  }
-
-  Future<Uint8List?> _fetchSvgBytes(String url) async {
-    try {
-      final resp = await http.get(Uri.parse(url));
-      if (resp.statusCode != 200) return null;
-      return resp.bodyBytes;
-    } catch (_) {
-      return null;
-    }
   }
 
   bool _looksLikeSvg(Uint8List bytes) {
@@ -921,5 +942,20 @@ class _PostBodyTextState extends State<PostBodyText> {
         );
       }
     }
+  }
+
+  final Map<String, Future<Uint8List?>> _imageFutures = {};
+
+  /// One future per URL, cached for the lifetime of this widget state.
+  /// Without this, every rebuild of `PostBodyText` (each `notifyListeners`
+  /// in the store) would call `getOrFetch` afresh — forcing the
+  /// FutureBuilder through a fresh `connectionState = waiting` cycle and
+  /// showing a spinner flash. The cache itself dedupes concurrent fetches
+  /// (in-flight map), but the FutureBuilder instance still resets.
+  Future<Uint8List?> _imageFutureFor(String url) {
+    return _imageFutures.putIfAbsent(
+      url,
+      () => widget.imageCache?.getOrFetch(url) ?? Future.value(null),
+    );
   }
 }
