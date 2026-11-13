@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -485,101 +486,26 @@ class _PostBodyTextState extends State<PostBodyText> {
     return uri.path.toLowerCase().endsWith('.svg');
   }
 
-// ── Raster ─────────────────────────────────────────────────────────────
-
   Widget _buildRasterImage(String src, String alt, ThemeData theme) {
-    // Fall back to the plain network path if no cache is configured
-    // (defensive; every in-app caller passes one).
-    if (widget.imageCache == null) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(6),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 400),
-            child: Image.network(
-              src,
-              fit: BoxFit.contain,
-              errorBuilder: (_, __, ___) => _imageErrorBox(alt, theme),
-              loadingBuilder: (context, child, progress) {
-                if (progress == null) return child;
-                return _imageLoadingBox(theme);
-              },
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(6),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 400),
-          child: FutureBuilder<Uint8List?>(
-            future: _imageFutureFor(src),
-            builder: (context, snap) {
-              if (snap.connectionState != ConnectionState.done) {
-                return _imageLoadingBox(theme);
-              }
-              final bytes = snap.data;
-              if (bytes == null) return _imageErrorBox(alt, theme);
-              return Image.memory(
-                bytes,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => _imageErrorBox(alt, theme),
-              );
-            },
-          ),
-        ),
-      ),
+    return _HtmlImage(
+      url: src,
+      alt: alt,
+      isSvg: false,
+      theme: theme,
+      cache: widget.imageCache,
+      fallbackToNetwork: widget.imageCache == null,
     );
   }
-
-// ── SVG over network ───────────────────────────────────────────────────
 
   Widget _buildSvgNetworkImage(String src, String alt, ThemeData theme) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 400),
-        child: FutureBuilder<Uint8List?>(
-          future: _imageFutureFor(src),
-          builder: (context, snap) {
-            if (snap.connectionState != ConnectionState.done) {
-              return _imageLoadingBox(theme);
-            }
-            final bytes = snap.data;
-            if (bytes == null || !_looksLikeSvg(bytes)) {
-              return _imageErrorBox(alt, theme);
-            }
-            return SvgPicture.memory(
-              bytes,
-              fit: BoxFit.contain,
-              placeholderBuilder: (_) => _imageLoadingBox(theme),
-            );
-          },
-        ),
-      ),
+    return _HtmlImage(
+      url: src,
+      alt: alt,
+      isSvg: true,
+      theme: theme,
+      cache: widget.imageCache,
+      fallbackToNetwork: false,
     );
-  }
-
-  bool _looksLikeSvg(Uint8List bytes) {
-    // Cheap sanity check: some servers return a 200 with an HTML error
-    // page rather than a 404. Without this, `SvgPicture.memory` throws
-    // during async parse and the framework shows a red error box.
-    try {
-      final prefix = utf8
-          .decode(
-            bytes.length > 500 ? bytes.sublist(0, 500) : bytes,
-            allowMalformed: true,
-          )
-          .toLowerCase();
-      return prefix.contains('<svg') || prefix.contains('<?xml');
-    } catch (_) {
-      return false;
-    }
   }
 
 // ── Data URIs ──────────────────────────────────────────────────────────
@@ -635,76 +561,6 @@ class _PostBodyTextState extends State<PostBodyText> {
             errorBuilder: (_, __, ___) => _imageErrorBox(alt, theme),
           ),
         ),
-      ),
-    );
-  }
-
-// ── Shared placeholder / error / loading boxes ─────────────────────────
-
-  Widget _imagePlaceholder(String alt, ThemeData theme) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Text(
-          alt.isEmpty ? '[image]' : '[image: $alt]',
-          style: TextStyle(
-            color: theme.colorScheme.onSurfaceVariant,
-            fontStyle: FontStyle.italic,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _imageErrorBox(String alt, ThemeData theme) {
-    return Container(
-      height: 120,
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.broken_image_outlined,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  alt.isEmpty ? 'Image failed to load' : alt,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _imageLoadingBox(ThemeData theme) {
-    return Container(
-      height: 120,
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: const Center(
-        child: CircularProgressIndicator(strokeWidth: 2),
       ),
     );
   }
@@ -957,5 +813,317 @@ class _PostBodyTextState extends State<PostBodyText> {
       url,
       () => widget.imageCache?.getOrFetch(url) ?? Future.value(null),
     );
+  }
+}
+
+/// One `<img>` from a post body, rendered with a fixed-aspect box that
+/// matches the image's final size — so the placeholder and the loaded
+/// image have the same height, and images finishing load never shift
+/// surrounding content during scroll.
+///
+/// On the first visit to a URL the aspect ratio is unknown; a 16:9
+/// placeholder is used until the image decodes, then the ratio is
+/// cached in [HtmlImageCache] and used for every subsequent view of the
+/// same URL. Since the common jitter case is scroll-back (same URLs
+/// viewed repeatedly), the fast path — cached aspect — is jitter-free.
+class _HtmlImage extends StatefulWidget {
+  final String url;
+  final String alt;
+  final bool isSvg;
+  final ThemeData theme;
+  final HtmlImageCache? cache;
+
+  /// When no cache is configured, fall back to `Image.network` (keeps
+  /// the widget functional; only used defensively since every in-app
+  /// caller passes the store's cache).
+  final bool fallbackToNetwork;
+
+  const _HtmlImage({
+    required this.url,
+    required this.alt,
+    required this.isSvg,
+    required this.theme,
+    required this.cache,
+    required this.fallbackToNetwork,
+  });
+
+  @override
+  State<_HtmlImage> createState() => _HtmlImageState();
+}
+
+class _HtmlImageState extends State<_HtmlImage> {
+  Uint8List? _bytes;
+  double? _aspect;
+  bool _loading = true;
+  bool _error = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _aspect = widget.cache?.aspectFor(widget.url);
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (widget.fallbackToNetwork) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
+    try {
+      final bytes = await widget.cache!.getOrFetch(widget.url);
+      if (!mounted) return;
+      if (bytes == null) {
+        setState(() {
+          _loading = false;
+          _error = true;
+        });
+        return;
+      }
+      // Resolve aspect ratio — cached or fresh from a bounded decode.
+      var ratio = _aspect ?? widget.cache!.aspectFor(widget.url);
+      if (ratio == null) {
+        ratio =
+            widget.isSvg ? _parseSvgAspect(bytes) : await _decodeAspect(bytes);
+        if (ratio != null) {
+          widget.cache!.cacheAspect(widget.url, ratio);
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _bytes = bytes;
+        _aspect = ratio;
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = true;
+        });
+      }
+    }
+  }
+
+  Future<double?> _decodeAspect(Uint8List bytes) async {
+    try {
+      // `targetWidth: 400` bounds the decode — extracting aspect ratio
+      // from a 4000×3000 source otherwise allocates 48 MB just to read
+      // two integers off the resulting ui.Image.
+      final codec = await ui.instantiateImageCodec(
+        bytes,
+        targetWidth: 400,
+      );
+      final frame = await codec.getNextFrame();
+      final w = frame.image.width;
+      final h = frame.image.height;
+      frame.image.dispose();
+      codec.dispose();
+      if (w <= 0 || h <= 0) return null;
+      return w / h;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  double? _parseSvgAspect(Uint8List bytes) {
+    try {
+      final text = utf8.decode(
+        bytes.length > 4000 ? bytes.sublist(0, 4000) : bytes,
+        allowMalformed: true,
+      );
+      // Preferred: viewBox="minX minY width height"
+      final vb =
+          RegExp(r'viewBox\s*=\s*["\x27]([^"\x27]+)["\x27]').firstMatch(text);
+      if (vb != null) {
+        final parts = vb.group(1)!.trim().split(RegExp(r'[\s,]+'));
+        if (parts.length == 4) {
+          final w = double.tryParse(parts[2]);
+          final h = double.tryParse(parts[3]);
+          if (w != null && h != null && w > 0 && h > 0) return w / h;
+        }
+      }
+      // Fallback: width="…" height="…" on the <svg> element.
+      final wm =
+          RegExp(r'<svg[^>]*\swidth\s*=\s*["\x27]([0-9.]+)').firstMatch(text);
+      final hm =
+          RegExp(r'<svg[^>]*\sheight\s*=\s*["\x27]([0-9.]+)').firstMatch(text);
+      if (wm != null && hm != null) {
+        final w = double.tryParse(wm.group(1)!);
+        final h = double.tryParse(hm.group(1)!);
+        if (w != null && h != null && w > 0 && h > 0) return w / h;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // When the aspect is unknown (first view of a URL), assume 16:9 for
+    // the placeholder. Once the image decodes, the real aspect is cached
+    // and used from then on — so scroll-back has no layout shift.
+    final aspect = _aspect ?? (16 / 9);
+
+    return RepaintBoundary(
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const maxHeight = 400.0;
+            final availW = constraints.maxWidth;
+            // Fit inside (availW, maxHeight), preserving aspect — the
+            // same constraint the old ConstrainedBox(maxHeight: 400)
+            // applied. Without the explicit height cap, tall images
+            // (screenshots, portrait photos) would fill the full width
+            // and become hundreds of pixels tall.
+            final double w, h;
+            if (availW / aspect > maxHeight) {
+              h = maxHeight;
+              w = maxHeight * aspect;
+            } else {
+              w = availW;
+              h = availW / aspect;
+            }
+
+            return Align(
+              alignment: Alignment.centerLeft,
+              child: SizedBox(
+                width: w,
+                height: h,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: _buildContent(w),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContent(double displayWidth) {
+    final theme = widget.theme;
+
+    if (widget.fallbackToNetwork) {
+      if (widget.isSvg) return _imageErrorBox(widget.alt, theme);
+      return Image.network(
+        widget.url,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => _imageErrorBox(widget.alt, theme),
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return _imageLoadingBox(theme);
+        },
+      );
+    }
+    if (_loading) return _imageLoadingBox(theme);
+    if (_error || _bytes == null) return _imageErrorBox(widget.alt, theme);
+
+    if (widget.isSvg) {
+      if (!_looksLikeSvg(_bytes!)) return _imageErrorBox(widget.alt, theme);
+      return SvgPicture.memory(_bytes!, fit: BoxFit.contain);
+    }
+
+    // Decode at display size × DPR, clamped to a sane range. Replaces
+    // the previous hardcoded 800px, which was pixelated on high-DPI and
+    // wasteful on small screens.
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final cacheW = (displayWidth * dpr).round().clamp(100, 1600);
+
+    return Image.memory(
+      _bytes!,
+      fit: BoxFit.contain,
+      cacheWidth: cacheW,
+      errorBuilder: (_, __, ___) => _imageErrorBox(widget.alt, theme),
+    );
+  }
+}
+
+// ── Shared image helpers ───────────────────────────────────────────────
+// Top-level so both `_PostBodyTextState` and `_HtmlImageState` can use
+// them. Stateless — pure functions of their arguments.
+
+Widget _imagePlaceholder(String alt, ThemeData theme) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        alt.isEmpty ? '[image]' : '[image: $alt]',
+        style: TextStyle(
+          color: theme.colorScheme.onSurfaceVariant,
+          fontStyle: FontStyle.italic,
+        ),
+      ),
+    ),
+  );
+}
+
+Widget _imageErrorBox(String alt, ThemeData theme) {
+  return Container(
+    height: 120,
+    decoration: BoxDecoration(
+      color: theme.colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.broken_image_outlined,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                alt.isEmpty ? 'Image failed to load' : alt,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+Widget _imageLoadingBox(ThemeData theme) {
+  return Container(
+    height: 120,
+    decoration: BoxDecoration(
+      color: theme.colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: const Center(
+      child: CircularProgressIndicator(strokeWidth: 2),
+    ),
+  );
+}
+
+bool _looksLikeSvg(Uint8List bytes) {
+  // Cheap sanity check: some servers return a 200 with an HTML error
+  // page rather than a 404. Without this, `SvgPicture.memory` throws
+  // during async parse and the framework shows a red error box.
+  try {
+    final prefix = utf8
+        .decode(
+          bytes.length > 500 ? bytes.sublist(0, 500) : bytes,
+          allowMalformed: true,
+        )
+        .toLowerCase();
+    return prefix.contains('<svg') || prefix.contains('<?xml');
+  } catch (_) {
+    return false;
   }
 }
