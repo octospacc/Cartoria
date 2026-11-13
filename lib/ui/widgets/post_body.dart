@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter_highlight/flutter_highlight.dart';
+import 'package:flutter_highlight/themes/atom-one-dark.dart';
+import 'package:flutter_highlight/themes/atom-one-light.dart';
 
 /// Renders a post body with full HTML support.
 ///
@@ -304,26 +307,90 @@ class _PostBodyTextState extends State<PostBodyText> {
 
   Widget _codeBlock(dom.Element pre, ThemeData theme) {
     final code = pre.querySelector('code') ?? pre;
+    final source = code.text.trimRight();
+    final language = _codeLanguage(pre);
+
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(6),
       ),
+      clipBehavior: Clip.antiAlias,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
-        child: Text(
-          code.text,
-          style: const TextStyle(
-            fontFamily: 'monospace',
-            fontSize: 13,
-            height: 1.4,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 0),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: language == null
+                ? Text(
+                    source,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
+                  )
+                : HighlightView(
+                    source,
+                    language: language,
+                    // Strip the highlight theme's background and set the
+                    // foreground from the app's palette: the syntax colours
+                    // come from the theme, the container and text colour
+                    // from the app. Keeps light/dark consistent with the
+                    // rest of the post body.
+                    theme: _codeTheme(theme, source, language),
+                    padding: EdgeInsets.zero,
+                    textStyle: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
+                  ),
           ),
         ),
       ),
     );
+  }
+
+  /// Extracts the language identifier from a fenced code block.
+  ///
+  /// Markdown-It and most CommonMark renderers emit
+  /// `<pre><code class="language-dart">` for ``` ```dart ``` fences.
+  /// Some pipelines emit `lang-dart` or put the class on the `<pre>`.
+  /// Handles all three; returns null when the fence had no info string.
+  String? _codeLanguage(dom.Element pre) {
+    final code = pre.querySelector('code');
+    final cls = (code?.attributes['class'] ?? '') +
+        ' ' +
+        (pre.attributes['class'] ?? '');
+    final m = RegExp(r'(?:language|lang)-([A-Za-z0-9_+#-]+)').firstMatch(cls);
+    return m?.group(1)?.toLowerCase();
+  }
+
+  /// Builds a highlight.js theme map with the root entry adapted to the
+  /// app's light/dark mode. Syntax colouring comes from Atom One Light /
+  /// Dark; only the background (transparent, our Container supplies it)
+  /// and the default foreground (from `colorScheme.onSurface`) are
+  /// overridden.
+  Map<String, TextStyle> _codeTheme(
+    ThemeData theme,
+    String source,
+    String language,
+  ) {
+    final base = theme.brightness == Brightness.dark
+        ? atomOneDarkTheme
+        : atomOneLightTheme;
+    final foreground = theme.colorScheme.onSurface;
+    return {
+      ...base,
+      'root': (base['root'] ?? const TextStyle()).copyWith(
+        backgroundColor: Colors.transparent,
+        color: foreground,
+      ),
+    };
   }
 
   Widget _blockquote(dom.Element bq, ThemeData theme) {
