@@ -5,6 +5,7 @@ import '../../data/hooks.dart';
 import '../../data/models.dart';
 import '../../data/services/template.dart';
 import '../../data/store.dart';
+import '../widgets/escape_back.dart';
 import 'hook_json_editor.dart';
 
 class HookEditScreen extends StatefulWidget {
@@ -291,7 +292,8 @@ class _HookEditScreenState extends State<HookEditScreen> {
     final spaces = widget.store.spaces;
     final isNew = widget.existing == null;
 
-    return Scaffold(
+    return EscapeBack(
+        child: Scaffold(
       appBar: AppBar(
         title: Text(isNew ? 'New hook' : 'Edit hook'),
         actions: [
@@ -467,7 +469,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
           const SizedBox(height: 40),
         ],
       ),
-    );
+    ));
   }
 
   Widget _section(String text) => Padding(

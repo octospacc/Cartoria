@@ -14,6 +14,7 @@ import '../../platform/clipboard_files.dart';
 import '../bookmark_import_helpers.dart';
 import '../space_actions.dart';
 import '../space_dialogs.dart';
+import '../widgets/escape_back.dart';
 import '../widgets/space_stats_dialog.dart';
 import 'drive.dart';
 import 'space_feed/attachment_picker.dart';
@@ -997,54 +998,67 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return withClipboardPasteListener(
-        onFiles: _onPastedFiles,
-        child: AnimatedBuilder(
-          animation: widget.store,
-          builder: (context, _) {
-            return Scaffold(
-              appBar: _buildAppBar(),
-              body: Column(
-                children: [
-                  Expanded(
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 760),
-                        child: _buildContent(),
-                      ),
-                    ),
-                  ),
-                  if (!_searchActive && !_selectionMode)
-                    _withPasteShortcut(
-                      _ComposerFooter(
-                        child: InlineComposer(
-                          kind: _kind,
-                          onKindChanged: (k) =>
-                              _updateInlineState(() => _kind = k),
-                          bodyCtrl: _bodyCtrl,
-                          urlCtrl: _urlCtrl,
-                          pendingFileIds: _pendingFileIds,
-                          store: widget.store,
-                          space: widget.space,
-                          onAttach: _attach,
-                          onSend: _sending ? null : _send,
-                          onRemoveFile: (id) => _updateInlineState(
-                              () => _pendingFileIds.remove(id)),
-                          postDateTime: _postDateTime,
-                          onPostDateTimeChanged: (v) =>
-                              _updateInlineState(() => _postDateTime = v),
-                          skipHooks: _skipHooks,
-                          onSkipHooksChanged: (v) =>
-                              _updateInlineState(() => _skipHooks = v),
-                          onReset: _resetInlineComposer,
+    return EscapeBack(
+        onEscape: _selectionMode || _searchActive
+            ? () {
+                if (_selectionMode) {
+                  _exitSelectionMode();
+                } else {
+                  setState(() {
+                    _searchCtrl.clear();
+                    _searchActive = false;
+                  });
+                }
+              }
+            : null,
+        child: withClipboardPasteListener(
+            onFiles: _onPastedFiles,
+            child: AnimatedBuilder(
+              animation: widget.store,
+              builder: (context, _) {
+                return Scaffold(
+                  appBar: _buildAppBar(),
+                  body: Column(
+                    children: [
+                      Expanded(
+                        child: Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 760),
+                            child: _buildContent(),
+                          ),
                         ),
                       ),
-                    )
-                ],
-              ),
-            );
-          },
-        ));
+                      if (!_searchActive && !_selectionMode)
+                        _withPasteShortcut(
+                          _ComposerFooter(
+                            child: InlineComposer(
+                              kind: _kind,
+                              onKindChanged: (k) =>
+                                  _updateInlineState(() => _kind = k),
+                              bodyCtrl: _bodyCtrl,
+                              urlCtrl: _urlCtrl,
+                              pendingFileIds: _pendingFileIds,
+                              store: widget.store,
+                              space: widget.space,
+                              onAttach: _attach,
+                              onSend: _sending ? null : _send,
+                              onRemoveFile: (id) => _updateInlineState(
+                                  () => _pendingFileIds.remove(id)),
+                              postDateTime: _postDateTime,
+                              onPostDateTimeChanged: (v) =>
+                                  _updateInlineState(() => _postDateTime = v),
+                              skipHooks: _skipHooks,
+                              onSkipHooksChanged: (v) =>
+                                  _updateInlineState(() => _skipHooks = v),
+                              onReset: _resetInlineComposer,
+                            ),
+                          ),
+                        )
+                    ],
+                  ),
+                );
+              },
+            )));
   }
 
   Future<void> _onPastedFiles(List<ClipboardFile> files) async {

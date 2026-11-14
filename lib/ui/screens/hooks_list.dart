@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../data/hooks.dart';
 import '../../data/store.dart';
+import '../widgets/escape_back.dart';
 import 'hook_edit.dart';
 
 class HookListScreen extends StatelessWidget {
@@ -10,7 +11,8 @@ class HookListScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
+    return EscapeBack(
+        child: AnimatedBuilder(
       animation: store,
       builder: (context, _) {
         final hooks = store.hooks;
@@ -65,7 +67,7 @@ class HookListScreen extends StatelessWidget {
           ),
         );
       },
-    );
+    ));
   }
 
   String _summary(Hook h) {

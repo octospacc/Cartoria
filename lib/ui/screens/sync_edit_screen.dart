@@ -5,6 +5,7 @@ import 'dart:async';
 import '../../data/sync/sync_config.dart';
 import '../../data/sync/sync_provider.dart';
 import '../../data/store.dart';
+import '../widgets/escape_back.dart';
 
 class SyncEditScreen extends StatefulWidget {
   final VaultStore store;
@@ -345,7 +346,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
     final isNew = widget.existing == null;
     final onlyConfig = widget.store.syncConfigs.length <= 1 && !isNew;
 
-    return Scaffold(
+    return EscapeBack(child: Scaffold(
       appBar: AppBar(
         title: Text(isNew ? 'New repository' : 'Edit repository'),
         actions: [
@@ -667,7 +668,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
           const SizedBox(height: 40),
         ],
       ),
-    );
+    ));
   }
 
   Widget _section(ThemeData theme, String text) => Padding(

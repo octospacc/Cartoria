@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../data/hooks.dart';
+import '../widgets/escape_back.dart';
 
 /// Full-screen JSON view/edit for a [Hook].
 ///
@@ -104,7 +105,8 @@ class _HookJsonEditScreenState extends State<HookJsonEditScreen> {
       fontSize: 12,
     );
 
-    return Scaffold(
+    return EscapeBack(
+        child: Scaffold(
       appBar: AppBar(
         title: const Text('Hook JSON'),
         actions: [
@@ -181,6 +183,6 @@ class _HookJsonEditScreenState extends State<HookJsonEditScreen> {
           ],
         ),
       ),
-    );
+    ));
   }
 }

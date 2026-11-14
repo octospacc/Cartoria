@@ -6,6 +6,7 @@ import '../../data/store.dart';
 import '../../platform/file_save.dart';
 import '../../platform/clipboard_files.dart';
 import '../../util/file_category.dart';
+import '../widgets/escape_back.dart';
 import '../widgets/file_thumbnail.dart';
 import '../widgets/file_usage_sheet.dart';
 import 'drive/file_viewer.dart';
@@ -32,6 +33,12 @@ class DriveScreen extends StatefulWidget {
 }
 
 class _DriveScreenState extends State<DriveScreen> {
+  /// Resolves the current version of this space from the store on every
+  /// read. `widget.space` is a snapshot taken at navigation time, so
+  /// without this the drive title keeps showing the old name/icon after
+  /// the space is edited elsewhere.
+  Space get _space => widget.store.spaceById(widget.space.id) ?? widget.space;
+
   bool _grid = true;
   bool _selectionMode = false;
   final Set<String> _selectedFileIds = {};
@@ -154,92 +161,106 @@ class _DriveScreenState extends State<DriveScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return AnimatedBuilder(
-      animation: widget.store,
-      builder: (context, _) {
-        final allFiles = widget.store.filesForSpace(widget.space.id);
-        final offloadedIds = widget.store.offloadedFileIds(widget.space.id);
-        final used = widget.store.usedFileIds(widget.space.id);
+    return EscapeBack(
+        onEscape: _selectionMode || _searchActive
+            ? () {
+                if (_selectionMode) {
+                  _exitSelectionMode();
+                } else {
+                  setState(() {
+                    _searchCtrl.clear();
+                    _searchActive = false;
+                  });
+                }
+              }
+            : null,
+        child: AnimatedBuilder(
+          animation: widget.store,
+          builder: (context, _) {
+            final allFiles = widget.store.filesForSpace(widget.space.id);
+            final offloadedIds = widget.store.offloadedFileIds(widget.space.id);
+            final used = widget.store.usedFileIds(widget.space.id);
 
-        // Filter by filename substring when search is active.
-        final query = _searchActive ? _searchCtrl.text.trim() : '';
-        final files = query.isEmpty
-            ? allFiles
-            : allFiles
-                .where(
-                    (f) => f.name.toLowerCase().contains(query.toLowerCase()))
-                .toList();
+            // Filter by filename substring when search is active.
+            final query = _searchActive ? _searchCtrl.text.trim() : '';
+            final files = query.isEmpty
+                ? allFiles
+                : allFiles
+                    .where((f) =>
+                        f.name.toLowerCase().contains(query.toLowerCase()))
+                    .toList();
 
-        final offloadedCount =
-            files.where((f) => offloadedIds.contains(f.id)).length;
-        final unusedCount = files.where((f) => !used.contains(f.id)).length;
+            final offloadedCount =
+                files.where((f) => offloadedIds.contains(f.id)).length;
+            final unusedCount = files.where((f) => !used.contains(f.id)).length;
 
-        return Scaffold(
-          appBar: _buildAppBar(context, allFiles, used, files.length, query),
-          body: allFiles.isEmpty
-              ? const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text(
-                      'No files yet.\nUpload one here, or attach from a post.',
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                )
-              : files.isEmpty
-                  ? Center(
+            return Scaffold(
+              appBar:
+                  _buildAppBar(context, allFiles, used, files.length, query),
+              body: allFiles.isEmpty
+                  ? const Center(
                       child: Padding(
-                        padding: const EdgeInsets.all(24),
+                        padding: EdgeInsets.all(24),
                         child: Text(
-                          'No files match "$query".',
+                          'No files yet.\nUpload one here, or attach from a post.',
                           textAlign: TextAlign.center,
-                          style: theme.textTheme.bodyMedium,
                         ),
                       ),
                     )
-                  : Column(
-                      children: [
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
-                          color: theme.colorScheme.surfaceContainerHighest,
-                          child: Row(
-                            children: [
-                              Icon(
-                                _searchActive
-                                    ? Icons.search
-                                    : Icons.folder_outlined,
-                                size: 14,
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(
-                                  _driveSummary(files.length, offloadedCount,
-                                      unusedCount),
-                                  style: theme.textTheme.bodySmall,
-                                ),
-                              ),
-                            ],
+                  : files.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(
+                              'No files match "$query".',
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.bodyMedium,
+                            ),
                           ),
+                        )
+                      : Column(
+                          children: [
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 8),
+                              color: theme.colorScheme.surfaceContainerHighest,
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _searchActive
+                                        ? Icons.search
+                                        : Icons.folder_outlined,
+                                    size: 14,
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      _driveSummary(files.length,
+                                          offloadedCount, unusedCount),
+                                      style: theme.textTheme.bodySmall,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Expanded(
+                              child: _grid
+                                  ? _buildGrid(files, offloadedIds, used)
+                                  : _buildList(files, offloadedIds, used),
+                            ),
+                          ],
                         ),
-                        Expanded(
-                          child: _grid
-                              ? _buildGrid(files, offloadedIds, used)
-                              : _buildList(files, offloadedIds, used),
-                        ),
-                      ],
+              floatingActionButton: _selectionMode
+                  ? null
+                  : FloatingActionButton(
+                      onPressed: () => _upload(context),
+                      child: const Icon(Icons.add),
                     ),
-          floatingActionButton: _selectionMode
-              ? null
-              : FloatingActionButton(
-                  onPressed: () => _upload(context),
-                  child: const Icon(Icons.add),
-                ),
-        );
-      },
-    );
+            );
+          },
+        ));
   }
 
   /// "N files" always, then "M offloaded" and "K unused" only when
@@ -630,7 +651,7 @@ class _DriveScreenState extends State<DriveScreen> {
 
     // Normal mode.
     return AppBar(
-      title: Text('${widget.space.name} · Drive'),
+      title: Text('${_space.icon} ${_space.name} · Drive'),
       actions: [
         IconButton(
           icon: const Icon(Icons.search),

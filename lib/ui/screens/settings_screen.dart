@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../data/store.dart';
 import '../../platform/file_save.dart';
 import '../../util/format.dart';
+import '../widgets/escape_back.dart';
 
 class SettingsScreen extends StatefulWidget {
   final VaultStore store;
@@ -191,7 +192,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final totalSize = _backups.fold<int>(0, (sum, b) => sum + b.sizeBytes);
     final effective = widget.store.effectiveBackupRetentionCount;
 
-    return Scaffold(
+    return EscapeBack(
+        child: Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -314,18 +316,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     size: 20),
                                 tooltip: 'Export',
                                 visualDensity: VisualDensity.compact,
-                                onPressed: anyBusy
-                                    ? null
-                                    : () => _exportBackup(b),
+                                onPressed:
+                                    anyBusy ? null : () => _exportBackup(b),
                               ),
                               IconButton(
-                                icon: const Icon(Icons.delete_outline,
-                                    size: 20),
+                                icon:
+                                    const Icon(Icons.delete_outline, size: 20),
                                 tooltip: 'Delete',
                                 visualDensity: VisualDensity.compact,
-                                onPressed: anyBusy
-                                    ? null
-                                    : () => _deleteBackup(b),
+                                onPressed:
+                                    anyBusy ? null : () => _deleteBackup(b),
                               ),
                             ],
                           ),
@@ -335,7 +335,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
         ],
       ),
-    );
+    ));
   }
 
   String _formatDate(DateTime t) {

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../data/sync/sync_config.dart';
 import '../../data/sync/sync_provider.dart';
 import '../../data/store.dart';
+import '../widgets/escape_back.dart';
 import 'sync_edit_screen.dart';
 
 class SyncScreen extends StatelessWidget {
@@ -11,7 +12,8 @@ class SyncScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
+    return EscapeBack(
+        child: AnimatedBuilder(
       animation: store,
       builder: (context, _) {
         final configs = store.syncConfigs;
@@ -31,7 +33,7 @@ class SyncScreen extends StatelessWidget {
           ),
         );
       },
-    );
+    ));
   }
 
   void _openEdit(BuildContext context, SyncConfig? config) {
@@ -107,8 +109,7 @@ class _ConfigTile extends StatelessWidget {
           if (config.isPrimary) ...[
             const SizedBox(width: 6),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
                 color: theme.colorScheme.primaryContainer,
                 borderRadius: BorderRadius.circular(4),
@@ -200,8 +201,7 @@ class _ConfigTile extends StatelessWidget {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content:
-                Text('"${config.name}" is now the primary repository')),
+            content: Text('"${config.name}" is now the primary repository')),
       );
     }
   }
@@ -253,9 +253,7 @@ class _ConfigTile extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(
-          isPush
-              ? 'Push "${config.name}"?'
-              : 'Pull "${config.name}"?',
+          isPush ? 'Push "${config.name}"?' : 'Pull "${config.name}"?',
         ),
         content: Text(
           isPush
@@ -411,8 +409,8 @@ class _SyncProgressDialogState extends State<_SyncProgressDialog> {
                   Icon(Icons.error, color: theme.colorScheme.error),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text('Sync failed',
-                        style: theme.textTheme.titleSmall),
+                    child:
+                        Text('Sync failed', style: theme.textTheme.titleSmall),
                   ),
                 ],
               ),
@@ -435,8 +433,7 @@ class _SyncProgressDialogState extends State<_SyncProgressDialog> {
             ] else ...[
               Row(
                 children: [
-                  Icon(Icons.check_circle,
-                      color: Colors.green.shade600),
+                  Icon(Icons.check_circle, color: Colors.green.shade600),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text('Sync complete',
