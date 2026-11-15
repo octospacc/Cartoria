@@ -8,6 +8,9 @@ import '../../../platform/clipboard_files.dart';
 
 /// Lets the user either upload a new file or recall one from the drive.
 /// Returns the IDs of the files to attach (empty list if cancelled).
+/// Lets the user either upload new file(s) or recall existing ones from
+/// the drive. Returns the IDs of the files to attach (empty list if
+/// cancelled, or if every pick failed).
 Future<List<String>> pickOrRecallFiles(
   BuildContext context,
   VaultStore store,
@@ -21,7 +24,7 @@ Future<List<String>> pickOrRecallFiles(
         children: [
           ListTile(
             leading: const Icon(Icons.upload_file),
-            title: const Text('Upload a new file'),
+            title: const Text('Upload new files'),
             onTap: () => Navigator.pop(ctx, 'new'),
           ),
           ListTile(
@@ -42,16 +45,43 @@ Future<List<String>> pickOrRecallFiles(
 
   if (choice == 'new') {
     try {
-      final file = await openFile();
-      if (file == null) return const [];
-      final bytes = await file.readAsBytes();
-      if (bytes.isEmpty) return const [];
-      final f = await store.addFileFromBytes(
-        spaceId: space.id,
-        bytes: bytes,
-        name: file.name,
-      );
-      return [f.id];
+      final files = await openFiles();
+      if (files.isEmpty) return const [];
+
+      final ids = <String>[];
+      final failedNames = <String>[];
+
+      for (final file in files) {
+        try {
+          final bytes = await file.readAsBytes();
+          if (bytes.isEmpty) {
+            failedNames.add(file.name);
+            continue;
+          }
+          final f = await store.addFileFromBytes(
+            spaceId: space.id,
+            bytes: bytes,
+            name: file.name,
+          );
+          ids.add(f.id);
+        } catch (e) {
+          debugPrint('Upload failed for ${file.name}: $e');
+          failedNames.add(file.name);
+        }
+      }
+
+      if (failedNames.isNotEmpty && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${failedNames.length} file${failedNames.length == 1 ? "" : "s"} '
+              'failed to upload',
+            ),
+          ),
+        );
+      }
+
+      return ids;
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

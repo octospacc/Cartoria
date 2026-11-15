@@ -507,19 +507,87 @@ class _DriveScreenState extends State<DriveScreen> {
 
   Future<void> _upload(BuildContext context) async {
     try {
-      final file = await openFile();
-      if (file == null) return;
-      final bytes = await file.readAsBytes();
-      if (bytes.isEmpty) return;
-      await widget.store.addFileFromBytes(
-        spaceId: widget.space.id,
-        bytes: bytes,
-        name: file.name,
+      final pickedFiles = await openFiles();
+      if (pickedFiles.isEmpty) return;
+
+      var added = 0;
+      var failed = 0;
+      final failedNames = <String>[];
+
+      for (final picked in pickedFiles) {
+        try {
+          final bytes = await picked.readAsBytes();
+          if (bytes.isEmpty) {
+            failed++;
+            failedNames.add(picked.name);
+            continue;
+          }
+          await widget.store.addFileFromBytes(
+            spaceId: widget.space.id,
+            bytes: bytes,
+            name: picked.name,
+          );
+          added++;
+        } catch (e) {
+          debugPrint('Upload failed for ${picked.name}: $e');
+          failed++;
+          failedNames.add(picked.name);
+        }
+      }
+
+      if (!context.mounted) return;
+
+      final parts = <String>[];
+      if (added > 0) {
+        parts.add('$added ${added == 1 ? "file" : "files"} uploaded');
+      }
+      if (failed > 0) {
+        parts.add('$failed ${failed == 1 ? "file" : "files"} failed');
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            parts.isEmpty ? 'No files uploaded' : parts.join(' · '),
+          ),
+          action: failed > 0
+              ? SnackBarAction(
+                  label: 'Details',
+                  onPressed: () {
+                    showDialog<void>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: Text('$failed ${failed == 1 ? "file" : "files"} '
+                            'failed to upload'),
+                        content: SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: failedNames
+                                .map((n) => Padding(
+                                      padding: const EdgeInsets.only(bottom: 4),
+                                      child: Text('· $n'),
+                                    ))
+                                .toList(),
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: const Text('Close'),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                )
+              : null,
+        ),
       );
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Upload failed: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Upload failed: $e')),
+        );
       }
     }
   }
