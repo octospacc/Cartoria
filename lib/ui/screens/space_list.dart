@@ -177,101 +177,141 @@ class SpaceListScreen extends StatelessWidget {
   // ── Import file (creates a new space) ──────────────────────────────────
 
   Future<void> _importFile(BuildContext context) async {
-    final picked = await pickImportFile(context);
-    if (picked == null) return;
-    final lower = picked.name.toLowerCase();
-    if (lower.endsWith('.zip')) {
-      await _importZipBytes(context, picked.bytes);
-    } else if (lower.endsWith('.html') || lower.endsWith('.htm')) {
-      final text = utf8.decode(picked.bytes, allowMalformed: true);
-      if (text.trimLeft().startsWith('<!---')) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'This is a single post file. Open a space and use '
-                'Import… to add it there.',
-              ),
-            ),
-          );
-        }
-        return;
-      }
-      await _importBookmarksBytes(context, picked.bytes);
-    } else if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unsupported file type')),
-      );
-    }
-  }
+    final picked = await pickImportFiles(context);
+    if (picked.isEmpty) return;
 
-  Future<void> _importZipBytes(BuildContext context, Uint8List bytes) async {
-    try {
-      final id = await store.importSpaceZip(bytes);
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Imported space ${id.substring(0, 8)}…')),
-      );
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Import failed: $e')));
-      }
-    }
-  }
+    final summaries = <String>[];
+    final errors = <String>[];
+    var ok = 0;
+    var failed = 0;
+    var cancelled = 0;
 
-  Future<void> _importBookmarksBytes(
-      BuildContext context, Uint8List bytes) async {
-    BookmarkFile file;
-    try {
-      file = BookmarkFileParser.parse(
-        utf8.decode(bytes, allowMalformed: true),
+    for (final p in picked) {
+      final result = await _importOneAsNewSpace(
+        context,
+        p,
+        autoName: picked.length > 1,
       );
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not parse file: $e')),
-        );
+      if (result.cancelled) {
+        cancelled++;
+        continue;
       }
-      return;
-    }
-    if (file.bookmarks.isEmpty) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No bookmarks found in file')),
-        );
+      if (result.error != null) {
+        failed++;
+        errors.add('${p.name}: ${result.error}');
+      } else {
+        ok++;
+        final s = result.summary;
+        if (s != null && s.isNotEmpty) summaries.add(s);
       }
-      return;
     }
+
     if (!context.mounted) return;
 
-    final result = await showSpaceDialog(
-      context,
-      initialName: file.title ?? 'Imported Bookmarks',
-      initialIcon: '📚',
-      title: 'Import bookmarks',
-      confirmLabel: 'Import',
-    );
-    if (result == null) return;
+    // Single-file case where the user dismissed the name dialog:
+    // nothing happened, no snackbar needed.
+    if (picked.length == 1 && ok == 0 && failed == 0) return;
 
+    final String message;
+    if (picked.length == 1 && ok == 1 && summaries.isNotEmpty) {
+      message = summaries.first;
+    } else {
+      final parts = <String>[];
+      if (ok > 0) parts.add('$ok file${ok == 1 ? "" : "s"} imported');
+      if (failed > 0) parts.add('$failed failed');
+      if (cancelled > 0) parts.add('$cancelled cancelled');
+      message = parts.isEmpty ? 'Nothing imported' : parts.join(' · ');
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        action: failed > 0
+            ? SnackBarAction(
+                label: 'Details',
+                onPressed: () => showImportErrors(context, errors),
+              )
+            : null,
+      ),
+    );
+  }
+
+  Future<({String? summary, String? error, bool cancelled})>
+      _importOneAsNewSpace(
+    BuildContext context,
+    ({Uint8List bytes, String name}) p, {
+    required bool autoName,
+  }) async {
+    final lower = p.name.toLowerCase();
     try {
-      final space = await store.importBookmarksAsNewSpace(
-        file: file,
-        spaceName: result.name,
-        icon: result.icon,
-      );
-      if (!context.mounted) return;
-      final count = store.postsForSpace(space.id).length;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Imported $count into "${space.name}"')),
-      );
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Import failed: $e')),
+      if (lower.endsWith('.zip')) {
+        final id = await store.importSpaceZip(p.bytes);
+        final name = store.spaceById(id)?.name ?? id.substring(0, 8);
+        return (summary: 'Imported "$name"', error: null, cancelled: false);
+      }
+      if (lower.endsWith('.html') || lower.endsWith('.htm')) {
+        final text = utf8.decode(p.bytes, allowMalformed: true);
+        if (text.trimLeft().startsWith('<!---')) {
+          return (
+            summary: null,
+            error: 'Single-post file — open a space and use Import… there',
+            cancelled: false,
+          );
+        }
+        final file = BookmarkFileParser.parse(text);
+        if (file.bookmarks.isEmpty) {
+          return (
+            summary: null,
+            error: 'No bookmarks found',
+            cancelled: false,
+          );
+        }
+
+        String name;
+        String icon;
+        if (autoName) {
+          name = (file.title ?? _stripExtension(p.name)).trim();
+          if (name.isEmpty) name = 'Imported Bookmarks';
+          icon = '📚';
+        } else {
+          if (!context.mounted) {
+            return (summary: null, error: null, cancelled: true);
+          }
+          final result = await showSpaceDialog(
+            context,
+            initialName: file.title ?? 'Imported Bookmarks',
+            initialIcon: '📚',
+            title: 'Import bookmarks',
+            confirmLabel: 'Import',
+          );
+          if (result == null) {
+            return (summary: null, error: null, cancelled: true);
+          }
+          name = result.name;
+          icon = result.icon;
+        }
+
+        final space = await store.importBookmarksAsNewSpace(
+          file: file,
+          spaceName: name,
+          icon: icon,
+        );
+        final count = store.postsForSpace(space.id).length;
+        return (
+          summary: 'Imported $count into "$name"',
+          error: null,
+          cancelled: false,
         );
       }
+      return (summary: null, error: 'Unsupported file type', cancelled: false);
+    } catch (e) {
+      return (summary: null, error: friendlyError(e), cancelled: false);
     }
+  }
+
+  String _stripExtension(String filename) {
+    final dot = filename.lastIndexOf('.');
+    return dot < 0 ? filename : filename.substring(0, dot);
   }
 
   // ── Subtitle ───────────────────────────────────────────────────────────

@@ -304,7 +304,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         action: failed > 0
             ? SnackBarAction(
                 label: 'Details',
-                onPressed: () => _showImportErrors(errorMessages),
+                onPressed: () => showImportErrors(context, errorMessages),
               )
             : null,
       ),
@@ -347,7 +347,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       }
       return (summary: null, error: 'Unsupported file type');
     } catch (e) {
-      return (summary: null, error: _friendlyError(e));
+      return (summary: null, error: friendlyError(e));
     }
   }
 
@@ -364,35 +364,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     // so the feed updates on the next frame. Confirmation is just UX.
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Post imported')),
-    );
-  }
-
-  void _showImportErrors(List<String> errors) {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(
-          '${errors.length} error${errors.length == 1 ? "" : "s"}',
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: errors
-                .map((e) => Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: SelectableText('· $e'),
-                    ))
-                .toList(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
     );
   }
 
@@ -1200,20 +1171,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   }
 }
 
-String _friendlyError(Object e) {
-  final s = e.toString();
-  const prefixes = [
-    'FormatException: ',
-    'Exception: ',
-    'StateError: ',
-    'ArgumentError: ',
-  ];
-  for (final p in prefixes) {
-    if (s.startsWith(p)) return s.substring(p.length);
-  }
-  return s;
-}
-
 class _PostNode {
   final Post post;
   final List<_PostNode> children;
@@ -1317,7 +1274,7 @@ class _PastePostSourceDialogState extends State<_PastePostSourceDialog> {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _error = _friendlyError(e);
+        _error = friendlyError(e);
       });
     }
   }

@@ -80,6 +80,52 @@ Future<List<({Uint8List bytes, String name})>> pickImportFiles(
   }
 }
 
+/// Best-effort user-facing message from an exception thrown during an
+/// import operation. Strips the common `ExceptionName: ` prefixes so
+/// snackbars and dialogs show the meaningful text without noise.
+String friendlyError(Object e) {
+  final s = e.toString();
+  const prefixes = [
+    'FormatException: ',
+    'Exception: ',
+    'StateError: ',
+    'ArgumentError: ',
+  ];
+  for (final p in prefixes) {
+    if (s.startsWith(p)) return s.substring(p.length);
+  }
+  return s;
+}
+
+/// Shows a dialog listing per-file import failures. One line per file,
+/// selectable so the user can copy specifics if they want to debug.
+void showImportErrors(BuildContext context, List<String> errors) {
+  showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('${errors.length} error${errors.length == 1 ? "" : "s"}'),
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: errors
+              .map((e) => Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: SelectableText('· $e'),
+                  ))
+              .toList(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
+}
+
 /// Human-readable one-liner for a bookmark import result.
 String bookmarkImportSummary(BookmarkImportResult r) {
   if (r.total == 0) return 'No bookmarks found in file';
