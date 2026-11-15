@@ -893,6 +893,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.1.0"
+  universal_spell_check:
+    dependency: "direct main"
+    description:
+      name: universal_spell_check
+      sha256: "4a438d1923aa59b657d8d4927ce268642afa1de3eddda4525ee15b37d5d8ee1b"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.1.2"
   uri_parser:
     dependency: transitive
     description:

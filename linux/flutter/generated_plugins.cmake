@@ -9,6 +9,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   media_kit_libs_linux
   media_kit_video
   super_native_extensions
+  universal_spell_check
   url_launcher_linux
   volume_controller
 )

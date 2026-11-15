@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'spell_check.dart';
+
 class NativeTextField extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode? focusNode;
@@ -46,6 +48,8 @@ class NativeTextField extends StatelessWidget {
       onChanged: onChanged,
       onSubmitted: onSubmitted == null ? null : (_) => onSubmitted!(),
       style: style,
+      spellCheckConfiguration: kSpellCheckConfig,
+      contextMenuBuilder: spellCheckContextMenuBuilder,
       decoration: InputDecoration(
         hintText: hintText,
         labelText: labelText,

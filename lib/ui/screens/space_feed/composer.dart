@@ -6,6 +6,7 @@ import '../../../platform/clipboard_files.dart';
 import '../../../data/models.dart';
 import '../../../data/store.dart';
 import '../../../util/html_utils.dart';
+import '../../widgets/spell_check.dart';
 import '../../widgets/native_text_field.dart';
 import '../../widgets/emoji_picker_sheet.dart';
 import '../../screens/full_screen_text_editor.dart';
@@ -194,6 +195,8 @@ class InlineComposer extends StatelessWidget {
           controller: bodyCtrl,
           minLines: 1,
           maxLines: 6,
+          spellCheckConfiguration: kSpellCheckConfig,
+          contextMenuBuilder: spellCheckContextMenuBuilder,
           decoration: InputDecoration(
             isDense: true,
             hintText:
@@ -775,6 +778,8 @@ class _ComposerSheetState extends State<ComposerSheet> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: _title,
+                  spellCheckConfiguration: kSpellCheckConfig,
+                  contextMenuBuilder: spellCheckContextMenuBuilder,
                   decoration: const InputDecoration(
                     labelText: 'Title',
                     border: OutlineInputBorder(),
@@ -785,6 +790,8 @@ class _ComposerSheetState extends State<ComposerSheet> {
                   controller: _description,
                   minLines: 2,
                   maxLines: 4,
+                  spellCheckConfiguration: kSpellCheckConfig,
+                  contextMenuBuilder: spellCheckContextMenuBuilder,
                   decoration: const InputDecoration(
                     labelText: 'Description',
                     border: OutlineInputBorder(),
@@ -877,6 +884,8 @@ class _ComposerSheetState extends State<ComposerSheet> {
                 controller: _body,
                 minLines: 3,
                 maxLines: 12,
+                spellCheckConfiguration: kSpellCheckConfig,
+                contextMenuBuilder: spellCheckContextMenuBuilder,
                 decoration: const InputDecoration(
                   hintText: 'Write the body…',
                   border: OutlineInputBorder(),

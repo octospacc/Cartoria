@@ -33,6 +33,7 @@ dependencies:
   flutter_highlight: ^0.7.0
   highlight: ^0.7.0
   flutter_svg: ^2.4.0
+  universal_spell_check: ^0.1.1
 
 dev_dependencies:
   flutter_lints: ^4.0.0

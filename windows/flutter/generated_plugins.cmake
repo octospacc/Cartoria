@@ -10,6 +10,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   media_kit_video
   share_plus
   super_native_extensions
+  universal_spell_check
   url_launcher_windows
   volume_controller
 )

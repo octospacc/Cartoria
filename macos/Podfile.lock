@@ -21,6 +21,8 @@ PODS:
     - FlutterMacOS
   - super_native_extensions (0.0.1):
     - FlutterMacOS
+  - universal_spell_check (0.1.0):
+    - FlutterMacOS
   - url_launcher_macos (0.0.1):
     - FlutterMacOS
   - volume_controller (3.7.0):
@@ -40,6 +42,7 @@ DEPENDENCIES:
   - share_plus (from `Flutter/ephemeral/.symlinks/plugins/share_plus/macos`)
   - shared_preferences_foundation (from `Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin`)
   - super_native_extensions (from `Flutter/ephemeral/.symlinks/plugins/super_native_extensions/macos`)
+  - universal_spell_check (from `Flutter/ephemeral/.symlinks/plugins/universal_spell_check/macos`)
   - url_launcher_macos (from `Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos`)
   - volume_controller (from `Flutter/ephemeral/.symlinks/plugins/volume_controller/macos`)
   - wakelock_plus (from `Flutter/ephemeral/.symlinks/plugins/wakelock_plus/macos`)
@@ -67,6 +70,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin
   super_native_extensions:
     :path: Flutter/ephemeral/.symlinks/plugins/super_native_extensions/macos
+  universal_spell_check:
+    :path: Flutter/ephemeral/.symlinks/plugins/universal_spell_check/macos
   url_launcher_macos:
     :path: Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos
   volume_controller:
@@ -86,6 +91,7 @@ SPEC CHECKSUMS:
   share_plus: 510bf0af1a42cd602274b4629920c9649c52f4cc
   shared_preferences_foundation: a7c3904f2dedb3701dd1903cb152ef5e7df92422
   super_native_extensions: c2795d6d9aedf4a79fae25cb6160b71b50549189
+  universal_spell_check: a53cb49d02643f628f028b2e985c0b9045835840
   url_launcher_macos: f87a979182d112f911de6820aefddaf56ee9fbfd
   volume_controller: 96b8e381b9f7d227636335110bc82ee96386434b
   wakelock_plus: 917609be14d812ddd9e9528876538b2263aaa03b
