@@ -265,77 +265,135 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   }
 
   Future<void> _importFile() async {
-    final picked = await pickImportFile(context);
-    if (picked == null) return;
-    final lower = picked.name.toLowerCase();
-    if (lower.endsWith('.zip')) {
-      await _importZipIntoCurrent(picked.bytes);
-    } else if (lower.endsWith('.html') || lower.endsWith('.htm')) {
-      await _importBookmarksIntoCurrent(picked.bytes);
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unsupported file type')),
-      );
+    final picked = await pickImportFiles(context);
+    if (picked.isEmpty) return;
+
+    final summaries = <String>[];
+    final errorMessages = <String>[];
+    var ok = 0;
+    var failed = 0;
+
+    for (final p in picked) {
+      final result = await _importOneFile(p);
+      if (result.error != null) {
+        failed++;
+        errorMessages.add('${p.name}: ${result.error}');
+      } else {
+        ok++;
+        final s = result.summary;
+        if (s != null && s.isNotEmpty) summaries.add(s);
+      }
+    }
+
+    if (!mounted) return;
+
+    final String message;
+    if (picked.length == 1 && ok == 1 && summaries.isNotEmpty) {
+      // Single file: preserve the detailed per-format summary.
+      message = summaries.first;
+    } else {
+      final parts = <String>[];
+      if (ok > 0) parts.add('$ok file${ok == 1 ? "" : "s"} imported');
+      if (failed > 0) parts.add('$failed failed');
+      message = parts.isEmpty ? 'Nothing imported' : parts.join(' · ');
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        action: failed > 0
+            ? SnackBarAction(
+                label: 'Details',
+                onPressed: () => _showImportErrors(errorMessages),
+              )
+            : null,
+      ),
+    );
+  }
+
+  Future<({String? summary, String? error})> _importOneFile(
+    ({Uint8List bytes, String name}) p,
+  ) async {
+    final lower = p.name.toLowerCase();
+    try {
+      if (lower.endsWith('.zip')) {
+        final r = await widget.store.importSpaceZipIntoExistingSpace(
+          targetSpaceId: widget.space.id,
+          zipBytes: p.bytes,
+        );
+        return (summary: spaceImportSummary(r), error: null);
+      }
+      if (lower.endsWith('.html') || lower.endsWith('.htm')) {
+        final text = utf8.decode(p.bytes, allowMalformed: true);
+        if (text.trimLeft().startsWith('<!---')) {
+          await widget.store.importPostFromSource(
+            spaceId: widget.space.id,
+            source: text,
+          );
+          return (summary: 'Post imported', error: null);
+        }
+        final file = BookmarkFileParser.parse(text);
+        if (file.bookmarks.isEmpty) {
+          return (
+            summary: null,
+            error: 'No bookmarks found in file',
+          );
+        }
+        final r = await widget.store.importBookmarksIntoSpace(
+          spaceId: widget.space.id,
+          file: file,
+        );
+        return (summary: bookmarkImportSummary(r), error: null);
+      }
+      return (summary: null, error: 'Unsupported file type');
+    } catch (e) {
+      return (summary: null, error: _friendlyError(e));
     }
   }
 
-  Future<void> _importZipIntoCurrent(Uint8List bytes) async {
-    try {
-      final r = await widget.store.importSpaceZipIntoExistingSpace(
-        targetSpaceId: widget.space.id,
-        zipBytes: bytes,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(spaceImportSummary(r))),
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Import failed: $e')),
-        );
-      }
-    }
-  }
-
-  Future<void> _importBookmarksIntoCurrent(Uint8List bytes) async {
-    BookmarkFile file;
-    try {
-      file = BookmarkFileParser.parse(
-        utf8.decode(bytes, allowMalformed: true),
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not parse file: $e')),
-        );
-      }
-      return;
-    }
-    if (file.bookmarks.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No bookmarks found in file')),
-        );
-      }
-      return;
-    }
-    try {
-      final r = await widget.store.importBookmarksIntoSpace(
+  Future<void> _pastePostSource() async {
+    final post = await showDialog<Post>(
+      context: context,
+      builder: (_) => _PastePostSourceDialog(
+        store: widget.store,
         spaceId: widget.space.id,
-        file: file,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(bookmarkImportSummary(r))),
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Import failed: $e')),
-        );
-      }
-    }
+      ),
+    );
+    if (post == null || !mounted) return;
+    // VaultStore.importPostFromSource already called notifyListeners,
+    // so the feed updates on the next frame. Confirmation is just UX.
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Post imported')),
+    );
+  }
+
+  void _showImportErrors(List<String> errors) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          '${errors.length} error${errors.length == 1 ? "" : "s"}',
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: errors
+                .map((e) => Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: SelectableText('· $e'),
+                    ))
+                .toList(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _deleteSpace() async {
@@ -979,6 +1037,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                   }
                   if (v == 'edit') _editSpace();
                   if (v == 'import') _importFile();
+                  if (v == 'import-source') _pastePostSource();
                   if (v == 'export') {
                     exportSpaceZip(context, widget.store, _space);
                   }
@@ -988,6 +1047,10 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                   PopupMenuItem(value: 'stats', child: Text('Statistics')),
                   PopupMenuItem(value: 'edit', child: Text('Edit space…')),
                   PopupMenuItem(value: 'import', child: Text('Import…')),
+                  PopupMenuItem(
+                    value: 'import-source',
+                    child: Text('Paste post source…'),
+                  ),
                   PopupMenuItem(value: 'export', child: Text('Export space…')),
                   PopupMenuItem(value: 'delete', child: Text('Delete space…')),
                 ],
@@ -1137,6 +1200,20 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   }
 }
 
+String _friendlyError(Object e) {
+  final s = e.toString();
+  const prefixes = [
+    'FormatException: ',
+    'Exception: ',
+    'StateError: ',
+    'ArgumentError: ',
+  ];
+  for (final p in prefixes) {
+    if (s.startsWith(p)) return s.substring(p.length);
+  }
+  return s;
+}
+
 class _PostNode {
   final Post post;
   final List<_PostNode> children;
@@ -1192,6 +1269,143 @@ class _SearchBanner extends StatelessWidget {
           Text(
             '$count ${count == 1 ? "match" : "matches"}',
             style: theme.textTheme.bodySmall,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PastePostSourceDialog extends StatefulWidget {
+  final VaultStore store;
+  final String spaceId;
+
+  const _PastePostSourceDialog({
+    required this.store,
+    required this.spaceId,
+  });
+
+  @override
+  State<_PastePostSourceDialog> createState() =>
+      _PastePostSourceDialogState();
+}
+
+class _PastePostSourceDialogState extends State<_PastePostSourceDialog> {
+  final _ctrl = TextEditingController();
+  String? _error;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _import() async {
+    setState(() {
+      _error = null;
+      _busy = true;
+    });
+    try {
+      final post = await widget.store.importPostFromSource(
+        spaceId: widget.spaceId,
+        source: _ctrl.text,
+      );
+      if (!mounted) return;
+      Navigator.pop(context, post);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = _friendlyError(e);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final mono = theme.textTheme.bodySmall?.copyWith(
+      fontFamily: 'monospace',
+      fontSize: 12,
+    );
+
+    return EscapeBack(
+      child: AlertDialog(
+        title: const Text('Paste post source'),
+        content: SizedBox(
+          width: 600,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  'Paste a Cartoria post file — the same format as '
+                  'entries/<id>.html: a <!--- … ---> JSON frontmatter '
+                  'block followed by the HTML body. A fresh ID is '
+                  'generated if none is present.',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+              if (_error != null)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.errorContainer,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: SelectableText(
+                    _error!,
+                    style: TextStyle(
+                      color: theme.colorScheme.onErrorContainer,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              SizedBox(
+                height: 300,
+                child: TextField(
+                  controller: _ctrl,
+                  enabled: !_busy,
+                  maxLines: null,
+                  expands: true,
+                  style: mono,
+                  keyboardType: TextInputType.multiline,
+                  textAlignVertical: TextAlignVertical.top,
+                  decoration: const InputDecoration(
+                    hintText: '<!---\n{\n  "kind": "note",\n'
+                        '  "created": "2026-01-15T12:00:00.000Z"\n'
+                        '}\n--->\n\n<p>Hello</p>',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: _busy ? null : () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: _busy ? null : _import,
+            child: _busy
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Import'),
           ),
         ],
       ),

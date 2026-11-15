@@ -302,6 +302,59 @@ class PostRepository {
     );
   }
 
+  /// Parses a single post from an in-memory string in the same format as
+  /// an on-disk `entries/<id>.html` file. Validates the frontmatter and
+  /// synthesises an id if the source lacks one, so pasting the body of a
+  /// post with no `id` field still works.
+  ///
+  /// Throws [FormatException] with a user-facing message on any of:
+  /// missing frontmatter, malformed JSON, missing/invalid `created`,
+  /// unknown `kind`.
+  static Post parseInlinePost(String source) {
+    if (!source.trimLeft().startsWith('<!---')) {
+      throw const FormatException(
+        'Not a Cartoria post: missing <!--- frontmatter block.',
+      );
+    }
+
+    final Map<String, dynamic> meta;
+    try {
+      meta = parseFrontmatterMeta(source);
+    } catch (e) {
+      throw FormatException('Could not parse frontmatter: $e');
+    }
+
+    final created = meta['created'];
+    if (created is! String) {
+      throw const FormatException(
+        'Post is missing a "created" timestamp.',
+      );
+    }
+    try {
+      DateTime.parse(created);
+    } catch (_) {
+      throw const FormatException(
+        'Post has an invalid "created" timestamp. Expected ISO 8601.',
+      );
+    }
+
+    final kindStr = (meta['kind'] as String?) ?? 'note';
+    if (kindStr != 'note' && kindStr != 'bookmark') {
+      throw FormatException(
+        'Unknown post kind "$kindStr" (expected "note" or "bookmark").',
+      );
+    }
+
+    final withId = <String, dynamic>{
+      ...meta,
+      'id': (meta['id'] as String?) ?? const Uuid().v7(),
+    };
+    return parseContent(
+      'inline.html',
+      makeDocument(withId, bodyAfterFrontmatter(source)),
+    );
+  }
+
   // ── Import into an existing space ──────────────────────────────────────
 
   /// Writes an existing in-memory [Post] into [spaceId] on disk, preserving

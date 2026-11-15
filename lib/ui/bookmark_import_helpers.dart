@@ -39,6 +39,47 @@ Future<({Uint8List bytes, String name})?> pickImportFile(
   }
 }
 
+/// Multi-file picker for the space-feed Import… flow. Returns one entry
+/// per non-empty file the user selected. Files that fail to read are
+/// logged and skipped; if nothing readable came back the user gets a
+/// single snackbar explaining that.
+Future<List<({Uint8List bytes, String name})>> pickImportFiles(
+  BuildContext context,
+) async {
+  try {
+    const group = XTypeGroup(
+      label: 'Import files',
+      extensions: ['zip', 'html', 'htm'],
+    );
+    final files = await openFiles(acceptedTypeGroups: [group]);
+    if (files.isEmpty) return const [];
+
+    final result = <({Uint8List bytes, String name})>[];
+    for (final file in files) {
+      try {
+        final bytes = await file.readAsBytes();
+        if (bytes.isEmpty) continue;
+        result.add((bytes: bytes, name: file.name));
+      } catch (e) {
+        debugPrint('Could not read ${file.name}: $e');
+      }
+    }
+    if (result.isEmpty && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No readable files selected')),
+      );
+    }
+    return result;
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not read files: $e')),
+      );
+    }
+    return const [];
+  }
+}
+
 /// Human-readable one-liner for a bookmark import result.
 String bookmarkImportSummary(BookmarkImportResult r) {
   if (r.total == 0) return 'No bookmarks found in file';

@@ -183,6 +183,20 @@ class SpaceListScreen extends StatelessWidget {
     if (lower.endsWith('.zip')) {
       await _importZipBytes(context, picked.bytes);
     } else if (lower.endsWith('.html') || lower.endsWith('.htm')) {
+      final text = utf8.decode(picked.bytes, allowMalformed: true);
+      if (text.trimLeft().startsWith('<!---')) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'This is a single post file. Open a space and use '
+                'Import… to add it there.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
       await _importBookmarksBytes(context, picked.bytes);
     } else if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

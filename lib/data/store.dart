@@ -891,6 +891,46 @@ class VaultStore extends ChangeNotifier {
     );
   }
 
+  /// Imports a single post from its on-disk source representation
+  /// (frontmatter + HTML body). Used by both the file-picker path
+  /// (`.html` post file) and the paste-source dialog.
+  ///
+  /// Skips (throws) if a post with the same id already exists in the
+  /// target space, or — for bookmarks — if one with the same URL
+  /// already exists. Dangling references (`parentId`, `fileIds`) are
+  /// preserved so a later re-import of the parent/attachments heals
+  /// the graph.
+  Future<Post> importPostFromSource({
+    required String spaceId,
+    required String source,
+  }) async {
+    final post = PostRepository.parseInlinePost(source);
+    final existing = _postCache[spaceId] ?? const <Post>[];
+
+    if (existing.any((p) => p.id == post.id)) {
+      throw const FormatException(
+        'A post with this ID already exists in this space.',
+      );
+    }
+    if (post.kind == PostKind.bookmark && post.url != null) {
+      if (existing.any(
+          (p) => p.kind == PostKind.bookmark && p.url == post.url)) {
+        throw const FormatException(
+          'A bookmark with this URL already exists in this space.',
+        );
+      }
+    }
+
+    final imported =
+        await _posts.importExisting(spaceId: spaceId, post: post);
+    final list = _postCache.putIfAbsent(spaceId, () => []);
+    list.add(imported);
+    list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    _resortSpacesByUsage();
+    notifyListeners();
+    return imported;
+  }
+
   // ── Bookmark import ────────────────────────────────────────────────────
 
   Future<BookmarkImportResult> importBookmarksIntoSpace({
