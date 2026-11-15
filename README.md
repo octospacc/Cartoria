@@ -2,7 +2,17 @@
 
 **A personal archive for notes, bookmarks, and files.**
 
+- **Webapp available: https://hub.octt.eu.org/Cartoria/**
+- Latest built releases: https://gitlab.com/octospacc/Cartoria/-/releases/permalink/latest/
+
+<table><tr>
+<td><a href="https://gitlab.com/octospacc/Cartoria"><b>GitLab.com</b></a></td>
+<td><a href="https://github.com/octospacc/Cartoria">GitHub</a></td>
+</tr></table>
+
 Cartoria is a local-first, git-backed personal archive. Everything you write lives as plain HTML and JSON files on your own device — no account, no server, no lock-in. Optional sync to GitHub or GitLab gives you backup, multi-device access, and a browsable history of every change you've ever made.
+
+![](./screenshots/space_feed.jpg)
 
 ## What it does
 
