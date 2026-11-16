@@ -928,18 +928,27 @@ class _PostActions extends StatelessWidget {
       );
     }
 
-    final hidden = childCount - previewCount;
-    if (hidden <= 0) return null;
-
     if (previewCount > 0) {
+      if (previewCount < childCount) {
+        // Partial preview: "Show N more".
+        final hidden = childCount - previewCount;
+        return TextButton.icon(
+          onPressed: onToggleReplies,
+          icon: const Icon(Icons.expand_more, size: 15),
+          label: Text(l.postShowMoreReplies(hidden)),
+          style: style,
+        );
+      }
+      // Fully visible via preview (1–2 replies): offer to hide.
       return TextButton.icon(
         onPressed: onToggleReplies,
-        icon: const Icon(Icons.expand_more, size: 15),
-        label: Text(l.postShowMoreReplies(hidden)),
+        icon: const Icon(Icons.expand_less, size: 15),
+        label: Text(l.postHideReplies(childCount)),
         style: style,
       );
     }
 
+    // Nothing visible: "N replies".
     return TextButton.icon(
       onPressed: onToggleReplies,
       icon: const Icon(Icons.expand_more, size: 15),

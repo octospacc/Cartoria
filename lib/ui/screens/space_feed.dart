@@ -52,6 +52,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   final List<String> _pendingFileIds = [];
   DateTime? _postDateTime;
   final Set<String> _expanded = {};
+  final Set<String> _collapsedReplies = {};
   final Set<String> _expandedQuotes = {};
   Map<String, List<Post>> _quotesByPost = {};
   bool _sending = false;
@@ -579,7 +580,12 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       skipHooks: result.skipHooks,
     );
     await widget.store.deleteComposerDraft(result.draftFieldKey);
-    if (mounted) setState(() => _expanded.add(parent.id));
+    if (mounted) {
+      setState(() {
+        _expanded.add(parent.id);
+        _collapsedReplies.remove(parent.id);
+      });
+    }
   }
 
   Future<void> _quote(Post post) async {
@@ -787,17 +793,28 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     int depth = 0,
   }) {
     final post = node.post;
+    final quotes = _quotesByPost[post.id] ?? const <Post>[];
+    final quotesExpanded = _expandedQuotes.contains(post.id);
     final totalChildren = node.children.length;
     final hasChildren = totalChildren > 0;
     final isExpanded = searchMode || _expanded.contains(post.id);
-    final quotes = _quotesByPost[post.id] ?? const <Post>[];
-    final quotesExpanded = _expandedQuotes.contains(post.id);
 
-    final previewCount = (!isExpanded && depth == 0 && hasChildren)
-        ? (totalChildren < kPreviewReplyCount
-            ? totalChildren
-            : kPreviewReplyCount)
-        : 0;
+    final int previewCount;
+    if (isExpanded || depth > 0) {
+      // Fully expanded → all shown. Nested → 0 preview, same as before.
+      previewCount = 0;
+    } else if (_collapsedReplies.contains(post.id)) {
+      // User explicitly collapsed a fully-visible reply list.
+      previewCount = 0;
+    } else if (!hasChildren) {
+      previewCount = 0;
+    } else {
+      // Top-level default: preview up to kPreviewReplyCount, exactly
+      // as before. 1–2 replies show inline; 3+ show 2 preview.
+      previewCount = totalChildren <= kPreviewReplyCount
+          ? totalChildren
+          : kPreviewReplyCount;
+    }
 
     final List<_PostNode> visibleChildren;
     if (isExpanded) {
@@ -818,9 +835,29 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       expanded: isExpanded,
       hideReplyToggle: searchMode || _selectionMode,
       onToggleReplies: () => setState(() {
-        if (_expanded.contains(post.id)) {
+        final exp = _expanded.contains(post.id);
+        if (exp) {
           _expanded.remove(post.id);
+          _collapsedReplies.remove(post.id);
+          return;
+        }
+        if (depth > 0) {
+          // Nested posts default to collapsed; toggling always expands.
+          _expanded.add(post.id);
+          _collapsedReplies.remove(post.id);
+          return;
+        }
+        // Top-level, not expanded, not collapsed → default preview.
+        if (_collapsedReplies.contains(post.id)) {
+          // User explicitly collapsed a fully-visible list.
+          _collapsedReplies.remove(post.id);
+          return;
+        }
+        if (totalChildren <= kPreviewReplyCount) {
+          // 1–2 replies shown in full → hide them.
+          _collapsedReplies.add(post.id);
         } else {
+          // Partial preview → expand to show all.
           _expanded.add(post.id);
         }
       }),
@@ -932,7 +969,9 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
 
   Widget _buildFeed(List<_PostNode> roots, {required bool searchMode}) {
     if (roots.isEmpty) {
-      return _emptyState(searchMode ? context.l10n.feedSearchNoResults(_searchCtrl.text.trim()) : context.l10n.feedEmpty);
+      return _emptyState(searchMode
+          ? context.l10n.feedSearchNoResults(_searchCtrl.text.trim())
+          : context.l10n.feedEmpty);
     }
     final list = ScrollablePositionedList.builder(
       itemScrollController: searchMode ? _searchScroll : _feedScroll,
@@ -992,8 +1031,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
           IconButton(
             icon: const Icon(Icons.delete_outline),
             tooltip: l.feedDeleteSelected,
-            onPressed:
-                _selectedPostIds.isEmpty ? null : _deleteSelectedPosts,
+            onPressed: _selectedPostIds.isEmpty ? null : _deleteSelectedPosts,
           ),
         ],
       );
@@ -1053,8 +1091,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                       space: _space,
                       onViewPostInFeed: (postId) {
                         Navigator.of(context).pop();
-                        Future.delayed(
-                            const Duration(milliseconds: 400), () {
+                        Future.delayed(const Duration(milliseconds: 400), () {
                           if (mounted) _scrollToPost(postId);
                         });
                       },
@@ -1078,17 +1115,13 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                 itemBuilder: (_) => [
                   PopupMenuItem(
                       value: 'stats', child: Text(l.spacesStatistics)),
-                  PopupMenuItem(
-                      value: 'edit', child: Text(l.spacesEdit)),
-                  PopupMenuItem(
-                      value: 'import', child: Text(l.feedMenuImport)),
+                  PopupMenuItem(value: 'edit', child: Text(l.spacesEdit)),
+                  PopupMenuItem(value: 'import', child: Text(l.feedMenuImport)),
                   PopupMenuItem(
                       value: 'import-source',
                       child: Text(l.feedMenuImportSource)),
-                  PopupMenuItem(
-                      value: 'export', child: Text(l.spacesExport)),
-                  PopupMenuItem(
-                      value: 'delete', child: Text(l.spacesDelete)),
+                  PopupMenuItem(value: 'export', child: Text(l.spacesExport)),
+                  PopupMenuItem(value: 'delete', child: Text(l.spacesDelete)),
                 ],
               ),
             ],
@@ -1306,8 +1339,7 @@ class _PastePostSourceDialog extends StatefulWidget {
   });
 
   @override
-  State<_PastePostSourceDialog> createState() =>
-      _PastePostSourceDialogState();
+  State<_PastePostSourceDialog> createState() => _PastePostSourceDialogState();
 }
 
 class _PastePostSourceDialogState extends State<_PastePostSourceDialog> {
