@@ -93,10 +93,43 @@ class _PostBodyTextState extends State<PostBodyText> {
     final body = doc.body;
     if (body == null) return const [];
     final out = <Widget>[];
+    var previousWasTextParagraph = false;
     for (final node in body.nodes) {
-      out.addAll(_renderBlock(node, theme));
+      // A `<p>` is a "text paragraph" unless it's just wrapping a single
+      // image (in which case `_renderBlock` emits a standalone image and
+      // normal image spacing applies).
+      final isTextParagraph = node is dom.Element &&
+          node.localName == 'p' &&
+          _singleImageChild(node) == null;
+      final rendered = _renderBlock(node, theme);
+      if (rendered.isEmpty) continue;
+      if (isTextParagraph && previousWasTextParagraph) {
+        // Restore the blank-line spacing that the plaintext renderer
+        // produced via `\n\n`, which the HTML renderer lost. Paragraphs
+        // already contribute `bottom: 6`, so top up with the remainder
+        // of one line height.
+        out.add(SizedBox(height: _paragraphTopUp(theme)));
+      }
+      out.addAll(rendered);
+      previousWasTextParagraph = isTextParagraph;
     }
     return out;
+  }
+
+  /// Extra vertical space to insert between consecutive text paragraphs
+  /// so the visual gap equals one blank line — the spacing the pre-HTML
+  /// plaintext renderer produced by emitting `\n\n` as an actual empty
+  /// line.
+  ///
+  /// Reads the effective style (the one [PostBodyText] was given, which
+  /// [PostCard] sets to `bodyMedium.copyWith(height: 1.4)`). Falls back
+  /// to `14 × 1.4 = 19.6` if the caller doesn't specify either.
+  double _paragraphTopUp(ThemeData theme) {
+    final style = widget.style ?? theme.textTheme.bodyMedium;
+    final fontSize = style?.fontSize ?? 14.0;
+    final height = style?.height ?? 1.4;
+    final extra = (fontSize * height) - 6.0;
+    return extra > 0 ? extra : 10.0;
   }
 
   List<Widget> _renderBlock(dom.Node node, ThemeData theme) {
