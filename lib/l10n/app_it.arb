@@ -201,5 +201,9 @@
   "postHookRunning": "Hook in esecuzione…",
   "postHookSuccess": "Hook riusciti",
   "postHookFailed": "Hook falliti — tocca per i dettagli",
-  "postEdited": "· modificato {when}"
+  "postEdited": "· modificato {when}",
+
+  "postShowQuotes": "{count, plural, =1{1 citazione} other{{count} citazioni}}",
+  "postHideQuotes": "Nascondi {count, plural, =1{1 citazione} other{{count} citazioni}}",
+  "postQuotedByHeader": "CITATO DA"
 }

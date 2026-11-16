@@ -785,4 +785,29 @@ class AppLocalizationsEn extends AppLocalizations {
   String postEdited(String when) {
     return '· edited $when';
   }
+
+  @override
+  String postShowQuotes(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count quotes',
+      one: '1 quote',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String postHideQuotes(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count quotes',
+      one: '1 quote',
+    );
+    return 'Hide $_temp0';
+  }
+
+  @override
+  String get postQuotedByHeader => 'QUOTED BY';
 }

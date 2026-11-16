@@ -29,6 +29,16 @@ class PostCard extends StatelessWidget {
   final VoidCallback onDelete;
   final void Function(String quotedPostId)? onQuoteTap;
 
+  /// Number of posts in the space that quote this one. Zero hides the
+  /// quotes toggle.
+  final int quoteCount;
+
+  /// Whether the inline quotes list is currently expanded.
+  final bool quotesExpanded;
+
+  /// Toggle for the quotes section. Null hides the toggle entirely.
+  final VoidCallback? onToggleQuotes;
+
   /// When true, internal interactive controls are disabled and the whole
   /// card becomes a tap target for toggling selection.
   final bool selectionMode;
@@ -64,6 +74,9 @@ class PostCard extends StatelessWidget {
     this.isSelected = false,
     this.onCardTap,
     this.onCardLongPress,
+    this.quoteCount = 0,
+    this.quotesExpanded = false,
+    this.onToggleQuotes,
   });
 
   @override
@@ -229,6 +242,9 @@ class PostCard extends StatelessWidget {
                           onToggleReplies: onToggleReplies,
                           onReply: onReply,
                           onQuote: onQuote,
+                          quoteCount: quoteCount,
+                          quotesExpanded: quotesExpanded,
+                          onToggleQuotes: onToggleQuotes,
                         ),
                       ],
                     ),
@@ -798,6 +814,9 @@ class _PostActions extends StatelessWidget {
   final VoidCallback onToggleReplies;
   final VoidCallback onReply;
   final VoidCallback onQuote;
+  final int quoteCount;
+  final bool quotesExpanded;
+  final VoidCallback? onToggleQuotes;
 
   const _PostActions({
     required this.childCount,
@@ -807,13 +826,18 @@ class _PostActions extends StatelessWidget {
     required this.onToggleReplies,
     required this.onReply,
     required this.onQuote,
+    required this.quoteCount,
+    required this.quotesExpanded,
+    required this.onToggleQuotes,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l = context.l10n;
-    final toggle = _replyToggle(theme, l);
+
+    // Left zone: compose actions. Neutral colour — they're the normal
+    // interaction path.
     final actionStyle = TextButton.styleFrom(
       foregroundColor: theme.colorScheme.onSurfaceVariant,
       visualDensity: VisualDensity.compact,
@@ -821,7 +845,8 @@ class _PostActions extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6),
     );
 
-    return Row(
+    final leftActions = Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         TextButton.icon(
           onPressed: onReply,
@@ -836,11 +861,50 @@ class _PostActions extends StatelessWidget {
           label: Text(l.postQuote),
           style: actionStyle,
         ),
-        if (toggle != null) ...[
-          const SizedBox(width: 2),
-          toggle,
-        ],
       ],
+    );
+
+    // Right zone: expand toggles. Primary colour + chevron — reads as
+    // "navigation / reveal", visually distinct from the compose actions.
+    final replyToggle = _replyToggle(theme, l);
+    final quotesToggle = _quotesToggle(theme, l);
+
+    final rightToggles = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (replyToggle != null) replyToggle,
+        if (replyToggle != null && quotesToggle != null)
+          const SizedBox(width: 2),
+        if (quotesToggle != null) quotesToggle,
+      ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow = constraints.maxWidth < 480;
+        if (narrow) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              leftActions,
+              if (rightToggles.children.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                rightToggles,
+              ],
+            ],
+          );
+        }
+        return Row(
+          children: [
+            leftActions,
+            if (rightToggles.children.isNotEmpty) ...[
+              const Spacer(),
+              rightToggles,
+            ],
+          ],
+        );
+      },
     );
   }
 
@@ -849,24 +913,18 @@ class _PostActions extends StatelessWidget {
     if (childCount == 0) return null;
 
     final style = TextButton.styleFrom(
-      foregroundColor: theme.colorScheme.onSurfaceVariant,
+      foregroundColor: theme.colorScheme.primary,
       visualDensity: VisualDensity.compact,
       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       padding: const EdgeInsets.symmetric(horizontal: 6),
     );
 
     if (expanded) {
-      if (previewCount > 0) {
-        return TextButton(
-          onPressed: onToggleReplies,
-          style: style,
-          child: Text(l.postShowFewer),
-        );
-      }
-      return TextButton(
+      return TextButton.icon(
         onPressed: onToggleReplies,
+        icon: const Icon(Icons.expand_less, size: 15),
+        label: Text(l.postHideReplies(childCount)),
         style: style,
-        child: Text(l.postHideReplies(childCount)),
       );
     }
 
@@ -874,17 +932,47 @@ class _PostActions extends StatelessWidget {
     if (hidden <= 0) return null;
 
     if (previewCount > 0) {
-      return TextButton(
+      return TextButton.icon(
         onPressed: onToggleReplies,
+        icon: const Icon(Icons.expand_more, size: 15),
+        label: Text(l.postShowMoreReplies(hidden)),
         style: style,
-        child: Text(l.postShowMoreReplies(hidden)),
       );
     }
 
-    return TextButton(
+    return TextButton.icon(
       onPressed: onToggleReplies,
+      icon: const Icon(Icons.expand_more, size: 15),
+      label: Text(l.postRepliesCount(childCount)),
       style: style,
-      child: Text(l.postRepliesCount(childCount)),
+    );
+  }
+
+  Widget? _quotesToggle(ThemeData theme, AppLocalizations l) {
+    if (hideReplyToggle) return null; // same suppression as replies
+    if (quoteCount == 0) return null;
+    if (onToggleQuotes == null) return null;
+
+    final style = TextButton.styleFrom(
+      foregroundColor: theme.colorScheme.primary,
+      visualDensity: VisualDensity.compact,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+    );
+
+    if (quotesExpanded) {
+      return TextButton.icon(
+        onPressed: onToggleQuotes,
+        icon: const Icon(Icons.expand_less, size: 15),
+        label: Text(l.postHideQuotes(quoteCount)),
+        style: style,
+      );
+    }
+    return TextButton.icon(
+      onPressed: onToggleQuotes,
+      icon: const Icon(Icons.expand_more, size: 15),
+      label: Text(l.postShowQuotes(quoteCount)),
+      style: style,
     );
   }
 }

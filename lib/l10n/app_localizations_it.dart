@@ -770,4 +770,29 @@ class AppLocalizationsIt extends AppLocalizations {
   String postEdited(String when) {
     return '· modificato $when';
   }
+
+  @override
+  String postShowQuotes(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count citazioni',
+      one: '1 citazione',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String postHideQuotes(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count citazioni',
+      one: '1 citazione',
+    );
+    return 'Nascondi $_temp0';
+  }
+
+  @override
+  String get postQuotedByHeader => 'CITATO DA';
 }

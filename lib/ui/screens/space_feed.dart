@@ -52,6 +52,8 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   final List<String> _pendingFileIds = [];
   DateTime? _postDateTime;
   final Set<String> _expanded = {};
+  final Set<String> _expandedQuotes = {};
+  Map<String, List<Post>> _quotesByPost = {};
   bool _sending = false;
   bool _searchActive = false;
   bool _skipHooks = false;
@@ -762,6 +764,23 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         .toList();
   }
 
+  /// Rebuilds `_quotesByPost`: for each post, the (chronologically
+  /// ordered) list of posts in this space that quote it. Computed once
+  /// per content build — O(n), same cost as `_buildTree`.
+  void _refreshQuotesMap() {
+    final all = widget.store.postsForSpace(widget.space.id);
+    final map = <String, List<Post>>{};
+    for (final p in all) {
+      final qid = p.quotedPostId;
+      if (qid == null || qid == p.id) continue;
+      map.putIfAbsent(qid, () => <Post>[]).add(p);
+    }
+    for (final list in map.values) {
+      list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    }
+    _quotesByPost = map;
+  }
+
   Widget _buildNode(
     _PostNode node, {
     required bool searchMode,
@@ -771,6 +790,8 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     final totalChildren = node.children.length;
     final hasChildren = totalChildren > 0;
     final isExpanded = searchMode || _expanded.contains(post.id);
+    final quotes = _quotesByPost[post.id] ?? const <Post>[];
+    final quotesExpanded = _expandedQuotes.contains(post.id);
 
     final previewCount = (!isExpanded && depth == 0 && hasChildren)
         ? (totalChildren < kPreviewReplyCount
@@ -803,6 +824,15 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
           _expanded.add(post.id);
         }
       }),
+      quoteCount: quotes.length,
+      quotesExpanded: quotesExpanded,
+      onToggleQuotes: () => setState(() {
+        if (_expandedQuotes.contains(post.id)) {
+          _expandedQuotes.remove(post.id);
+        } else {
+          _expandedQuotes.add(post.id);
+        }
+      }),
       onReply: () => _reply(post),
       onQuote: () => _quote(post),
       onEdit: () => _edit(post),
@@ -817,46 +847,87 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
           : () => _enterSelectionMode(post.id),
     );
 
-    Widget result;
-    if (visibleChildren.isEmpty) {
-      result = card;
-    } else {
-      result = Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          card,
-          Padding(
-            padding: const EdgeInsets.only(left: 16),
-            child: Container(
-              decoration: BoxDecoration(
-                border: Border(
-                  left: BorderSide(
-                    color: Theme.of(context).colorScheme.outlineVariant,
-                    width: 2,
-                  ),
+    final parts = <Widget>[card];
+    if (quotesExpanded && quotes.isNotEmpty) {
+      parts.add(_buildQuotesSection(quotes));
+    }
+    if (visibleChildren.isNotEmpty) {
+      parts.add(
+        Padding(
+          padding: const EdgeInsets.only(left: 16),
+          child: Container(
+            decoration: BoxDecoration(
+              border: Border(
+                left: BorderSide(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                  width: 2,
                 ),
               ),
-              padding: const EdgeInsets.only(left: 8, top: 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: visibleChildren
-                    .map((c) => Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: _buildNode(
-                            c,
-                            searchMode: searchMode,
-                            depth: depth + 1,
-                          ),
-                        ))
-                    .toList(),
-              ),
+            ),
+            padding: const EdgeInsets.only(left: 8, top: 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: visibleChildren
+                  .map((c) => Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: _buildNode(
+                          c,
+                          searchMode: searchMode,
+                          depth: depth + 1,
+                        ),
+                      ))
+                  .toList(),
             ),
           ),
-        ],
+        ),
       );
     }
 
+    final Widget result = parts.length == 1
+        ? parts.first
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: parts,
+          );
     return KeyedSubtree(key: _keyFor(post.id), child: result);
+  }
+
+  Widget _buildQuotesSection(List<Post> quotes) {
+    final theme = Theme.of(context);
+    final l = context.l10n;
+    return Padding(
+      padding: const EdgeInsets.only(left: 16, top: 6),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(
+              color: theme.colorScheme.outlineVariant,
+              width: 2,
+            ),
+          ),
+        ),
+        padding: const EdgeInsets.only(left: 8, top: 6, bottom: 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              l.postQuotedByHeader,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                letterSpacing: 1.2,
+              ),
+            ),
+            const SizedBox(height: 4),
+            ...quotes.map((q) => _QuoteBackPreview(
+                  store: widget.store,
+                  space: widget.space,
+                  quotingPost: q,
+                  onTap: () => _scrollToPost(q.id),
+                )),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildFeed(List<_PostNode> roots, {required bool searchMode}) {
@@ -884,6 +955,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   }
 
   Widget _buildContent() {
+    _refreshQuotesMap();
     final query = _searchActive ? _searchCtrl.text.trim() : '';
     if (query.isEmpty) {
       return _buildFeed(_buildTree(), searchMode: false);
@@ -1361,5 +1433,93 @@ class _PastePostSourceDialogState extends State<_PastePostSourceDialog> {
         ],
       ),
     );
+  }
+}
+
+class _QuoteBackPreview extends StatelessWidget {
+  final VaultStore store;
+  final Space space;
+  final Post quotingPost;
+  final VoidCallback? onTap;
+
+  const _QuoteBackPreview({
+    required this.store,
+    required this.space,
+    required this.quotingPost,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isBookmark = quotingPost.kind == PostKind.bookmark;
+    final preview = _previewOf(quotingPost);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                radius: 12,
+                backgroundColor: isBookmark
+                    ? theme.colorScheme.primaryContainer
+                    : theme.colorScheme.secondaryContainer,
+                child: Text(
+                  isBookmark ? '🔖' : '📝',
+                  style: const TextStyle(fontSize: 11),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      quotingPost.formattedCreatedAt,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    if (preview.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        preview,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (onTap != null) ...[
+                const SizedBox(width: 4),
+                Icon(
+                  Icons.arrow_outward,
+                  size: 14,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _previewOf(Post p) {
+    if (p.plaintext.isNotEmpty) return p.plaintext;
+    if (p.title != null && p.title!.isNotEmpty) return p.title!;
+    if (p.description != null && p.description!.isNotEmpty) {
+      return p.description!;
+    }
+    if (p.url != null) return p.url!;
+    return '';
   }
 }

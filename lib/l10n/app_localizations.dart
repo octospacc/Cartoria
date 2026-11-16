@@ -1237,6 +1237,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'· edited {when}'**
   String postEdited(String when);
+
+  /// No description provided for @postShowQuotes.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 quote} other{{count} quotes}}'**
+  String postShowQuotes(int count);
+
+  /// No description provided for @postHideQuotes.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide {count, plural, =1{1 quote} other{{count} quotes}}'**
+  String postHideQuotes(int count);
+
+  /// No description provided for @postQuotedByHeader.
+  ///
+  /// In en, this message translates to:
+  /// **'QUOTED BY'**
+  String get postQuotedByHeader;
 }
 
 class _AppLocalizationsDelegate

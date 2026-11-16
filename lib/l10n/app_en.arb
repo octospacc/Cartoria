@@ -346,5 +346,15 @@
   "postEdited": "· edited {when}",
   "@postEdited": {
     "placeholders": { "when": { "type": "String" } }
-  }
+  },
+
+  "postShowQuotes": "{count, plural, =1{1 quote} other{{count} quotes}}",
+  "@postShowQuotes": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "postHideQuotes": "Hide {count, plural, =1{1 quote} other{{count} quotes}}",
+  "@postHideQuotes": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "postQuotedByHeader": "QUOTED BY"
 }
