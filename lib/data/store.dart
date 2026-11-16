@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'dart:ui' show Locale;
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
@@ -1016,6 +1017,28 @@ class VaultStore extends ChangeNotifier {
 
   Future<void> deleteComposerDraft(String fieldKey) =>
       _composerDraftStore.delete(fieldKey);
+
+  /// The user's selected language, or null to follow the system locale.
+  /// A null value is what `MaterialApp.locale` expects to mean "use the
+  /// device default", so this is passed through as-is.
+  Locale? get locale {
+    final code = _settings.localeCode;
+    if (code == null || code.isEmpty) return null;
+    return Locale(code);
+  }
+
+  /// Persists a language preference. Pass null to fall back to the system
+  /// locale. Idempotent — a no-op if [code] matches the current setting.
+  Future<void> setLocale(String? code) async {
+    if (_settings.localeCode == code) return;
+    _settings = _settings.copyWith(localeCode: code);
+    try {
+      await _settingsStore.save(_settings);
+    } catch (e) {
+      debugPrint('Could not persist locale: $e');
+    }
+    notifyListeners();
+  }
 
   /// The retention count actually in effect: user override if set,
   /// otherwise a platform default (10 on desktop, 3 on web — web backups

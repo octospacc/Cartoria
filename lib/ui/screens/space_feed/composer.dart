@@ -11,6 +11,7 @@ import '../../widgets/native_text_field.dart';
 import '../../widgets/emoji_picker_sheet.dart';
 import '../../screens/full_screen_text_editor.dart';
 import '../../../data/composer_draft.dart';
+import '../../../l10n/l10n.dart';
 import '../drive/file_viewer.dart';
 import 'composer_draft_controller.dart';
 import 'attachment_picker.dart';
@@ -28,13 +29,13 @@ Future<DateTime?> _pickPostDateTime(
     initialDate: base,
     firstDate: DateTime(2000),
     lastDate: DateTime.now().add(const Duration(days: 365 * 100)),
-    helpText: 'Post date',
+    helpText: context.l10n.composerPostedAt,
   );
   if (date == null || !context.mounted) return null;
   final time = await showTimePicker(
     context: context,
     initialTime: TimeOfDay.fromDateTime(base),
-    helpText: 'Post time',
+    helpText: context.l10n.composerPostedAt,
   );
   if (time == null || !context.mounted) return null;
   return DateTime(date.year, date.month, date.day, time.hour, time.minute);
@@ -157,6 +158,7 @@ class InlineComposer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l = context.l10n;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -169,10 +171,12 @@ class InlineComposer extends StatelessWidget {
               children: pendingFileIds.map((id) {
                 final f = store.fileById(space.id, id);
                 return InputChip(
-                  label: Text(f?.name ?? id, overflow: TextOverflow.ellipsis),
+                  label: Text(f?.name ?? id,
+                      overflow: TextOverflow.ellipsis),
                   onDeleted: () => onRemoveFile(id),
-                  onPressed:
-                      f == null ? null : () => _openFileViewer(context, f),
+                  onPressed: f == null
+                      ? null
+                      : () => _openFileViewer(context, f),
                 );
               }).toList(),
             ),
@@ -183,11 +187,11 @@ class InlineComposer extends StatelessWidget {
             child: TextField(
               controller: urlCtrl,
               keyboardType: TextInputType.url,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 isDense: true,
-                hintText: 'https://…',
-                prefixIcon: Icon(Icons.link, size: 18),
-                border: OutlineInputBorder(),
+                hintText: l.composerUrlHint,
+                prefixIcon: const Icon(Icons.link, size: 18),
+                border: const OutlineInputBorder(),
               ),
             ),
           ),
@@ -199,29 +203,27 @@ class InlineComposer extends StatelessWidget {
           contextMenuBuilder: spellCheckContextMenuBuilder,
           decoration: InputDecoration(
             isDense: true,
-            hintText:
-                kind == PostKind.note ? 'Write something…' : 'Why save this?',
+            hintText: kind == PostKind.note
+                ? l.composerBodyHintNote
+                : l.composerBodyHintBookmark,
             border: InputBorder.none,
           ),
         ),
         const SizedBox(height: 2),
         LayoutBuilder(
           builder: (context, constraints) {
-            // Below 520pt the single-row layout doesn't fit once the datetime
-            // chip has a date in it. Two rows guarantee no overflow at any
-            // width and read naturally on mobile.
             final narrow = constraints.maxWidth < 520;
 
             final modeSelector = SegmentedButton<PostKind>(
-              segments: const [
+              segments: [
                 ButtonSegment(
                     value: PostKind.note,
-                    icon: Icon(Icons.notes, size: 16),
-                    label: Text('Note')),
+                    icon: const Icon(Icons.notes, size: 16),
+                    label: Text(l.composerNote)),
                 ButtonSegment(
                     value: PostKind.bookmark,
-                    icon: Icon(Icons.bookmark_outline, size: 16),
-                    label: Text('Link')),
+                    icon: const Icon(Icons.bookmark_outline, size: 16),
+                    label: Text(l.composerLink)),
               ],
               selected: {kind},
               onSelectionChanged: (s) => onKindChanged(s.first),
@@ -234,17 +236,16 @@ class InlineComposer extends StatelessWidget {
 
             final emojiButton = IconButton(
               icon: const Icon(Icons.emoji_emotions_outlined, size: 20),
-              tooltip: 'Emoji',
+              tooltip: l.composerEmojiTooltip,
               visualDensity: VisualDensity.compact,
               onPressed: () => showEmojiPickerSheet(context, bodyCtrl),
             );
 
             final hooksButton = IconButton(
-              icon:
-                  Icon(skipHooks ? Icons.flash_off : Icons.flash_on, size: 20),
-              tooltip: skipHooks
-                  ? 'Hooks skipped this save — tap to re-enable'
-                  : 'Hooks will run on save — tap to skip',
+              icon: Icon(skipHooks ? Icons.flash_off : Icons.flash_on,
+                  size: 20),
+              tooltip:
+                  skipHooks ? l.composerHooksSkip : l.composerHooksRun,
               color: skipHooks
                   ? Theme.of(context).colorScheme.onSurfaceVariant
                   : Theme.of(context).colorScheme.primary,
@@ -254,14 +255,14 @@ class InlineComposer extends StatelessWidget {
 
             final fullscreenButton = IconButton(
               icon: const Icon(Icons.open_in_full, size: 20),
-              tooltip: 'Expand to full screen',
+              tooltip: l.composerExpand,
               visualDensity: VisualDensity.compact,
               onPressed: () => _openFullScreenEditor(context, bodyCtrl),
             );
 
             final attachButton = IconButton(
               icon: const Icon(Icons.attach_file),
-              tooltip: 'Attach',
+              tooltip: l.composerAttach,
               visualDensity: VisualDensity.compact,
               onPressed: onAttach,
             );
@@ -272,7 +273,6 @@ class InlineComposer extends StatelessWidget {
               onPressed: onSend,
             );
 
-            // Wide
             if (!narrow) {
               return Row(
                 children: [
@@ -291,8 +291,6 @@ class InlineComposer extends StatelessWidget {
                 ],
               );
             }
-
-            // Narrow: mode + hooks on top, utilities + send on bottom.
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisSize: MainAxisSize.min,
@@ -331,14 +329,18 @@ class InlineComposer extends StatelessWidget {
     BuildContext context,
     TextEditingController ctrl,
   ) async {
-    // Unfocus the inline field so the push transition doesn't compete
-    // with an active keyboard. The full-screen editor will autofocus.
     FocusScope.of(context).unfocus();
+    final l = context.l10n;
+    final isNote = kind == PostKind.note;
     await FullScreenTextEditor.show(
       context,
       controller: ctrl,
-      title: kind == PostKind.note ? 'Note' : 'Why save this',
-      hintText: kind == PostKind.note ? 'Write something…' : 'Why save this?',
+      title: isNote
+          ? l.composerFullScreenNoteTitle
+          : l.composerFullScreenBookmarkTitle,
+      hintText: isNote
+          ? l.composerFullScreenNoteHint
+          : l.composerFullScreenBookmarkHint,
     );
   }
 
@@ -356,12 +358,12 @@ class InlineComposer extends StatelessWidget {
               postDateTime != null ||
               skipHooks ||
               kind != PostKind.note;
-          return IconButton(
-            icon: const Icon(Icons.restart_alt, size: 20),
-            tooltip: hasContent ? 'Discard draft' : null,
-            visualDensity: VisualDensity.compact,
-            onPressed: hasContent ? onReset : null,
-          );
+              return IconButton(
+                icon: const Icon(Icons.restart_alt, size: 20),
+                tooltip: hasContent ? context.l10n.composerDiscardDraft : null,
+                visualDensity: VisualDensity.compact,
+                onPressed: hasContent ? onReset : null,
+              );
         },
       ),
     );
@@ -408,12 +410,13 @@ class _DateTimeChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     final v = value;
 
     if (v == null) {
       return IconButton(
         icon: const Icon(Icons.schedule),
-        tooltip: 'Set post date/time',
+        tooltip: l.composerSetDateTime,
         onPressed: () async {
           final picked = await _pickPostDateTime(context);
           if (picked != null) onChanged(picked);
@@ -558,17 +561,19 @@ class _ComposerSheetState extends State<ComposerSheet> {
   }
 
   String get _headerTitle {
-    if (widget.editing != null) return 'Edit post';
-    if (widget.replyTo != null) return 'Reply';
-    if (widget.quoting != null) return 'Quote';
-    return 'New post';
+    final l = context.l10n;
+    if (widget.editing != null) return l.composerEditing;
+    if (widget.replyTo != null) return l.composerReply;
+    if (widget.quoting != null) return l.composerQuote;
+    return l.composerNewPost;
   }
 
   String get _submitLabel {
-    if (widget.editing != null) return 'Save';
-    if (widget.replyTo != null) return 'Reply';
-    if (widget.quoting != null) return 'Quote';
-    return 'Post';
+    final l = context.l10n;
+    if (widget.editing != null) return l.commonSave;
+    if (widget.replyTo != null) return l.composerReply;
+    if (widget.quoting != null) return l.composerQuote;
+    return l.composerPost;
   }
 
   String _previewOf(Post p) {
@@ -595,7 +600,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
     final url = _url.text.trim();
     if (url.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter a URL first')),
+        SnackBar(content: Text(context.l10n.composerUrlRequired)),
       );
       return;
     }
@@ -615,7 +620,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
     }
     if (meta == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not fetch metadata')),
+        SnackBar(content: Text(context.l10n.composerMetadataFetchFailed)),
       );
     }
   }
@@ -624,7 +629,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
     final url = _kind == PostKind.bookmark ? _url.text.trim() : null;
     if (_kind == PostKind.bookmark && (url == null || url.isEmpty)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('A bookmark needs a URL')),
+        SnackBar(content: Text(context.l10n.composerBookmarkNeedsUrl)),
       );
       return;
     }
@@ -953,17 +958,19 @@ class _ComposerSheetState extends State<ComposerSheet> {
 
   Future<void> _openFullScreenEditor(BuildContext context) async {
     FocusScope.of(context).unfocus();
+    final l = context.l10n;
+    final title = widget.editing != null
+        ? l.composerFullScreenEditTitle
+        : widget.replyTo != null
+            ? l.composerFullScreenReplyTitle
+            : widget.quoting != null
+                ? l.composerFullScreenQuoteTitle
+                : l.composerFullScreenNewTitle;
     await FullScreenTextEditor.show(
       context,
       controller: _body,
-      title: widget.editing != null
-          ? 'Edit post body'
-          : widget.replyTo != null
-              ? 'Reply body'
-              : widget.quoting != null
-                  ? 'Quote body'
-                  : 'Post body',
-      hintText: 'Write the body…',
+      title: title,
+      hintText: l.composerBodyHint,
     );
   }
 
@@ -1062,11 +1069,12 @@ class _ComposerSheetState extends State<ComposerSheet> {
   }
 
   String _formatRelative(DateTime t) {
+    final l = context.l10n;
     final diff = DateTime.now().difference(t);
-    if (diff.inSeconds < 60) return 'just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    if (diff.inDays < 30) return '${diff.inDays}d ago';
+    if (diff.inSeconds < 60) return l.composerRelativeJustNow;
+    if (diff.inMinutes < 60) return l.composerRelativeMinutes(diff.inMinutes);
+    if (diff.inHours < 24) return l.composerRelativeHours(diff.inHours);
+    if (diff.inDays < 30) return l.composerRelativeDays(diff.inDays);
     final local = t.toLocal();
     return '${local.year}-${local.month.toString().padLeft(2, '0')}-'
         '${local.day.toString().padLeft(2, '0')}';
@@ -1184,13 +1192,13 @@ class _DateTimeRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Posted at',
+                  context.l10n.composerPostedAt,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
                 Text(
-                  v == null ? 'Now (default)' : _formatPostDateTime(v),
+                  v == null ? context.l10n.composerPostedNow : _formatPostDateTime(v),
                   style: theme.textTheme.bodySmall,
                 ),
               ],
@@ -1199,7 +1207,7 @@ class _DateTimeRow extends StatelessWidget {
           if (v != null)
             IconButton(
               icon: const Icon(Icons.close, size: 18),
-              tooltip: 'Reset to now',
+              tooltip: context.l10n.composerResetTime,
               onPressed: () => onChanged(null),
             ),
           TextButton(
@@ -1207,7 +1215,9 @@ class _DateTimeRow extends StatelessWidget {
               final picked = await _pickPostDateTime(context, initial: v);
               if (picked != null) onChanged(picked);
             },
-            child: Text(v == null ? 'Set…' : 'Change'),
+            child: Text(
+              v == null ? context.l10n.composerSetTime : context.l10n.composerChangeTime,
+            ),
           ),
         ],
       ),

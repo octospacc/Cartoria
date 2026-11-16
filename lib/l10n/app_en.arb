@@ -1,0 +1,350 @@
+{
+  "@@locale": "en",
+
+  "appTitle": "Cartoria",
+
+  "commonCancel": "Cancel",
+  "commonSave": "Save",
+  "commonDelete": "Delete",
+  "commonClose": "Close",
+  "commonImport": "Import",
+  "commonCreate": "Create",
+  "commonClear": "Clear",
+  "commonReset": "Reset",
+
+  "onboardingWelcome": "Welcome",
+  "onboardingSkip": "Skip",
+  "onboardingCreateFirstSpace": "Create your first space",
+  "onboardingBody": "A space holds its own notes, bookmarks, and files. Spaces are independent — you can add more later.",
+  "onboardingSpaceName": "Space name",
+  "onboardingCreateSpace": "Create space",
+
+  "spacesTitle": "Spaces",
+  "spacesHooksTooltip": "Hooks",
+  "spacesSyncTooltip": "Sync",
+  "spacesImportTooltip": "New space from file…",
+  "spacesSettingsTooltip": "Settings",
+  "spacesEmpty": "No spaces yet",
+  "spacesEmptyHint": "Tap + to create your first space, or import from a file using the icon at the top.",
+  "spacesEmptyLabel": "Empty",
+  "spacesStatistics": "Statistics",
+  "spacesEdit": "Edit space…",
+  "spacesExport": "Export space…",
+  "spacesDelete": "Delete space…",
+  "spacesDeleteTitle": "Delete \"{name}\"?",
+  "@spacesDeleteTitle": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "spacesDeleteBody": "This removes every post and file in this space. Cannot be undone.",
+  "spacesCountNotes": "{count, plural, =0{} =1{1 note} other{{count} notes}}",
+  "@spacesCountNotes": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "spacesCountBookmarks": "{count, plural, =0{} =1{1 bookmark} other{{count} bookmarks}}",
+  "@spacesCountBookmarks": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "spacesCountReplies": "{count, plural, =0{} =1{1 reply} other{{count} replies}}",
+  "@spacesCountReplies": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "spacesCountFiles": "{count, plural, =0{} =1{1 file} other{{count} files}}",
+  "@spacesCountFiles": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+
+  "spaceDialogNewTitle": "New space",
+  "spaceDialogEditTitle": "Edit space",
+  "spaceDialogNameLabel": "Name",
+
+  "settingsTitle": "Settings",
+  "settingsLanguageSection": "LANGUAGE",
+  "settingsLanguageDescription": "Language used by the app interface. Also used for spell check in the composer.",
+  "settingsLanguageSystem": "System default",
+  "settingsLanguageEnglish": "English",
+  "settingsLanguageItalian": "Italiano",
+  "settingsBackupsSection": "BACKUPS",
+  "settingsBackupsDescription": "A backup of the vault is created before each pull, so a bad pull cannot destroy unpushed local changes. Old backups are deleted automatically beyond the retention limit.",
+  "settingsRetentionLabel": "Retention (number of backups)",
+  "settingsRetentionHelper": "Leave empty to use the default. Set to 0 to disable pre-pull backups entirely.",
+  "settingsRetentionSaveTooltip": "Save",
+  "settingsRetentionCurrent": "{count, plural, =1{Currently keeping up to 1 backup} other{Currently keeping up to {count} backups}}",
+  "@settingsRetentionCurrent": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "settingsBackupsLoading": "Loading backups…",
+  "settingsBackupsCount": "{count, plural, =0{No backups} =1{1 backup} other{{count} backups}}",
+  "@settingsBackupsCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "settingsBackupsEmpty": "No backups yet. Backups are created automatically before each pull.",
+  "settingsBackupsClearAll": "Clear all",
+  "settingsBackupsExportTooltip": "Export",
+  "settingsBackupsDeleteTooltip": "Delete",
+  "settingsBackupsClearTitle": "{count, plural, =1{Clear 1 backup?} other{Clear {count} backups?}}",
+  "@settingsBackupsClearTitle": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "settingsBackupsClearBody": "Deletes every pre-pull backup. Current vault data is not affected. This cannot be undone.",
+  "settingsBackupDeleteTitle": "Delete \"{name}\"?",
+  "@settingsBackupDeleteTitle": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "settingsBackupDeleteBody": "Deletes this backup. Other backups and current vault data are not affected.",
+  "settingsRetentionSaved": "Retention set to {count}",
+  "@settingsRetentionSaved": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "settingsRetentionReset": "Retention reset to default",
+  "settingsRetentionDisabled": "Pre-pull backups disabled",
+  "settingsRetentionInvalid": "Retention must be a non-negative integer",
+  "settingsSaveFailed": "Failed to save: {error}",
+  "@settingsSaveFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "settingsListBackupsFailed": "Could not list backups: {error}",
+  "@settingsListBackupsFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "settingsExportFailed": "Export failed: {error}",
+  "@settingsExportFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "settingsDeleteFailed": "Delete failed: {error}",
+  "@settingsDeleteFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+
+  "spaceDialogNameLabel": "Name",
+  "spaceImportUnsupported": "Unsupported file type",
+  "spaceImportSinglePost": "Single-post file — open a space and use Import… there",
+  "spaceImportNoBookmarks": "No bookmarks found",
+  "spaceImportDetails": "Details",
+  "spaceImportNothing": "Nothing imported",
+  "spaceImportSummary": "{ok} imported, {failed} failed, {cancelled} cancelled",
+  "@spaceImportSummary": {
+    "placeholders": {
+      "ok": { "type": "int" },
+      "failed": { "type": "int" },
+      "cancelled": { "type": "int" }
+    }
+  },
+  "spaceImportSummaryOkFailed": "{ok} file{ok, plural, =1{} other{s}} imported · {failed} failed",
+  "@spaceImportSummaryOkFailed": {
+    "placeholders": {
+      "ok": { "type": "int" },
+      "failed": { "type": "int" }
+    }
+  },
+  "spaceImportSummaryOk": "{ok} file{ok, plural, =1{} other{s}} imported",
+  "@spaceImportSummaryOk": {
+    "placeholders": {
+      "ok": { "type": "int" }
+    }
+  },
+  "spaceImportSummaryFailed": "{failed} failed",
+  "@spaceImportSummaryFailed": {
+    "placeholders": {
+      "failed": { "type": "int" }
+    }
+  },
+  "spaceImportSummaryCancelled": "{cancelled} cancelled",
+  "@spaceImportSummaryCancelled": {
+    "placeholders": {
+      "cancelled": { "type": "int" }
+    }
+  },
+  "spaceImportZipResult": "Imported \"{name}\"",
+  "@spaceImportZipResult": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "spaceImportBookmarksResult": "Imported {count} into \"{name}\"",
+  "@spaceImportBookmarksResult": {
+    "placeholders": {
+      "count": { "type": "int" },
+      "name": { "type": "String" }
+    }
+  },
+  "spaceImportBookmarksDialogTitle": "Import bookmarks",
+  "spaceImportDefaultBookmarksName": "Imported Bookmarks",
+
+  "feedSearchHint": "Search this space…",
+  "feedSearchClear": "Clear",
+  "feedSearchClose": "Close search",
+  "feedSearchNoResults": "No results for \"{query}\"",
+  "@feedSearchNoResults": {
+    "placeholders": { "query": { "type": "String" } }
+  },
+  "feedSearchMatches": "{count, plural, =1{1 match} other{{count} matches}}",
+  "@feedSearchMatches": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "feedEmpty": "Nothing here yet. Write a note or save a link.",
+  "feedSelect": "Select",
+  "feedDrive": "Drive",
+  "feedExitSelection": "Exit selection",
+  "feedSelectedCount": "{count} selected",
+  "@feedSelectedCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "feedSelectPosts": "Select posts",
+  "feedDeleteSelected": "Delete selected",
+  "feedDeleteSelectedTitle": "{count, plural, =1{Delete 1 post?} other{Delete {count} posts?}}",
+  "@feedDeleteSelectedTitle": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "feedDeleteSelectedBody": "This cannot be undone.",
+  "feedDeleteSelectedOrphaned": "{count, plural, =1{1 reply will become top-level.} other{{count} replies will become top-level.}}",
+  "@feedDeleteSelectedOrphaned": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "feedMenuImport": "Import…",
+  "feedMenuImportSource": "Paste post source…",
+  "feedImportOneFile": "Imported \"{name}\"",
+  "@feedImportOneFile": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "feedImportPost": "Post imported",
+  "feedImportBookmarksFound": "No bookmarks found in file",
+  "feedImportFilesSummary": "{ok} imported",
+  "@feedImportFilesSummary": {
+    "placeholders": { "ok": { "type": "int" } }
+  },
+  "feedImportErrorsTitle": "{count, plural, =1{1 error} other{{count} errors}}",
+  "@feedImportErrorsTitle": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "feedUnsupportedFile": "Unsupported file type",
+  "feedPasteDialogTitle": "Paste post source",
+  "feedPasteDialogHint": "Paste a Cartoria post file — the same format as entries/<id>.html: a <!--- … ---> JSON frontmatter block followed by the HTML body. A fresh ID is generated if none is present.",
+
+  "composerNote": "Note",
+  "composerLink": "Link",
+  "composerBodyHintNote": "Write something…",
+  "composerBodyHintBookmark": "Why save this?",
+  "composerUrlHint": "https://…",
+  "composerEmojiTooltip": "Emoji",
+  "composerHooksSkip": "Hooks skipped this save — tap to re-enable",
+  "composerHooksRun": "Hooks will run on save — tap to skip",
+  "composerExpand": "Expand to full screen",
+  "composerAttach": "Attach",
+  "composerSend": "Send",
+  "composerDiscardDraft": "Discard draft",
+  "composerSetDateTime": "Set post date/time",
+  "composerNewPost": "New post",
+  "composerReply": "Reply",
+  "composerQuote": "Quote",
+  "composerPost": "Post",
+  "composerEditing": "Edit post",
+  "composerQuoting": "Quote",
+  "composerReplyingTo": "Replying to: {preview}",
+  "@composerReplyingTo": {
+    "placeholders": { "preview": { "type": "String" } }
+  },
+  "composerQuotingPreview": "Quoting: {preview}",
+  "@composerQuotingPreview": {
+    "placeholders": { "preview": { "type": "String" } }
+  },
+  "composerUrlLabel": "URL",
+  "composerRefreshMetadata": "Refresh metadata",
+  "composerTitleLabel": "Title",
+  "composerDescriptionLabel": "Description",
+  "composerBodyLabel": "Body",
+  "composerBodyHint": "Write the body…",
+  "composerPostedAt": "Posted at",
+  "composerPostedNow": "Now (default)",
+  "composerSetTime": "Set…",
+  "composerChangeTime": "Change",
+  "composerResetTime": "Reset to now",
+  "composerHooksRunOnSave": "Run hooks on save",
+  "composerHooksWillSkip": "Hooks will be skipped. You can trigger them later from the post menu.",
+  "composerHooksWillRun": "Matching hooks will fire when you tap {action}.",
+  "@composerHooksWillRun": {
+    "placeholders": { "action": { "type": "String" } }
+  },
+  "composerAddFile": "Add file",
+  "composerUnsavedDraft": "Unsaved draft",
+  "composerUnsavedDraftFrom": "Unsaved draft from {when}",
+  "@composerUnsavedDraftFrom": {
+    "placeholders": { "when": { "type": "String" } }
+  },
+  "composerDraftReset": "Reset",
+  "composerMetadataFetchFailed": "Could not fetch metadata",
+  "composerUrlRequired": "Enter a URL first",
+  "composerBookmarkNeedsUrl": "A bookmark needs a URL",
+  "composerEscapeBack": "Close",
+  "composerRelativeJustNow": "just now",
+  "composerRelativeMinutes": "{count}m ago",
+  "@composerRelativeMinutes": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "composerRelativeHours": "{count}h ago",
+  "@composerRelativeHours": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "composerRelativeDays": "{count}d ago",
+  "@composerRelativeDays": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "composerFullScreenNoteTitle": "Note",
+  "composerFullScreenNoteHint": "Write something…",
+  "composerFullScreenBookmarkTitle": "Why save this",
+  "composerFullScreenBookmarkHint": "Why save this?",
+  "composerFullScreenEditTitle": "Edit post body",
+  "composerFullScreenReplyTitle": "Reply body",
+  "composerFullScreenQuoteTitle": "Quote body",
+  "composerFullScreenNewTitle": "Post body",
+
+  "attachmentUpload": "Upload new files",
+  "attachmentPaste": "Paste from clipboard",
+  "attachmentRecall": "Recall from drive",
+  "attachmentPasteEmpty": "No image or file found in clipboard. On web, try pressing Ctrl+V in the composer instead.",
+  "attachmentPasteFailed": "Paste failed: {error}",
+  "@attachmentPasteFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "attachmentUploadFailed": "Upload failed: {error}",
+  "@attachmentUploadFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "attachmentUploadFailedCount": "{count} file{count, plural, =1{} other{s}} failed to upload",
+  "@attachmentUploadFailedCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "attachmentDriveEmpty": "Drive is empty",
+
+  "postReply": "Reply",
+  "postQuote": "Quote",
+  "postEdit": "Edit",
+  "postSource": "Show source…",
+  "postHookStatus": "Hook status…",
+  "postDelete": "Delete",
+  "postShowMoreReplies": "Show {count} more {count, plural, =1{reply} other{replies}}",
+  "@postShowMoreReplies": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "postHideReplies": "Hide {count} {count, plural, =1{reply} other{replies}}",
+  "@postHideReplies": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "postShowFewer": "Show fewer",
+  "postRepliesCount": "{count} {count, plural, =1{reply} other{replies}}",
+  "@postRepliesCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "postDeleteNote": "Delete this note?",
+  "postDeleteBookmark": "Delete this bookmark?",
+  "postDeleteBody": "Attached files stay in the drive. Replies will become top-level. Cannot be undone.",
+  "postQuotedUnavailable": "Quoted post unavailable",
+  "postQuotedFromSpace": "Quoted from this space",
+  "postQuotedIncludesAnother": "↪ includes another quote",
+  "postQuotedExternal": "External quote",
+  "postQuotedOpenHint": "Tap to view the quoted post",
+  "postHookRunning": "Hooks running…",
+  "postHookSuccess": "Hooks succeeded",
+  "postHookFailed": "Hooks failed — tap for details",
+  "postEdited": "· edited {when}",
+  "@postEdited": {
+    "placeholders": { "when": { "type": "String" } }
+  }
+}

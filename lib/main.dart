@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 import 'data/store.dart';
 import 'ui/screens/onboarding.dart';
 import 'ui/screens/space_list.dart';
+import 'l10n/l10n.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,26 +38,28 @@ class VaultApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Cartoria',
-      debugShowCheckedModeBanner: false,
-      theme: _buildTheme(Brightness.light),
-      darkTheme: _buildTheme(Brightness.dark),
-      // Follows the OS on every platform: NSAppearance on macOS, UIUserInterfaceStyle
-      // on iOS, UiModeManager on Android, the app theme on Windows, and
-      // prefers-color-scheme on Linux and web.
-      themeMode: ThemeMode.system,
-      home: initError != null
-          ? _InitErrorScreen(error: initError!, stack: initStack)
-          : AnimatedBuilder(
-              animation: store,
-              builder: (_, __) {
-                if (!store.isOnboarded && store.spaces.isEmpty) {
-                  return OnboardingScreen(store: store);
-                }
-                return SpaceListScreen(store: store);
-              },
-            ),
+    return AnimatedBuilder(
+      animation: store,
+      builder: (_, __) {
+        return MaterialApp(
+          title: 'Cartoria', // shown in browser tab / window title; not user-facing
+          debugShowCheckedModeBanner: false,
+          theme: _buildTheme(Brightness.light),
+          darkTheme: _buildTheme(Brightness.dark),
+          themeMode: ThemeMode.system,
+          locale: store.locale,
+          supportedLocales: const [
+            Locale('en'),
+            Locale('it'),
+          ],
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          home: initError != null
+              ? _InitErrorScreen(error: initError!, stack: initStack)
+              : (store.isOnboarded || store.spaces.isNotEmpty)
+                  ? SpaceListScreen(store: store)
+                  : OnboardingScreen(store: store),
+        );
+      },
     );
   }
 

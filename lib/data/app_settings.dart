@@ -12,25 +12,32 @@ import '../util/json_format.dart';
 class AppSettings {
   final bool onboarded;
 
-  /// Maximum number of pre-pull backup zips to keep. Null means "use the
-  /// platform default" (10 on desktop, 3 on web). Zero means "don't
-  /// create pre-pull backups at all".
   final int? backupRetentionCount;
+
+  /// BCP-47 language code (e.g. `"en"`, `"it"`). Null means "follow the
+  /// system locale". Stored separately from [onboarded] so a user who
+  /// switches languages does not lose their onboarding flag.
+  final String? localeCode;
 
   const AppSettings({
     this.onboarded = false,
     this.backupRetentionCount,
+    this.localeCode,
   });
 
   AppSettings copyWith({
     bool? onboarded,
     Object? backupRetentionCount = _sentinel,
+    Object? localeCode = _sentinel,
   }) =>
       AppSettings(
         onboarded: onboarded ?? this.onboarded,
         backupRetentionCount: identical(backupRetentionCount, _sentinel)
             ? this.backupRetentionCount
             : backupRetentionCount as int?,
+        localeCode: identical(localeCode, _sentinel)
+            ? this.localeCode
+            : localeCode as String?,
       );
 
   Map<String, dynamic> toJson() => {
@@ -38,11 +45,13 @@ class AppSettings {
         'onboarded': onboarded,
         if (backupRetentionCount != null)
           'backupRetentionCount': backupRetentionCount,
+        if (localeCode != null) 'localeCode': localeCode,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
         onboarded: (j['onboarded'] as bool?) ?? false,
         backupRetentionCount: j['backupRetentionCount'] as int?,
+        localeCode: j['localeCode'] as String?,
       );
 }
 

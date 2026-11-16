@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/space_icons.dart';
+import '../l10n/l10n.dart';
 
 /// Single dialog used for both creating a new space and editing an
 /// existing one. The caller supplies [initialName], [initialIcon], the
@@ -81,6 +82,7 @@ class _SpaceDialogState extends State<_SpaceDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     return AlertDialog(
       scrollable: true,
       title: Text(widget.title),
@@ -93,7 +95,7 @@ class _SpaceDialogState extends State<_SpaceDialog> {
             TextField(
               controller: _nameCtrl,
               autofocus: true,
-              decoration: const InputDecoration(labelText: 'Name'),
+              decoration: InputDecoration(labelText: l.spaceDialogNameLabel),
               onSubmitted: (_) => _submit(),
             ),
             const SizedBox(height: 12),
@@ -123,7 +125,7 @@ class _SpaceDialogState extends State<_SpaceDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
+          child: Text(l.commonCancel),
         ),
         FilledButton(
           onPressed: _submit,

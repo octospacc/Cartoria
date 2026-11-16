@@ -7,6 +7,7 @@ import '../../data/bookmarks.dart';
 import '../../data/models.dart';
 import '../../data/store.dart';
 import '../../data/space_icons.dart';
+import '../../l10n/l10n.dart';
 import '../../util/json_format.dart';
 import '../bookmark_import_helpers.dart';
 import '../space_actions.dart';
@@ -24,13 +25,14 @@ class SpaceListScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l = context.l10n;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Spaces'),
+        title: Text(l.spacesTitle),
         actions: [
           IconButton(
             icon: const Icon(Icons.bolt_outlined),
-            tooltip: 'Hooks',
+            tooltip: l.spacesHooksTooltip,
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(
@@ -40,7 +42,7 @@ class SpaceListScreen extends StatelessWidget {
           ),
           IconButton(
             icon: const Icon(Icons.sync),
-            tooltip: 'Sync',
+            tooltip: l.spacesSyncTooltip,
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => SyncScreen(store: store)),
@@ -48,15 +50,12 @@ class SpaceListScreen extends StatelessWidget {
           ),
           IconButton(
             icon: const Icon(Icons.note_add_outlined),
-            // "New from file" rather than "Import": the file creates a new
-            // space, it does not add content to an existing one. The
-            // per-space "Import…" action lives inside each space's menu.
-            tooltip: 'New space from file…',
+            tooltip: l.spacesImportTooltip,
             onPressed: () => _importFile(context),
           ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
-            tooltip: 'Settings',
+            tooltip: l.spacesSettingsTooltip,
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => SettingsScreen(store: store)),
@@ -71,7 +70,8 @@ class SpaceListScreen extends StatelessWidget {
                 ? const _EmptyState()
                 : ListView.separated(
                     itemCount: store.spaces.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    separatorBuilder: (_, __) =>
+                        const Divider(height: 1),
                     itemBuilder: (context, i) {
                       final space = store.spaces[i];
                       return ListTile(
@@ -80,7 +80,7 @@ class SpaceListScreen extends StatelessWidget {
                               style: const TextStyle(fontSize: 20)),
                         ),
                         title: Text(space.name),
-                        subtitle: Text(_subtitleFor(store, space)),
+                        subtitle: Text(_subtitleFor(context, store, space)),
                         trailing: PopupMenuButton<String>(
                           icon: const Icon(Icons.more_vert),
                           onSelected: (v) {
@@ -90,24 +90,29 @@ class SpaceListScreen extends StatelessWidget {
                             if (v == 'edit') _editSpace(context, space);
                             if (v == 'export')
                               exportSpaceZip(context, store, space);
-                            if (v == 'delete') _confirmDelete(context, space);
+                            if (v == 'delete')
+                              _confirmDelete(context, space);
                           },
-                          itemBuilder: (_) => const [
+                          itemBuilder: (_) => [
                             PopupMenuItem(
-                                value: 'stats', child: Text('Statistics')),
+                                value: 'stats',
+                                child: Text(l.spacesStatistics)),
                             PopupMenuItem(
-                                value: 'edit', child: Text('Edit space…')),
+                                value: 'edit',
+                                child: Text(l.spacesEdit)),
                             PopupMenuItem(
-                                value: 'export', child: Text('Export space…')),
+                                value: 'export',
+                                child: Text(l.spacesExport)),
                             PopupMenuItem(
-                                value: 'delete', child: Text('Delete space…')),
+                                value: 'delete',
+                                child: Text(l.spacesDelete)),
                           ],
                         ),
                         onTap: () => Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) =>
-                                SpaceFeedScreen(store: store, space: space),
+                            builder: (_) => SpaceFeedScreen(
+                                store: store, space: space),
                           ),
                         ),
                         onLongPress: () => _confirmDelete(context, space),
@@ -128,10 +133,13 @@ class SpaceListScreen extends StatelessWidget {
   // ── Create / edit / delete ─────────────────────────────────────────────
 
   Future<void> _newSpace(BuildContext context) async {
+    final l = context.l10n;
     final result = await showSpaceDialog(
       context,
       initialName: '',
       initialIcon: kSpaceIcons.first,
+      title: l.spaceDialogNewTitle,
+      confirmLabel: l.commonCreate,
     );
     if (result != null) {
       await store.createSpace(name: result.name, icon: result.icon);
@@ -139,12 +147,13 @@ class SpaceListScreen extends StatelessWidget {
   }
 
   Future<void> _editSpace(BuildContext context, Space space) async {
+    final l = context.l10n;
     final result = await showSpaceDialog(
       context,
       initialName: space.name,
       initialIcon: space.icon,
-      title: 'Edit space',
-      confirmLabel: 'Save',
+      title: l.spaceDialogEditTitle,
+      confirmLabel: l.commonSave,
     );
     if (result == null) return;
     await store.updateSpace(
@@ -155,19 +164,19 @@ class SpaceListScreen extends StatelessWidget {
   }
 
   Future<void> _confirmDelete(BuildContext context, Space space) async {
+    final l = context.l10n;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Delete "${space.name}"?'),
-        content: const Text(
-            'This removes every post and file in this space. Cannot be undone.'),
+        title: Text(l.spacesDeleteTitle(space.name)),
+        content: Text(l.spacesDeleteBody),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+              child: Text(l.commonCancel)),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Delete')),
+              child: Text(l.commonDelete)),
         ],
       ),
     );
@@ -177,6 +186,7 @@ class SpaceListScreen extends StatelessWidget {
   // ── Import file (creates a new space) ──────────────────────────────────
 
   Future<void> _importFile(BuildContext context) async {
+    final l = context.l10n;
     final picked = await pickImportFiles(context);
     if (picked.isEmpty) return;
 
@@ -208,8 +218,6 @@ class SpaceListScreen extends StatelessWidget {
 
     if (!context.mounted) return;
 
-    // Single-file case where the user dismissed the name dialog:
-    // nothing happened, no snackbar needed.
     if (picked.length == 1 && ok == 0 && failed == 0) return;
 
     final String message;
@@ -217,10 +225,10 @@ class SpaceListScreen extends StatelessWidget {
       message = summaries.first;
     } else {
       final parts = <String>[];
-      if (ok > 0) parts.add('$ok file${ok == 1 ? "" : "s"} imported');
-      if (failed > 0) parts.add('$failed failed');
-      if (cancelled > 0) parts.add('$cancelled cancelled');
-      message = parts.isEmpty ? 'Nothing imported' : parts.join(' · ');
+      if (ok > 0) parts.add(l.spaceImportSummaryOk(ok));
+      if (failed > 0) parts.add(l.spaceImportSummaryFailed(failed));
+      if (cancelled > 0) parts.add(l.spaceImportSummaryCancelled(cancelled));
+      message = parts.isEmpty ? l.spaceImportNothing : parts.join(' · ');
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -228,7 +236,7 @@ class SpaceListScreen extends StatelessWidget {
         content: Text(message),
         action: failed > 0
             ? SnackBarAction(
-                label: 'Details',
+                label: l.spaceImportDetails,
                 onPressed: () => showImportErrors(context, errors),
               )
             : null,
@@ -242,19 +250,24 @@ class SpaceListScreen extends StatelessWidget {
     ({Uint8List bytes, String name}) p, {
     required bool autoName,
   }) async {
+    final l = context.l10n;
     final lower = p.name.toLowerCase();
     try {
       if (lower.endsWith('.zip')) {
         final id = await store.importSpaceZip(p.bytes);
         final name = store.spaceById(id)?.name ?? id.substring(0, 8);
-        return (summary: 'Imported "$name"', error: null, cancelled: false);
+        return (
+          summary: l.spaceImportZipResult(name),
+          error: null,
+          cancelled: false,
+        );
       }
       if (lower.endsWith('.html') || lower.endsWith('.htm')) {
         final text = utf8.decode(p.bytes, allowMalformed: true);
         if (text.trimLeft().startsWith('<!---')) {
           return (
             summary: null,
-            error: 'Single-post file — open a space and use Import… there',
+            error: l.spaceImportSinglePost,
             cancelled: false,
           );
         }
@@ -262,7 +275,7 @@ class SpaceListScreen extends StatelessWidget {
         if (file.bookmarks.isEmpty) {
           return (
             summary: null,
-            error: 'No bookmarks found',
+            error: l.spaceImportNoBookmarks,
             cancelled: false,
           );
         }
@@ -271,7 +284,7 @@ class SpaceListScreen extends StatelessWidget {
         String icon;
         if (autoName) {
           name = (file.title ?? _stripExtension(p.name)).trim();
-          if (name.isEmpty) name = 'Imported Bookmarks';
+          if (name.isEmpty) name = l.spaceImportDefaultBookmarksName;
           icon = '📚';
         } else {
           if (!context.mounted) {
@@ -279,10 +292,10 @@ class SpaceListScreen extends StatelessWidget {
           }
           final result = await showSpaceDialog(
             context,
-            initialName: file.title ?? 'Imported Bookmarks',
+            initialName: file.title ?? l.spaceImportDefaultBookmarksName,
             initialIcon: '📚',
-            title: 'Import bookmarks',
-            confirmLabel: 'Import',
+            title: l.spaceImportBookmarksDialogTitle,
+            confirmLabel: l.commonImport,
           );
           if (result == null) {
             return (summary: null, error: null, cancelled: true);
@@ -298,12 +311,16 @@ class SpaceListScreen extends StatelessWidget {
         );
         final count = store.postsForSpace(space.id).length;
         return (
-          summary: 'Imported $count into "$name"',
+          summary: l.spaceImportBookmarksResult(count, name),
           error: null,
           cancelled: false,
         );
       }
-      return (summary: null, error: 'Unsupported file type', cancelled: false);
+      return (
+        summary: null,
+        error: l.spaceImportUnsupported,
+        cancelled: false,
+      );
     } catch (e) {
       return (summary: null, error: friendlyError(e), cancelled: false);
     }
@@ -316,7 +333,9 @@ class SpaceListScreen extends StatelessWidget {
 
   // ── Subtitle ───────────────────────────────────────────────────────────
 
-  String _subtitleFor(VaultStore store, Space space) {
+  String _subtitleFor(
+      BuildContext context, VaultStore store, Space space) {
+    final l = context.l10n;
     final posts = store.postsForSpace(space.id);
     final files = store.filesForSpace(space.id);
 
@@ -333,19 +352,11 @@ class SpaceListScreen extends StatelessWidget {
     }
 
     final parts = <String>[];
-    if (notes > 0) {
-      parts.add('$notes ${notes == 1 ? "note" : "notes"}');
-    }
-    if (bookmarks > 0) {
-      parts.add('$bookmarks ${bookmarks == 1 ? "bookmark" : "bookmarks"}');
-    }
-    if (replies > 0) {
-      parts.add('$replies ${replies == 1 ? "reply" : "replies"}');
-    }
-    if (files.isNotEmpty) {
-      parts.add('${files.length} ${files.length == 1 ? "file" : "files"}');
-    }
-    if (parts.isEmpty) return 'Empty';
+    if (notes > 0) parts.add(l.spacesCountNotes(notes));
+    if (bookmarks > 0) parts.add(l.spacesCountBookmarks(bookmarks));
+    if (replies > 0) parts.add(l.spacesCountReplies(replies));
+    if (files.isNotEmpty) parts.add(l.spacesCountFiles(files.length));
+    if (parts.isEmpty) return l.spacesEmptyLabel;
     return parts.join(' · ');
   }
 }
@@ -356,6 +367,7 @@ class _EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -365,14 +377,14 @@ class _EmptyState extends StatelessWidget {
             Icon(
               Icons.inbox_outlined,
               size: 64,
-              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+              color: theme.colorScheme.onSurfaceVariant
+                  .withValues(alpha: 0.5),
             ),
             const SizedBox(height: 16),
-            Text('No spaces yet', style: theme.textTheme.titleMedium),
+            Text(l.spacesEmpty, style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
-              'Tap + to create your first space, or import from a file '
-              'using the icon at the top.',
+              l.spacesEmptyHint,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),

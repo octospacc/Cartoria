@@ -1,6 +1,7 @@
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
+import '../../../l10n/l10n.dart';
 import '../../../data/models.dart';
 import '../../../data/store.dart';
 import '../../widgets/recall_files_sheet.dart';
@@ -18,28 +19,31 @@ Future<List<String>> pickOrRecallFiles(
 ) async {
   final choice = await showModalBottomSheet<String>(
     context: context,
-    builder: (ctx) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.upload_file),
-            title: const Text('Upload new files'),
-            onTap: () => Navigator.pop(ctx, 'new'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.content_paste),
-            title: const Text('Paste from clipboard'),
-            onTap: () => Navigator.pop(ctx, 'paste'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.folder_open),
-            title: const Text('Recall from drive'),
-            onTap: () => Navigator.pop(ctx, 'existing'),
-          ),
-        ],
-      ),
-    ),
+    builder: (ctx) {
+      final l = ctx.l10n;
+      return SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.upload_file),
+              title: Text(l.attachmentUpload),
+              onTap: () => Navigator.pop(ctx, 'new'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.content_paste),
+              title: Text(l.attachmentPaste),
+              onTap: () => Navigator.pop(ctx, 'paste'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_open),
+              title: Text(l.attachmentRecall),
+              onTap: () => Navigator.pop(ctx, 'existing'),
+            ),
+          ],
+        ),
+      );
+    },
   );
   if (choice == null) return const [];
 
@@ -74,8 +78,7 @@ Future<List<String>> pickOrRecallFiles(
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              '${failedNames.length} file${failedNames.length == 1 ? "" : "s"} '
-              'failed to upload',
+              context.l10n.attachmentUploadFailedCount(failedNames.length),
             ),
           ),
         );
@@ -85,7 +88,7 @@ Future<List<String>> pickOrRecallFiles(
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Upload failed: $e')),
+          SnackBar(content: Text(context.l10n.attachmentUploadFailed(e.toString()))),
         );
       }
       return const [];
@@ -98,11 +101,8 @@ Future<List<String>> pickOrRecallFiles(
       if (files.isEmpty) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'No image or file found in clipboard. On web, try pressing '
-                'Ctrl+V in the composer instead.',
-              ),
+            SnackBar(
+              content: Text(context.l10n.attachmentPasteEmpty),
             ),
           );
         }
@@ -120,7 +120,7 @@ Future<List<String>> pickOrRecallFiles(
         } catch (e) {
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Paste failed: $e')),
+              SnackBar(content: Text(context.l10n.attachmentPasteFailed(e.toString()))),
             );
           }
         }
@@ -140,7 +140,7 @@ Future<List<String>> pickOrRecallFiles(
     if (store.filesForSpace(space.id).isEmpty) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Drive is empty')),
+          SnackBar(content: Text(context.l10n.attachmentDriveEmpty)),
         );
       }
       return const [];

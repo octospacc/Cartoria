@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../data/space_icons.dart';
 import '../../data/store.dart';
+import '../../l10n/l10n.dart';
 
 class OnboardingScreen extends StatefulWidget {
   final VaultStore store;
@@ -40,13 +41,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l = context.l10n;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Welcome'),
+        title: Text(l.onboardingWelcome),
         actions: [
           TextButton(
             onPressed: _busy ? null : _skip,
-            child: const Text('Skip'),
+            child: Text(l.onboardingSkip),
           ),
         ],
       ),
@@ -57,21 +59,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 40),
-              Text('Create your first space',
+              Text(l.onboardingCreateFirstSpace,
                   style: Theme.of(context).textTheme.headlineSmall),
               const SizedBox(height: 8),
-              const Text(
-                  'A space holds its own notes, bookmarks, and files. '
-                  'Spaces are independent — you can add more later.'),
+              Text(l.onboardingBody),
               const SizedBox(height: 24),
               TextField(
                 controller: _name,
                 autofocus: true,
                 textInputAction: TextInputAction.done,
                 onSubmitted: (_) => _create(),
-                decoration: const InputDecoration(
-                  labelText: 'Space name',
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  labelText: l.onboardingSpaceName,
+                  border: const OutlineInputBorder(),
                 ),
               ),
               const SizedBox(height: 16),
@@ -80,7 +80,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 runSpacing: 8,
                 children: kSpaceIcons
                     .map((i) => ChoiceChip(
-                          label: Text(i, style: const TextStyle(fontSize: 22)),
+                          label: Text(i,
+                              style: const TextStyle(fontSize: 22)),
                           selected: _icon == i,
                           showCheckmark: false,
                           onSelected: (_) => setState(() => _icon = i),
@@ -90,9 +91,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               const SizedBox(height: 24),
               FilledButton(
                 onPressed: _busy ? null : _create,
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  child: Text('Create space'),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(l.onboardingCreateSpace),
                 ),
               ),
             ],

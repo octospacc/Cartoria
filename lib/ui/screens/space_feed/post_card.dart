@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../l10n/l10n.dart';
 import '../../../data/models.dart';
 import '../../../data/store.dart';
 import '../../../util/file_category.dart';
@@ -249,23 +250,23 @@ class PostCard extends StatelessWidget {
   }
 
   Future<void> _confirmDelete(BuildContext context) async {
+    final l = context.l10n;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(
           post.kind == PostKind.bookmark
-              ? 'Delete this bookmark?'
-              : 'Delete this note?',
+              ? l.postDeleteBookmark
+              : l.postDeleteNote,
         ),
-        content: const Text(
-            'Attached files stay in the drive. Replies will become top-level. Cannot be undone.'),
+        content: Text(l.postDeleteBody),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+              child: Text(l.commonCancel)),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Delete')),
+              child: Text(l.commonDelete)),
         ],
       ),
     );
@@ -647,7 +648,7 @@ class _PostHeader extends StatelessWidget {
                 const SizedBox(width: 4),
                 Flexible(
                   child: Text(
-                    '· edited $edited',
+                    context.l10n.postEdited(edited),
                     maxLines: 1,
                     softWrap: false,
                     overflow: TextOverflow.ellipsis,
@@ -688,17 +689,16 @@ class _PostHeader extends StatelessWidget {
                 if (v == 'hook-status') onHookStatus?.call();
               },
               itemBuilder: (_) => [
-                const PopupMenuItem(value: 'edit', child: Text('Edit')),
-                const PopupMenuItem(
-                  value: 'source',
-                  child: Text('Show source…'),
-                ),
+                PopupMenuItem(
+                    value: 'edit', child: Text(context.l10n.postEdit)),
+                PopupMenuItem(
+                    value: 'source', child: Text(context.l10n.postSource)),
                 if (onHookStatus != null)
-                  const PopupMenuItem(
-                    value: 'hook-status',
-                    child: Text('Hook status…'),
-                  ),
-                const PopupMenuItem(value: 'delete', child: Text('Delete')),
+                  PopupMenuItem(
+                      value: 'hook-status',
+                      child: Text(context.l10n.postHookStatus)),
+                PopupMenuItem(
+                    value: 'delete', child: Text(context.l10n.postDelete)),
               ],
             ),
           ),
@@ -729,14 +729,14 @@ class _HookIndicator extends StatelessWidget {
             color: theme.colorScheme.onSurfaceVariant,
           ),
         );
-        tooltip = 'Hooks running…';
+        tooltip = context.l10n.postHookRunning;
         break;
       case HookOutcome.success:
         final successColor = theme.brightness == Brightness.dark
             ? Colors.green.shade400
             : Colors.green.shade700;
         visual = Icon(Icons.check_circle, size: 14, color: successColor);
-        tooltip = 'Hooks succeeded';
+        tooltip = context.l10n.postHookSuccess;
         break;
       case HookOutcome.failure:
         visual = Icon(
@@ -744,7 +744,7 @@ class _HookIndicator extends StatelessWidget {
           size: 14,
           color: theme.colorScheme.error,
         );
-        tooltip = 'Hooks failed — tap for details';
+        tooltip = context.l10n.postHookFailed;
         break;
       case HookOutcome.none:
         return const SizedBox.shrink();
@@ -812,7 +812,8 @@ class _PostActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final toggle = _replyToggle(theme);
+    final l = context.l10n;
+    final toggle = _replyToggle(theme, l);
     final actionStyle = TextButton.styleFrom(
       foregroundColor: theme.colorScheme.onSurfaceVariant,
       visualDensity: VisualDensity.compact,
@@ -825,14 +826,14 @@ class _PostActions extends StatelessWidget {
         TextButton.icon(
           onPressed: onReply,
           icon: const Icon(Icons.reply, size: 15),
-          label: const Text('Reply'),
+          label: Text(l.postReply),
           style: actionStyle,
         ),
         const SizedBox(width: 2),
         TextButton.icon(
           onPressed: onQuote,
           icon: const Icon(Icons.format_quote, size: 15),
-          label: const Text('Quote'),
+          label: Text(l.postQuote),
           style: actionStyle,
         ),
         if (toggle != null) ...[
@@ -843,7 +844,7 @@ class _PostActions extends StatelessWidget {
     );
   }
 
-  Widget? _replyToggle(ThemeData theme) {
+  Widget? _replyToggle(ThemeData theme, AppLocalizations l) {
     if (hideReplyToggle) return null;
     if (childCount == 0) return null;
 
@@ -859,15 +860,13 @@ class _PostActions extends StatelessWidget {
         return TextButton(
           onPressed: onToggleReplies,
           style: style,
-          child: const Text('Show fewer'),
+          child: Text(l.postShowFewer),
         );
       }
       return TextButton(
         onPressed: onToggleReplies,
         style: style,
-        child: Text(
-          'Hide $childCount ${childCount == 1 ? "reply" : "replies"}',
-        ),
+        child: Text(l.postHideReplies(childCount)),
       );
     }
 
@@ -878,18 +877,14 @@ class _PostActions extends StatelessWidget {
       return TextButton(
         onPressed: onToggleReplies,
         style: style,
-        child: Text(
-          'Show $hidden more ${hidden == 1 ? "reply" : "replies"}',
-        ),
+        child: Text(l.postShowMoreReplies(hidden)),
       );
     }
 
     return TextButton(
       onPressed: onToggleReplies,
       style: style,
-      child: Text(
-        '$childCount ${childCount == 1 ? "reply" : "replies"}',
-      ),
+      child: Text(l.postRepliesCount(childCount)),
     );
   }
 }

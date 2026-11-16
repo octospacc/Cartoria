@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../data/bookmarks.dart';
 import '../data/store.dart';
 

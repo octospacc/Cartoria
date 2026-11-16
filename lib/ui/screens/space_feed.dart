@@ -20,8 +20,9 @@ import 'drive.dart';
 import 'space_feed/attachment_picker.dart';
 import 'space_feed/composer.dart';
 import 'space_feed/post_card.dart';
-import '../../data/composer_draft.dart';
 import 'space_feed/composer_draft_controller.dart';
+import '../../data/composer_draft.dart';
+import '../../l10n/l10n.dart';
 
 /// Number of direct replies shown under a top-level post by default.
 const int kPreviewReplyCount = 2;
@@ -106,24 +107,22 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
             !selected.contains(p.id))
         .length;
 
+    final l = context.l10n;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(
-          'Delete ${selected.length} '
-          '${selected.length == 1 ? "post" : "posts"}?',
-        ),
+        title: Text(l.feedDeleteSelectedTitle(selected.length)),
         content: Text(
-          'This cannot be undone.'
-          '${orphaned > 0 ? "\n\n$orphaned ${orphaned == 1 ? "reply" : "replies"} will become top-level." : ""}',
+          '${l.feedDeleteSelectedBody}'
+          '${orphaned > 0 ? "\n\n${l.feedDeleteSelectedOrphaned(orphaned)}" : ""}',
         ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+              child: Text(l.commonCancel)),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Delete')),
+              child: Text(l.commonDelete)),
         ],
       ),
     );
@@ -246,9 +245,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   // ── Space actions ──────────────────────────────────────────────────────
 
   Future<void> _editSpace() async {
-    // was:
-    //   initialName: widget.space.name,
-    //   initialIcon: widget.space.icon,
     final result = await showSpaceDialog(
       context,
       initialName: _space.name,
@@ -265,11 +261,12 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   }
 
   Future<void> _importFile() async {
+    final l = context.l10n;
     final picked = await pickImportFiles(context);
     if (picked.isEmpty) return;
 
     final summaries = <String>[];
-    final errorMessages = <String>[];
+    final errors = <String>[];
     var ok = 0;
     var failed = 0;
 
@@ -277,7 +274,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       final result = await _importOneFile(p);
       if (result.error != null) {
         failed++;
-        errorMessages.add('${p.name}: ${result.error}');
+        errors.add('${p.name}: ${result.error}');
       } else {
         ok++;
         final s = result.summary;
@@ -289,13 +286,12 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
 
     final String message;
     if (picked.length == 1 && ok == 1 && summaries.isNotEmpty) {
-      // Single file: preserve the detailed per-format summary.
       message = summaries.first;
     } else {
       final parts = <String>[];
-      if (ok > 0) parts.add('$ok file${ok == 1 ? "" : "s"} imported');
-      if (failed > 0) parts.add('$failed failed');
-      message = parts.isEmpty ? 'Nothing imported' : parts.join(' · ');
+      if (ok > 0) parts.add(l.feedImportFilesSummary(ok));
+      if (failed > 0) parts.add(l.spaceImportSummaryFailed(failed));
+      message = parts.isEmpty ? l.spaceImportNothing : parts.join(' · ');
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -303,8 +299,8 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         content: Text(message),
         action: failed > 0
             ? SnackBarAction(
-                label: 'Details',
-                onPressed: () => showImportErrors(context, errorMessages),
+                label: l.spaceImportDetails,
+                onPressed: () => showImportErrors(context, errors),
               )
             : null,
       ),
@@ -314,6 +310,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   Future<({String? summary, String? error})> _importOneFile(
     ({Uint8List bytes, String name}) p,
   ) async {
+    final l = context.l10n;
     final lower = p.name.toLowerCase();
     try {
       if (lower.endsWith('.zip')) {
@@ -330,14 +327,11 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
             spaceId: widget.space.id,
             source: text,
           );
-          return (summary: 'Post imported', error: null);
+          return (summary: l.feedImportPost, error: null);
         }
         final file = BookmarkFileParser.parse(text);
         if (file.bookmarks.isEmpty) {
-          return (
-            summary: null,
-            error: 'No bookmarks found in file',
-          );
+          return (summary: null, error: l.feedImportBookmarksFound);
         }
         final r = await widget.store.importBookmarksIntoSpace(
           spaceId: widget.space.id,
@@ -345,13 +339,14 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         );
         return (summary: bookmarkImportSummary(r), error: null);
       }
-      return (summary: null, error: 'Unsupported file type');
+      return (summary: null, error: l.feedUnsupportedFile);
     } catch (e) {
       return (summary: null, error: friendlyError(e));
     }
   }
 
   Future<void> _pastePostSource() async {
+    final l = context.l10n;
     final post = await showDialog<Post>(
       context: context,
       builder: (_) => _PastePostSourceDialog(
@@ -360,28 +355,25 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       ),
     );
     if (post == null || !mounted) return;
-    // VaultStore.importPostFromSource already called notifyListeners,
-    // so the feed updates on the next frame. Confirmation is just UX.
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Post imported')),
+      SnackBar(content: Text(l.feedImportPost)),
     );
   }
 
   Future<void> _deleteSpace() async {
+    final l = context.l10n;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        // was: Text('Delete "${widget.space.name}"?')
-        title: Text('Delete "${_space.name}"?'),
-        content: const Text(
-            'This removes every post and file in this space. Cannot be undone.'),
+        title: Text(l.spacesDeleteTitle(_space.name)),
+        content: Text(l.spacesDeleteBody),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+              child: Text(l.commonCancel)),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Delete')),
+              child: Text(l.commonDelete)),
         ],
       ),
     );
@@ -869,9 +861,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
 
   Widget _buildFeed(List<_PostNode> roots, {required bool searchMode}) {
     if (roots.isEmpty) {
-      return _emptyState(searchMode
-          ? 'No results for "${_searchCtrl.text.trim()}"'
-          : 'Nothing here yet. Write a note or save a link.');
+      return _emptyState(searchMode ? context.l10n.feedSearchNoResults(_searchCtrl.text.trim()) : context.l10n.feedEmpty);
     }
     final list = ScrollablePositionedList.builder(
       itemScrollController: searchMode ? _searchScroll : _feedScroll,
@@ -900,7 +890,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     }
     final matches = _computeMatches(query);
     if (matches.isEmpty) {
-      return _emptyState('No results for "$query"');
+      return _emptyState(context.l10n.feedSearchNoResults(query));
     }
     final visible = _withAncestors(matches);
     final roots = _buildTree(visible: visible);
@@ -913,23 +903,25 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   }
 
   PreferredSizeWidget _buildAppBar() {
+    final l = context.l10n;
     if (_selectionMode) {
       return AppBar(
         leading: IconButton(
           icon: const Icon(Icons.close),
-          tooltip: 'Exit selection',
+          tooltip: l.feedExitSelection,
           onPressed: _exitSelectionMode,
         ),
         title: Text(
           _selectedPostIds.isEmpty
-              ? 'Select posts'
-              : '${_selectedPostIds.length} selected',
+              ? l.feedSelectPosts
+              : l.feedSelectedCount(_selectedPostIds.length),
         ),
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_outline),
-            tooltip: 'Delete selected',
-            onPressed: _selectedPostIds.isEmpty ? null : _deleteSelectedPosts,
+            tooltip: l.feedDeleteSelected,
+            onPressed:
+                _selectedPostIds.isEmpty ? null : _deleteSelectedPosts,
           ),
         ],
       );
@@ -939,7 +931,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       leading: _searchActive
           ? IconButton(
               icon: const Icon(Icons.arrow_back),
-              tooltip: 'Close search',
+              tooltip: l.feedSearchClose,
               onPressed: () => setState(() {
                 _searchCtrl.clear();
                 _searchActive = false;
@@ -951,8 +943,8 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
               controller: _searchCtrl,
               autofocus: true,
               textInputAction: TextInputAction.search,
-              decoration: const InputDecoration(
-                hintText: 'Search this space…',
+              decoration: InputDecoration(
+                hintText: l.feedSearchHint,
                 border: InputBorder.none,
               ),
               onChanged: (_) => setState(() {}),
@@ -963,24 +955,24 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
               if (_searchCtrl.text.isNotEmpty)
                 IconButton(
                   icon: const Icon(Icons.close),
-                  tooltip: 'Clear',
+                  tooltip: l.feedSearchClear,
                   onPressed: () => setState(_searchCtrl.clear),
                 ),
             ]
           : [
               IconButton(
                 icon: const Icon(Icons.checklist),
-                tooltip: 'Select',
+                tooltip: l.feedSelect,
                 onPressed: () => _enterSelectionMode(),
               ),
               IconButton(
                 icon: const Icon(Icons.search),
-                tooltip: 'Search',
+                tooltip: l.feedSearchHint,
                 onPressed: () => setState(() => _searchActive = true),
               ),
               IconButton(
                 icon: const Icon(Icons.folder),
-                tooltip: 'Drive',
+                tooltip: l.feedDrive,
                 onPressed: () => Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -988,12 +980,9 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                       store: widget.store,
                       space: _space,
                       onViewPostInFeed: (postId) {
-                        // Pop the drive, then scroll to the post after the pop
-                        // animation settles. The drive is always pushed from the
-                        // feed, so `Navigator.pop` here unambiguously pops the
-                        // drive route.
                         Navigator.of(context).pop();
-                        Future.delayed(const Duration(milliseconds: 400), () {
+                        Future.delayed(
+                            const Duration(milliseconds: 400), () {
                           if (mounted) _scrollToPost(postId);
                         });
                       },
@@ -1014,16 +1003,20 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                   }
                   if (v == 'delete') _deleteSpace();
                 },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'stats', child: Text('Statistics')),
-                  PopupMenuItem(value: 'edit', child: Text('Edit space…')),
-                  PopupMenuItem(value: 'import', child: Text('Import…')),
+                itemBuilder: (_) => [
                   PopupMenuItem(
-                    value: 'import-source',
-                    child: Text('Paste post source…'),
-                  ),
-                  PopupMenuItem(value: 'export', child: Text('Export space…')),
-                  PopupMenuItem(value: 'delete', child: Text('Delete space…')),
+                      value: 'stats', child: Text(l.spacesStatistics)),
+                  PopupMenuItem(
+                      value: 'edit', child: Text(l.spacesEdit)),
+                  PopupMenuItem(
+                      value: 'import', child: Text(l.feedMenuImport)),
+                  PopupMenuItem(
+                      value: 'import-source',
+                      child: Text(l.feedMenuImportSource)),
+                  PopupMenuItem(
+                      value: 'export', child: Text(l.spacesExport)),
+                  PopupMenuItem(
+                      value: 'delete', child: Text(l.spacesDelete)),
                 ],
               ),
             ],
@@ -1214,6 +1207,7 @@ class _SearchBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     return Container(
       width: double.infinity,
       color: theme.colorScheme.surfaceContainerHighest,
@@ -1223,10 +1217,7 @@ class _SearchBanner extends StatelessWidget {
           Icon(Icons.search,
               size: 14, color: theme.colorScheme.onSurfaceVariant),
           const SizedBox(width: 6),
-          Text(
-            '$count ${count == 1 ? "match" : "matches"}',
-            style: theme.textTheme.bodySmall,
-          ),
+          Text(l.feedSearchMatches(count), style: theme.textTheme.bodySmall),
         ],
       ),
     );
@@ -1282,6 +1273,7 @@ class _PastePostSourceDialogState extends State<_PastePostSourceDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     final mono = theme.textTheme.bodySmall?.copyWith(
       fontFamily: 'monospace',
       fontSize: 12,
@@ -1289,7 +1281,7 @@ class _PastePostSourceDialogState extends State<_PastePostSourceDialog> {
 
     return EscapeBack(
       child: AlertDialog(
-        title: const Text('Paste post source'),
+        title: Text(l.feedPasteDialogTitle),
         content: SizedBox(
           width: 600,
           child: Column(
@@ -1304,10 +1296,7 @@ class _PastePostSourceDialogState extends State<_PastePostSourceDialog> {
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
-                  'Paste a Cartoria post file — the same format as '
-                  'entries/<id>.html: a <!--- … ---> JSON frontmatter '
-                  'block followed by the HTML body. A fresh ID is '
-                  'generated if none is present.',
+                  l.feedPasteDialogHint,
                   style: theme.textTheme.bodySmall,
                 ),
               ),
@@ -1338,9 +1327,14 @@ class _PastePostSourceDialogState extends State<_PastePostSourceDialog> {
                   keyboardType: TextInputType.multiline,
                   textAlignVertical: TextAlignVertical.top,
                   decoration: const InputDecoration(
-                    hintText: '<!---\n{\n  "kind": "note",\n'
+                    hintText: '<!---\n'
+                        '{\n'
+                        '  "kind": "note",\n'
                         '  "created": "2026-01-15T12:00:00.000Z"\n'
-                        '}\n--->\n\n<p>Hello</p>',
+                        '}\n'
+                        '--->\n'
+                        '\n'
+                        '<p>Hello</p>',
                     border: OutlineInputBorder(),
                     isDense: true,
                   ),
@@ -1352,7 +1346,7 @@ class _PastePostSourceDialogState extends State<_PastePostSourceDialog> {
         actions: [
           TextButton(
             onPressed: _busy ? null : () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            child: Text(l.commonCancel),
           ),
           FilledButton(
             onPressed: _busy ? null : _import,
@@ -1362,7 +1356,7 @@ class _PastePostSourceDialogState extends State<_PastePostSourceDialog> {
                     height: 16,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Text('Import'),
+                : Text(l.commonImport),
           ),
         ],
       ),

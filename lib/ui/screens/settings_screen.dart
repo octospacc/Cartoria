@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../data/store.dart';
+import '../../l10n/l10n.dart';
 import '../../platform/file_save.dart';
 import '../../util/format.dart';
 import '../widgets/escape_back.dart';
@@ -19,12 +20,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<BackupInfo> _backups = const [];
   bool _loadingBackups = true;
   bool _clearing = false;
-
-  /// Name of the backup currently being exported or deleted. While
-  /// set, other rows' action buttons are disabled — the underlying
-  /// operations are quick but the export can hold a native save dialog
-  /// open, and disallowing concurrent actions on other rows avoids the
-  /// "two spinners, two dialogs" case.
   String? _busyName;
 
   @override
@@ -56,20 +51,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) return;
       setState(() => _loadingBackups = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not list backups: $e')),
+        SnackBar(
+          content:
+              Text(context.l10n.settingsListBackupsFailed(e.toString())),
+        ),
       );
     }
   }
 
   Future<void> _saveRetention() async {
+    final l = context.l10n;
     final raw = _retentionCtrl.text.trim();
     int? count;
     if (raw.isNotEmpty) {
       count = int.tryParse(raw);
       if (count == null || count < 0) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Retention must be a non-negative integer')),
+          SnackBar(content: Text(l.settingsRetentionInvalid)),
         );
         return;
       }
@@ -81,10 +79,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         SnackBar(
           content: Text(
             count == null
-                ? 'Retention reset to default'
+                ? l.settingsRetentionReset
                 : count == 0
-                    ? 'Pre-pull backups disabled'
-                    : 'Retention set to $count',
+                    ? l.settingsRetentionDisabled
+                    : l.settingsRetentionSaved(count),
           ),
         ),
       );
@@ -92,29 +90,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to save: $e')),
+        SnackBar(content: Text(l.settingsSaveFailed(e.toString()))),
       );
     }
   }
 
   Future<void> _clearAllBackups() async {
+    final l = context.l10n;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(
-            'Clear ${_backups.length} backup${_backups.length == 1 ? "" : "s"}?'),
-        content: const Text(
-          'Deletes every pre-pull backup. Current vault data is not '
-          'affected. This cannot be undone.',
-        ),
+        title: Text(l.settingsBackupsClearTitle(_backups.length)),
+        content: Text(l.settingsBackupsClearBody),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+            child: Text(l.commonCancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Clear'),
+            child: Text(l.commonClear),
           ),
         ],
       ),
@@ -139,7 +134,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Export failed: $e')),
+          SnackBar(
+            content:
+                Text(context.l10n.settingsExportFailed(e.toString())),
+          ),
         );
       }
     } finally {
@@ -148,22 +146,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _deleteBackup(BackupInfo b) async {
+    final l = context.l10n;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Delete "${b.name}"?'),
-        content: const Text(
-          'Deletes this backup. Other backups and current vault data '
-          'are not affected.',
-        ),
+        title: Text(l.settingsBackupDeleteTitle(b.name)),
+        content: Text(l.settingsBackupDeleteBody),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+            child: Text(l.commonCancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete'),
+            child: Text(l.commonDelete),
           ),
         ],
       ),
@@ -178,7 +174,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Delete failed: $e')),
+          SnackBar(
+            content:
+                Text(context.l10n.settingsDeleteFailed(e.toString())),
+          ),
         );
       }
     } finally {
@@ -189,154 +188,197 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final totalSize = _backups.fold<int>(0, (sum, b) => sum + b.sizeBytes);
+    final l = context.l10n;
+    final totalSize =
+        _backups.fold<int>(0, (sum, b) => sum + b.sizeBytes);
     final effective = widget.store.effectiveBackupRetentionCount;
 
     return EscapeBack(
-        child: Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Text(
-            'BACKUPS',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              letterSpacing: 1.2,
+      child: Scaffold(
+        appBar: AppBar(title: Text(l.settingsTitle)),
+        body: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            _sectionHeader(theme, l.settingsLanguageSection),
+            const SizedBox(height: 8),
+            Text(
+              l.settingsLanguageDescription,
+              style: theme.textTheme.bodySmall,
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'A backup of the vault is created before each pull, so a bad '
-            'pull cannot destroy unpushed local changes. Old backups are '
-            'deleted automatically beyond the retention limit.',
-            style: theme.textTheme.bodySmall,
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _retentionCtrl,
-            keyboardType: TextInputType.number,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            decoration: InputDecoration(
-              labelText: 'Retention (number of backups)',
-              hintText: 'Default: $effective',
-              helperText: 'Leave empty to use the default. Set to 0 to '
-                  'disable pre-pull backups entirely.',
-              border: const OutlineInputBorder(),
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.check, size: 18),
-                tooltip: 'Save',
-                onPressed: _saveRetention,
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String?>(
+              value: widget.store.locale?.languageCode,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                isDense: true,
               ),
+              items: [
+                DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text(l.settingsLanguageSystem),
+                ),
+                DropdownMenuItem<String?>(
+                  value: 'en',
+                  child: Text(l.settingsLanguageEnglish),
+                ),
+                DropdownMenuItem<String?>(
+                  value: 'it',
+                  child: Text(l.settingsLanguageItalian),
+                ),
+              ],
+              onChanged: (code) async {
+                await widget.store.setLocale(code);
+              },
             ),
-            onSubmitted: (_) => _saveRetention(),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Currently keeping up to $effective '
-            'backup${effective == 1 ? "" : "s"}',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
+            const SizedBox(height: 24),
+            _sectionHeader(theme, l.settingsBackupsSection),
+            const SizedBox(height: 8),
+            Text(
+              l.settingsBackupsDescription,
+              style: theme.textTheme.bodySmall,
             ),
-          ),
-          const SizedBox(height: 24),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _loadingBackups
-                      ? 'Loading backups…'
-                      : '${_backups.length} backup'
-                          '${_backups.length == 1 ? "" : "s"} · '
-                          '${formatBytes(totalSize)}',
-                  style: theme.textTheme.titleSmall,
+            const SizedBox(height: 16),
+            TextField(
+              controller: _retentionCtrl,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: InputDecoration(
+                labelText: l.settingsRetentionLabel,
+                helperText: l.settingsRetentionHelper,
+                border: const OutlineInputBorder(),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.check, size: 18),
+                  tooltip: l.settingsRetentionSaveTooltip,
+                  onPressed: _saveRetention,
                 ),
               ),
-              if (_backups.isNotEmpty)
-                TextButton.icon(
-                  onPressed:
-                      _clearing || _busyName != null ? null : _clearAllBackups,
-                  icon: _clearing
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.delete_outline, size: 18),
-                  label: const Text('Clear all'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: theme.colorScheme.error,
+              onSubmitted: (_) => _saveRetention(),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              l.settingsRetentionCurrent(effective),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _loadingBackups
+                        ? l.settingsBackupsLoading
+                        : '${l.settingsBackupsCount(_backups.length)} · '
+                            '${formatBytes(totalSize)}',
+                    style: theme.textTheme.titleSmall,
                   ),
                 ),
-            ],
-          ),
-          if (_loadingBackups)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 16),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (_backups.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Text(
-                'No backups yet. Backups are created automatically before '
-                'each pull.',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                  fontStyle: FontStyle.italic,
+                if (_backups.isNotEmpty)
+                  TextButton.icon(
+                    onPressed: _clearing || _busyName != null
+                        ? null
+                        : _clearAllBackups,
+                    icon: _clearing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2),
+                          )
+                        : const Icon(Icons.delete_outline, size: 18),
+                    label: Text(l.settingsBackupsClearAll),
+                    style: TextButton.styleFrom(
+                      foregroundColor: theme.colorScheme.error,
+                    ),
+                  ),
+              ],
+            ),
+            if (_loadingBackups)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_backups.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Text(
+                  l.settingsBackupsEmpty,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              )
+            else
+              Card(
+                margin: const EdgeInsets.only(top: 8),
+                child: Column(
+                  children: _backups.map((b) {
+                    final isBusy = _busyName == b.name;
+                    final anyBusy = _busyName != null;
+                    return ListTile(
+                      dense: true,
+                      leading:
+                          const Icon(Icons.archive_outlined, size: 20),
+                      title:
+                          Text(b.name, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(
+                        '${formatBytes(b.sizeBytes)} · '
+                        '${_formatDate(b.modified)}',
+                      ),
+                      trailing: isBusy
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2),
+                            )
+                          : Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(
+                                      Icons.download_outlined,
+                                      size: 20),
+                                  tooltip:
+                                      l.settingsBackupsExportTooltip,
+                                  visualDensity:
+                                      VisualDensity.compact,
+                                  onPressed: anyBusy
+                                      ? null
+                                      : () => _exportBackup(b),
+                                ),
+                                IconButton(
+                                  icon: const Icon(
+                                      Icons.delete_outline,
+                                      size: 20),
+                                  tooltip:
+                                      l.settingsBackupsDeleteTooltip,
+                                  visualDensity:
+                                      VisualDensity.compact,
+                                  onPressed: anyBusy
+                                      ? null
+                                      : () => _deleteBackup(b),
+                                ),
+                              ],
+                            ),
+                    );
+                  }).toList(),
                 ),
               ),
-            )
-          else
-            Card(
-              margin: const EdgeInsets.only(top: 8),
-              child: Column(
-                children: _backups.map((b) {
-                  final isBusy = _busyName == b.name;
-                  final anyBusy = _busyName != null;
-                  return ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.archive_outlined, size: 20),
-                    title: Text(b.name, overflow: TextOverflow.ellipsis),
-                    subtitle: Text(
-                      '${formatBytes(b.sizeBytes)} · '
-                      '${_formatDate(b.modified)}',
-                    ),
-                    trailing: isBusy
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.download_outlined,
-                                    size: 20),
-                                tooltip: 'Export',
-                                visualDensity: VisualDensity.compact,
-                                onPressed:
-                                    anyBusy ? null : () => _exportBackup(b),
-                              ),
-                              IconButton(
-                                icon:
-                                    const Icon(Icons.delete_outline, size: 20),
-                                tooltip: 'Delete',
-                                visualDensity: VisualDensity.compact,
-                                onPressed:
-                                    anyBusy ? null : () => _deleteBackup(b),
-                              ),
-                            ],
-                          ),
-                  );
-                }).toList(),
-              ),
-            ),
-        ],
+          ],
+        ),
       ),
-    ));
+    );
   }
+
+  Widget _sectionHeader(ThemeData theme, String text) => Text(
+        text,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+          letterSpacing: 1.2,
+        ),
+      );
 
   String _formatDate(DateTime t) {
     final local = t.toLocal();
