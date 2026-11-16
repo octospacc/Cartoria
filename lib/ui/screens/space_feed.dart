@@ -413,7 +413,20 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   // ── Compose / edit / delete posts ──────────────────────────────────────
 
   List<String> _extractTags(String body) {
-    final re = RegExp(r'(?:^|\s)#([A-Za-z0-9_]+)');
+    // `\p{L}` = any Unicode letter (includes à, è, é, ñ, ü, 日本語, …),
+    // `\p{N}` = any Unicode decimal digit, `\p{M}` = combining marks
+    // (covers decomposed forms like `e` + U+0301, which enter when text
+    // is pasted from sources that use NFD). Underscore is explicit
+    // because it's a common hashtag character but isn't a letter.
+    //
+    // `unicode: true` enables the `\p{…}` property escapes. Without it
+    // the pattern is treated as ECMAScript non-unicode and `\p{L}`
+    // would match a literal `p`, `{`, `L`, `}` sequence — silently
+    // broken.
+    final re = RegExp(
+      r'(?:^|\s)#([\p{L}\p{N}\p{M}_]+)',
+      unicode: true,
+    );
     return re.allMatches(body).map((m) => m.group(1)!).toSet().toList();
   }
 
