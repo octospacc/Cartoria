@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -58,6 +59,9 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   bool _sending = false;
   bool _searchActive = false;
   bool _skipHooks = false;
+
+  String? _highlightedPostId;
+  Timer? _highlightTimer;
 
   late final ComposerDraftController _inlineDraftCtrl;
   bool _loadingInlineDraft = false;
@@ -162,6 +166,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     _urlCtrl.dispose();
     _searchCtrl.dispose();
     _postKeys.clear();
+    _highlightTimer?.cancel();
     super.dispose();
   }
 
@@ -200,6 +205,11 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     }
     if (rootIndex == null) return;
     if (token != _scrollToken) return;
+
+    // Highlight starts before the scroll so the accent is already
+    // animating in by the time the post arrives in view. Total
+    // visible window after a ~500 ms scroll is still > 900 ms.
+    _flashHighlight(postId);
 
     var changed = false;
     setState(() {
@@ -243,6 +253,20 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         } catch (_) {}
       }
     }
+  }
+
+  /// Briefly highlights [postId] so the user can visually locate the
+  /// post they just scrolled to (via quote tap, drive-file usage, or a
+  /// quoted-back preview). The highlight animates in immediately and
+  /// fades out ~1.4 s later. Cancels any previous highlight.
+  void _flashHighlight(String postId) {
+    _highlightTimer?.cancel();
+    setState(() => _highlightedPostId = postId);
+    _highlightTimer = Timer(const Duration(milliseconds: 1400), () {
+      if (mounted && _highlightedPostId == postId) {
+        setState(() => _highlightedPostId = null);
+      }
+    });
   }
 
   // ── Space actions ──────────────────────────────────────────────────────
@@ -875,7 +899,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       onEdit: () => _edit(post),
       onDelete: () => widget.store.deletePost(widget.space.id, post.id),
       onQuoteTap: (searchMode || _selectionMode) ? null : _scrollToPost,
-      // New:
+      isHighlighted: _highlightedPostId == post.id,
       selectionMode: _selectionMode,
       isSelected: _selectedPostIds.contains(post.id),
       onCardTap: _selectionMode ? () => _toggleSelection(post.id) : null,
@@ -932,6 +956,10 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   Widget _buildQuotesSection(List<Post> quotes) {
     final theme = Theme.of(context);
     final l = context.l10n;
+    // Tapping a quote preview navigates the feed, which conflicts with
+    // multi-select and search. Mirror the same gate as `onQuoteTap`
+    // above.
+    final interactive = !_selectionMode && !_searchActive;
     return Padding(
       padding: const EdgeInsets.only(left: 16, top: 6),
       child: Container(
@@ -959,7 +987,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                   store: widget.store,
                   space: widget.space,
                   quotingPost: q,
-                  onTap: () => _scrollToPost(q.id),
+                  onTap: interactive ? () => _scrollToPost(q.id) : null,
                 )),
           ],
         ),

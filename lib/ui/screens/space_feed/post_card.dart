@@ -55,6 +55,11 @@ class PostCard extends StatelessWidget {
   /// pre-selected. In selection mode, pass null (already in mode).
   final VoidCallback? onCardLongPress;
 
+  /// True while the post is the target of a just-completed scroll-to.
+  /// Renders a brief accent that fades in/out via an animated container.
+  /// Independent of [isSelected], which is the multi-select state.
+  final bool isHighlighted;
+
   const PostCard({
     super.key,
     required this.store,
@@ -77,6 +82,7 @@ class PostCard extends StatelessWidget {
     this.quoteCount = 0,
     this.quotesExpanded = false,
     this.onToggleQuotes,
+    this.isHighlighted = false,
   });
 
   @override
@@ -104,15 +110,31 @@ class PostCard extends StatelessWidget {
     }
 
     // Border + background for the selection state.
-    final borderColor = isSelected
-        ? theme.colorScheme.primary
-        : theme.colorScheme.outlineVariant.withValues(alpha: 0.6);
-    final backgroundColor = isSelected
-        ? Color.alphaBlend(
-            theme.colorScheme.primary.withValues(alpha: 0.08),
-            theme.colorScheme.surfaceContainerLow,
-          )
-        : theme.colorScheme.surfaceContainerLow;
+    final Color borderColor;
+    final Color backgroundColor;
+    final double borderWidth;
+    if (isSelected) {
+      borderColor = theme.colorScheme.primary;
+      backgroundColor = Color.alphaBlend(
+        theme.colorScheme.primary.withValues(alpha: 0.08),
+        theme.colorScheme.surfaceContainerLow,
+      );
+      borderWidth = 2;
+    } else if (isHighlighted) {
+      // Slightly stronger than selection and self-fading; the two
+      // never occur simultaneously because selection is entered by a
+      // deliberate action that clears the scroll flash.
+      borderColor = theme.colorScheme.primary;
+      backgroundColor = Color.alphaBlend(
+        theme.colorScheme.primary.withValues(alpha: 0.14),
+        theme.colorScheme.surfaceContainerLow,
+      );
+      borderWidth = 2;
+    } else {
+      borderColor = theme.colorScheme.outlineVariant.withValues(alpha: 0.6);
+      backgroundColor = theme.colorScheme.surfaceContainerLow;
+      borderWidth = 1;
+    }
 
     return Material(
       color: Colors.transparent,
@@ -125,13 +147,15 @@ class PostCard extends StatelessWidget {
           // internal buttons, links, quote cards, media are all disabled
           // so nothing competes with the toggle.
           ignoring: selectionMode,
-          child: Container(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
             decoration: BoxDecoration(
               color: backgroundColor,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: borderColor,
-                width: isSelected ? 2 : 1,
+                width: borderWidth,
               ),
             ),
             child: Padding(
