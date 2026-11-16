@@ -75,11 +75,15 @@ class ComposerDraftController extends ChangeNotifier {
 
   /// Explicitly discards the draft and any pending save.
   Future<void> clear() async {
+    final hadState = _pendingDraft != null ||
+        _hasRestoredDraft ||
+        _lastSavedAt != null;
     _saveDebounce?.cancel();
     _pendingDraft = null;
     _hasRestoredDraft = false;
     _restoredDraft = null;
     _lastSavedAt = null;
+    if (!hadState) return;
     try {
       await store.deleteComposerDraft(fieldKey);
     } catch (e) {

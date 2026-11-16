@@ -550,7 +550,12 @@ class _ComposerSheetState extends State<ComposerSheet> {
     // (in which case the parent's `deleteComposerDraft` is authoritative
     // and a save here would race it).
     if (!_submitting && !_loadingDraft) {
-      _draftCtrl.saveNow(_buildDraft());
+      final draft = _buildDraft();
+      if (_isSameAsBaseline(draft)) {
+        _draftCtrl.clear();
+      } else {
+        _draftCtrl.saveNow(draft);
+      }
     }
     _draftCtrl.dispose();
     _body.dispose();
@@ -615,9 +620,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
         _thumbnail = meta.image;
       }
     });
-    if (!_loadingDraft) {
-      _draftCtrl.scheduleSave(_buildDraft());
-    }
+    _maybeSaveDraft();
     if (meta == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(context.l10n.composerMetadataFetchFailed)),
@@ -982,15 +985,12 @@ class _ComposerSheetState extends State<ComposerSheet> {
   }
 
   void _onAnyFieldChanged() {
-    if (_loadingDraft) return;
-    _draftCtrl.scheduleSave(_buildDraft());
+    _maybeSaveDraft();
   }
 
   void _updateSheetState(VoidCallback fn) {
     setState(fn);
-    if (!_loadingDraft) {
-      _draftCtrl.scheduleSave(_buildDraft());
-    }
+    _maybeSaveDraft();
   }
 
   ComposerDraft _buildDraft() {
@@ -1009,9 +1009,52 @@ class _ComposerSheetState extends State<ComposerSheet> {
     );
   }
 
+  /// True when [draft] matches the baseline state — the post's original
+  /// content for edits, or the empty state for new / reply / quote.
+  ///
+  /// A draft matching the baseline is not "unsaved changes"; it's the
+  /// starting point. Persisting it would make the "Unsaved draft" banner
+  /// appear on every reopen, with nothing actually modified.
+  bool _isSameAsBaseline(ComposerDraft draft) {
+    final existing = widget.editing;
+    if (existing != null) {
+      return draft.kind == existing.kind &&
+          draft.body == bodyFromHtml(existing.body) &&
+          (draft.url ?? '') == (existing.url ?? '') &&
+          (draft.title ?? '') == (existing.title ?? '') &&
+          (draft.description ?? '') == (existing.description ?? '') &&
+          draft.thumbnail == existing.thumbnail &&
+          listEquals(draft.fileIds, existing.fileIds) &&
+          draft.postDateTime == null &&
+          !draft.skipHooks;
+    }
+    return draft.isEmpty;
+  }
+
+  /// Persists the current composer state as a draft, or clears any
+  /// existing draft when the state matches the baseline. Also cancels
+  /// the previous `scheduleSave` when at baseline, so a pending flush
+  /// from a since-reverted change can't resurrect the draft.
+  void _maybeSaveDraft() {
+    if (_loadingDraft) return;
+    final draft = _buildDraft();
+    if (_isSameAsBaseline(draft)) {
+      _draftCtrl.clear();
+    } else {
+      _draftCtrl.scheduleSave(draft);
+    }
+  }
+
   Future<void> _loadDraft() async {
     final draft = await _draftCtrl.loadRestored();
     if (draft == null || !mounted) return;
+    // A draft equal to the post's original content is not "unsaved
+    // changes" — it was persisted by a pre-fix build. Drop it silently
+    // so the banner never appears when nothing was actually modified.
+    if (_isSameAsBaseline(draft)) {
+      await _draftCtrl.clear();
+      return;
+    }
     _loadingDraft = true;
     try {
       setState(() {
