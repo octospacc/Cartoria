@@ -344,15 +344,9 @@ class _SyncProgressDialogState extends State<_SyncProgressDialog> {
           },
         );
         if (!mounted) return;
-        final parts = <String>[
-          'Pushed ${r.pushed} file${r.pushed == 1 ? "" : "s"}',
-          if (r.deleted > 0) 'deleted ${r.deleted}',
-          if (r.skippedLarge > 0) 'skipped ${r.skippedLarge} large',
-          if (r.skippedOffloaded > 0) '${r.skippedOffloaded} offloaded',
-        ];
         setState(() {
           _done = true;
-          _summary = parts.join(', ');
+          _summary = r.summary;
         });
       } else {
         final r = await widget.store.syncPull(
@@ -362,14 +356,9 @@ class _SyncProgressDialogState extends State<_SyncProgressDialog> {
           },
         );
         if (!mounted) return;
-        final parts = <String>[
-          'Pulled ${r.pulled} file${r.pulled == 1 ? "" : "s"}',
-          if (r.deleted > 0) 'deleted ${r.deleted}',
-          if (r.offloaded > 0) '${r.offloaded} offloaded',
-        ];
         setState(() {
           _done = true;
-          _summary = parts.join(', ');
+          _summary = r.summary;
         });
       }
     } catch (e) {

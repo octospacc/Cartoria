@@ -274,11 +274,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
         if (mounted) setState(() => _progress = p);
       });
       if (mounted) {
-        setState(() {
-          _status = 'Pushed ${r.pushed} file(s), deleted ${r.deleted}'
-              '${r.skippedLarge > 0 ? ", skipped ${r.skippedLarge} large" : ""}'
-              '${r.skippedOffloaded > 0 ? ", ${r.skippedOffloaded} offloaded" : ""}';
-        });
+        setState(() => _status = r.summary);
       }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -327,10 +323,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
         if (mounted) setState(() => _progress = p);
       });
       if (mounted) {
-        setState(() {
-          _status = 'Pulled ${r.pulled} file(s), deleted ${r.deleted}'
-              '${r.offloaded > 0 ? ", ${r.offloaded} offloaded" : ""}';
-        });
+        setState(() => _status = r.summary);
       }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());

@@ -1588,8 +1588,10 @@ class VaultStore extends ChangeNotifier {
         lastSyncedAt: DateTime.now().toUtc(),
       ));
 
-      final changed =
-          result.pulled > 0 || result.deleted > 0 || result.offloaded > 0;
+      final changed = result.added > 0 ||
+          result.updated > 0 ||
+          result.deleted > 0 ||
+          result.offloaded > 0;
       if (changed) {
         await reload();
         clearImageCacheForSync(); // see Fix D

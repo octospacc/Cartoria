@@ -13,30 +13,93 @@ import 'sync_config.dart';
 import 'sync_provider.dart';
 import 'sync_scope.dart';
 
+/// Short-hash for status lines: `"sha a1b2c3d"`, or null when the SHA is
+/// absent (first-ever sync, or empty repo).
+String? _shortSha(String? sha) {
+  if (sha == null || sha.isEmpty) return null;
+  final s = sha.length > 7 ? sha.substring(0, 7) : sha;
+  return 'sha $s';
+}
+
 class SyncPushResult {
-  final int pushed;
+  /// Files the push created on the remote (didn't exist there before).
+  final int created;
+
+  /// Files the push overwrote on the remote (existed, content differed).
+  final int updated;
+
+  /// Files the push removed from the remote.
   final int deleted;
+
   final int skippedLarge;
   final int skippedOffloaded;
   final String commitSha;
+
   const SyncPushResult({
-    required this.pushed,
+    required this.created,
+    required this.updated,
     required this.deleted,
     required this.skippedLarge,
     this.skippedOffloaded = 0,
     required this.commitSha,
   });
+
+  /// Human-readable one-line summary for UI status lines.
+  String get summary {
+    final parts = <String>[
+      '$created created',
+      '$updated updated',
+      '$deleted deleted',
+    ];
+    if (skippedLarge > 0) parts.add('$skippedLarge skipped (large)');
+    if (skippedOffloaded > 0) parts.add('$skippedOffloaded offloaded');
+    final sha = _shortSha(commitSha);
+    return 'Pushed: ${parts.join(', ')}${sha != null ? ' · $sha' : ''}';
+  }
 }
 
 class SyncPullResult {
-  final int pulled;
-  final int deleted;
+  /// Files downloaded that did not exist locally before.
+  final int added;
+
+  /// Local files overwritten by the remote version.
+  final int updated;
+
+  /// Non-drive files removed from local disk (posts, space.json,
+  /// drive_meta.json, hooks). This is the "did it eat my posts?" counter.
+  final int deletedNonDrive;
+
+  /// Drive blobs removed from local disk.
+  final int deletedDrive;
+
+  /// Files moved from local disk to remote-only (offload policy).
   final int offloaded;
+
+  /// Head commit SHA at pull time, or null when it couldn't be read.
+  final String? commitSha;
+
   const SyncPullResult({
-    required this.pulled,
-    required this.deleted,
+    required this.added,
+    required this.updated,
+    this.deletedNonDrive = 0,
+    this.deletedDrive = 0,
     this.offloaded = 0,
+    this.commitSha,
   });
+
+  int get deleted => deletedNonDrive + deletedDrive;
+
+  /// Human-readable one-line summary for UI status lines.
+  String get summary {
+    final parts = <String>[
+      '$added added',
+      '$updated updated',
+      '$deleted deleted ($deletedNonDrive posts, $deletedDrive blobs)',
+    ];
+    if (offloaded > 0) parts.add('$offloaded offloaded');
+    final sha = _shortSha(commitSha);
+    return 'Pulled: ${parts.join(', ')}${sha != null ? ' · $sha' : ''}';
+  }
 }
 
 /// A pending change tracked between pass 1 (SHA computation) and pass 2
@@ -92,21 +155,28 @@ class SyncService {
     required OffloadedStore offloadedStore,
   }) async {
     onProgress?.call(const SyncProgress(
-      totalFiles: 0, completedFiles: 0, isPush: true,
+      totalFiles: 0,
+      completedFiles: 0,
+      isPush: true,
       message: 'Checking remote…',
     ));
     final remoteMap = await _remoteListing(
-      token: token, isPush: true, onProgress: onProgress,
+      token: token,
+      isPush: true,
+      onProgress: onProgress,
     );
 
     onProgress?.call(const SyncProgress(
-      totalFiles: 0, completedFiles: 0, isPush: true,
+      totalFiles: 0,
+      completedFiles: 0,
+      isPush: true,
       message: 'Scanning local files…',
     ));
     final localInfos = await _collectLocalFileInfo();
 
     final offloadedByPath = await _buildOffloadedByPath(
-      remoteMap: remoteMap, offloadedStore: offloadedStore,
+      remoteMap: remoteMap,
+      offloadedStore: offloadedStore,
     );
 
     // Diff: local vs remote.
@@ -126,9 +196,7 @@ class SyncService {
       if (remoteSha == info.sha) continue;
       pendingChanges.add(_PendingChange(
         path: path,
-        kind: remoteSha == null
-            ? FileChangeKind.create
-            : FileChangeKind.update,
+        kind: remoteSha == null ? FileChangeKind.create : FileChangeKind.update,
         size: info.size,
       ));
     }
@@ -141,19 +209,23 @@ class SyncService {
         continue;
       }
       pendingChanges.add(_PendingChange(
-        path: path, kind: FileChangeKind.delete, size: 0,
+        path: path,
+        kind: FileChangeKind.delete,
+        size: 0,
       ));
     }
 
     if (pendingChanges.isEmpty) {
       onProgress?.call(SyncProgress(
-        totalFiles: 1, completedFiles: 1, isPush: true,
+        totalFiles: 1,
+        completedFiles: 1,
+        isPush: true,
         message: 'Nothing to push'
             '${skippedLarge > 0 ? " ($skippedLarge large files skipped)" : ""}'
             '${skippedOffloaded > 0 ? " ($skippedOffloaded offloaded)" : ""}',
       ));
       return SyncPushResult(
-        pushed: 0, deleted: 0,
+        created: 0, updated: 0, deleted: 0,
         skippedLarge: skippedLarge,
         skippedOffloaded: skippedOffloaded,
         commitSha: config.lastCommitSha ?? '',
@@ -180,8 +252,7 @@ class SyncService {
         continue;
       }
       try {
-        final bytes =
-            await fs.file(p.join(vaultPath, c.path)).readAsBytes();
+        final bytes = await fs.file(p.join(vaultPath, c.path)).readAsBytes();
         fileChanges.add(c.kind == FileChangeKind.create
             ? FileChange.create(c.path, bytes)
             : FileChange.update(c.path, bytes));
@@ -193,7 +264,7 @@ class SyncService {
 
     if (fileChanges.isEmpty) {
       return SyncPushResult(
-        pushed: 0, deleted: 0,
+        created: 0, updated: 0, deleted: 0,
         skippedLarge: skippedLarge,
         skippedOffloaded: skippedOffloaded,
         commitSha: config.lastCommitSha ?? '',
@@ -208,8 +279,10 @@ class SyncService {
       onProgress: onProgress,
     );
 
-    final pushed = fileChanges
-        .where((c) => c.kind != FileChangeKind.delete).length;
+    final created = fileChanges
+        .where((c) => c.kind == FileChangeKind.create).length;
+    final updated = fileChanges
+        .where((c) => c.kind == FileChangeKind.update).length;
     final deleted = fileChanges
         .where((c) => c.kind == FileChangeKind.delete).length;
 
@@ -244,11 +317,14 @@ class SyncService {
       totalFiles: pendingChanges.length,
       completedFiles: pendingChanges.length,
       isPush: true,
-      message: 'Pushed: $pushed new/updated, $deleted deleted',
+      message: 'Pushed: $created created, $updated updated, '
+          '$deleted deleted',
     ));
 
     return SyncPushResult(
-      pushed: pushed, deleted: deleted,
+      created: created,
+      updated: updated,
+      deleted: deleted,
       skippedLarge: skippedLarge,
       skippedOffloaded: skippedOffloaded,
       commitSha: newSha,
@@ -263,11 +339,15 @@ class SyncService {
     required OffloadedStore offloadedStore,
   }) async {
     onProgress?.call(const SyncProgress(
-      totalFiles: 0, completedFiles: 0, isPush: false,
+      totalFiles: 0,
+      completedFiles: 0,
+      isPush: false,
       message: 'Checking remote…',
     ));
     final remoteMap = await _remoteListing(
-      token: token, isPush: false, onProgress: onProgress,
+      token: token,
+      isPush: false,
+      onProgress: onProgress,
     );
 
     final inScope = <String, String>{};
@@ -276,14 +356,20 @@ class SyncService {
     }
     if (inScope.isEmpty) {
       onProgress?.call(const SyncProgress(
-        totalFiles: 0, completedFiles: 0, isPush: false,
+        totalFiles: 0,
+        completedFiles: 0,
+        isPush: false,
         message: 'Nothing in scope on the remote.',
       ));
-      return const SyncPullResult(pulled: 0, deleted: 0);
+      return const SyncPullResult(
+        added: 0, updated: 0, deletedNonDrive: 0, deletedDrive: 0,
+      );
     }
 
     onProgress?.call(const SyncProgress(
-      totalFiles: 0, completedFiles: 0, isPush: false,
+      totalFiles: 0,
+      completedFiles: 0,
+      isPush: false,
       message: 'Scanning local files…',
     ));
 
@@ -292,8 +378,11 @@ class SyncService {
     // scan was the primary source of iOS Safari OOM.
     final localShas = await _collectLocalFileShas();
 
-    var pulled = 0;
-    var deleted = 0;
+    // Was: var pulled = 0; var deleted = 0; var offloadedCount = 0;
+    var added = 0;
+    var updated = 0;
+    var deletedNonDrive = 0;
+    var deletedDrive = 0;
     var offloadedCount = 0;
 
     // ── Phase 1: non-drive files (posts, metadata, hooks) ────────────────
@@ -327,11 +416,17 @@ class SyncService {
           );
           final dest = p.join(vaultPath, entry.key);
           await fs.file(dest).writeAsBytes(bytes);
-          pulled++;
+          // `localShas` was captured before any writes, so "was it
+          // there before?" is a faithful new-vs-overwrite signal.
+          if (localShas.containsKey(entry.key)) {
+            updated++;
+          } else {
+            added++;
+          }
           phase1Completed++;
           onProgress?.call(SyncProgress(
             totalFiles: inScope.length,
-            completedFiles: pulled,
+            completedFiles: added + updated,
             isPush: false,
             message: 'Downloading ${entry.key} '
                 '($phase1Completed/${toDownload.length})',
@@ -346,15 +441,12 @@ class SyncService {
       },
     );
 
-    if (toDownload.isNotEmpty &&
-        failures.length == toDownload.length) {
-      throw StateError(
-          'All ${toDownload.length} file downloads failed. '
+    if (toDownload.isNotEmpty && failures.length == toDownload.length) {
+      throw StateError('All ${toDownload.length} file downloads failed. '
           'First error: ${failures.values.first}');
     }
     if (failures.isNotEmpty) {
-      debugPrint(
-          'Pull completed with ${failures.length}/${toDownload.length} '
+      debugPrint('Pull completed with ${failures.length}/${toDownload.length} '
           'file download(s) failed; they will be retried on next pull.');
     }
 
@@ -405,13 +497,15 @@ class SyncService {
                   if (offloaded.remove(id) != null) {
                     offloadedChanged = true;
                   }
-                  continue;  // finally block runs the yield
+                  continue; // finally block runs the yield
                 }
               } catch (_) {}
             }
             // Download.
+            final existed = localPath != null;
             onProgress?.call(SyncProgress(
-              totalFiles: inScope.length, completedFiles: pulled,
+              totalFiles: inScope.length,
+              completedFiles: added + updated,
               isPush: false,
               message: 'Downloading drive/$id',
             ));
@@ -427,7 +521,11 @@ class SyncService {
             await fs.file(dest).writeAsBytes(bytes);
             pathMap[id] = dest;
             if (offloaded.remove(id) != null) offloadedChanged = true;
-            pulled++;
+            if (existed) {
+              updated++;
+            } else {
+              added++;
+            }
           } else {
             // Offload.
             var size = offloaded[id]?.size ?? 0;
@@ -438,8 +536,7 @@ class SyncService {
                 pathMap.remove(id);
               } catch (_) {}
             }
-            offloaded[id] =
-                OffloadedFileInfo(remoteSha: remoteSha, size: size);
+            offloaded[id] = OffloadedFileInfo(remoteSha: remoteSha, size: size);
             offloadedChanged = true;
             offloadedCount++;
           }
@@ -475,7 +572,7 @@ class SyncService {
       final file = fs.file(p.join(vaultPath, path));
       if (await file.exists()) {
         await file.delete();
-        deleted++;
+        deletedNonDrive++;
       }
     }
 
@@ -492,7 +589,7 @@ class SyncService {
         if (inScope.containsKey(remotePath)) continue;
         try {
           await fs.file(localPath).delete();
-          deleted++;
+          deletedDrive++;
         } catch (_) {}
         final offloaded = await offloadedStore.load(spaceId);
         if (offloaded.remove(id) != null) {
@@ -505,12 +602,20 @@ class SyncService {
     await cacheStore?.save(config.cacheKey, remoteMap, head);
 
     onProgress?.call(SyncProgress(
-      totalFiles: inScope.length, completedFiles: pulled, isPush: false,
-      message: 'Pulled: $pulled updated, $deleted deleted, '
+      totalFiles: inScope.length,
+      completedFiles: added + updated,
+      isPush: false,
+      message: 'Pulled: $added added, $updated updated, '
+          '$deletedNonDrive posts deleted, $deletedDrive blobs deleted, '
           '$offloadedCount offloaded',
     ));
     return SyncPullResult(
-      pulled: pulled, deleted: deleted, offloaded: offloadedCount,
+      added: added,
+      updated: updated,
+      deletedNonDrive: deletedNonDrive,
+      deletedDrive: deletedDrive,
+      offloaded: offloadedCount,
+      commitSha: head,
     );
   }
 
@@ -520,8 +625,7 @@ class SyncService {
   /// Uses the mtime-keyed SHA cache to skip re-hashing unchanged files,
   /// and skips reading files above `_maxFileBytes` entirely.
   Future<Map<String, ({String sha, int size})>> _collectLocalFileInfo() async {
-    final cached =
-        await cacheStore?.loadLocalShas(config.cacheKey) ?? const {};
+    final cached = await cacheStore?.loadLocalShas(config.cacheKey) ?? const {};
 
     final out = <String, ({String sha, int size})>{};
     final updated = <String, ({int size, DateTime mtime, String sha})>{};
@@ -579,8 +683,7 @@ class SyncService {
   /// non-drive files, and preserves drive entries from the previous
   /// cache (populated by the last push).
   Future<Map<String, String>> _collectLocalFileShas() async {
-    final cached =
-        await cacheStore?.loadLocalShas(config.cacheKey) ?? const {};
+    final cached = await cacheStore?.loadLocalShas(config.cacheKey) ?? const {};
 
     final out = <String, String>{};
     final updated = <String, ({int size, DateTime mtime, String sha})>{};
@@ -623,8 +726,7 @@ class SyncService {
     // Preserve drive entries from the previous cache (populated by
     // push). Pull doesn't touch them, so re-saving them avoids forcing
     // a re-hash of all drive files on the next push.
-    final merged =
-        <String, ({int size, DateTime mtime, String sha})>{};
+    final merged = <String, ({int size, DateTime mtime, String sha})>{};
     for (final e in cached.entries) {
       if (_isDrivePath(e.key)) merged[e.key] = e.value;
     }
@@ -701,8 +803,7 @@ class SyncService {
       final pathMap = await _resolveDrivePaths(driveDir);
 
       final offloaded = await offloadedStore.load(spaceId);
-      final pendingDeletes =
-          <String, ({String remoteSha, int size})>{};
+      final pendingDeletes = <String, ({String remoteSha, int size})>{};
 
       for (final id in sortedIds) {
         if (keepIds.contains(id)) continue;
@@ -719,14 +820,12 @@ class SyncService {
         final info = localInfos[remotePath];
         if (info == null) continue;
         if (info.sha != remoteSha) {
-          debugPrint(
-              'Offload: skipping $remotePath — local SHA differs from '
+          debugPrint('Offload: skipping $remotePath — local SHA differs from '
               'remote (unpushed local edit)');
           continue;
         }
 
-        pendingDeletes[id] =
-            (remoteSha: remoteSha, size: info.size);
+        pendingDeletes[id] = (remoteSha: remoteSha, size: info.size);
       }
 
       if (pendingDeletes.isEmpty) continue;
@@ -744,8 +843,7 @@ class SyncService {
       try {
         await offloadedStore.save(spaceId, offloaded);
       } catch (e) {
-        debugPrint(
-            'Offload save failed for $spaceId; keeping local files: $e');
+        debugPrint('Offload save failed for $spaceId; keeping local files: $e');
         // Roll back the in-memory additions so they match what's on disk.
         for (final id in pendingDeletes.keys) {
           offloaded.remove(id);
@@ -785,17 +883,14 @@ class SyncService {
         lastError = e;
         final sc = e.statusCode;
         if (sc == 429 || sc == 403) {
-          await Future<void>.delayed(
-              Duration(seconds: 15 * (attempt + 1)));
+          await Future<void>.delayed(Duration(seconds: 15 * (attempt + 1)));
           continue;
         }
         if (sc != null && sc >= 400 && sc < 500) rethrow;
-        await Future<void>.delayed(
-            Duration(milliseconds: 500 * (attempt + 1)));
+        await Future<void>.delayed(Duration(milliseconds: 500 * (attempt + 1)));
       } catch (e) {
         lastError = e;
-        await Future<void>.delayed(
-            Duration(milliseconds: 500 * (attempt + 1)));
+        await Future<void>.delayed(Duration(milliseconds: 500 * (attempt + 1)));
       }
     }
     throw lastError ?? StateError('Download failed for $path');
@@ -834,15 +929,18 @@ class SyncService {
     final cache = await cacheStore?.load(config.cacheKey);
     if (head != null && cache != null && cache.commitSha == head) {
       onProgress?.call(SyncProgress(
-        totalFiles: cache.files.length, completedFiles: cache.files.length,
+        totalFiles: cache.files.length,
+        completedFiles: cache.files.length,
         isPush: isPush,
         message: 'Using cached remote listing (${cache.files.length} files)',
       ));
       return cache.files;
     }
     return provider.listRemoteFiles(
-      config: config, token: token,
-      isPush: isPush, onProgress: onProgress,
+      config: config,
+      token: token,
+      isPush: isPush,
+      onProgress: onProgress,
     );
   }
 
@@ -852,8 +950,8 @@ class SyncService {
     if (!await f.exists()) return {};
     try {
       final raw = jsonDecode(await f.readAsString()) as Map;
-      return raw.map((k, v) =>
-          MapEntry(k as String, (v as Map).cast<String, dynamic>()));
+      return raw.map(
+          (k, v) => MapEntry(k as String, (v as Map).cast<String, dynamic>()));
     } catch (_) {
       return {};
     }
@@ -892,8 +990,10 @@ class SyncService {
   String _sanitizedExt(String name) {
     final dot = name.lastIndexOf('.');
     if (dot < 0 || dot == 0) return '';
-    return name.substring(dot + 1).toLowerCase().replaceAll(
-          RegExp(r'[^a-z0-9]'), '');
+    return name
+        .substring(dot + 1)
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]'), '');
   }
 
   bool _isExcluded(String relPath) {
