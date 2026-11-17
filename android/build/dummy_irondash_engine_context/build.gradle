@@ -1,0 +1,5 @@
+apply plugin: 'com.android.library'
+android {
+    namespace 'com.superlist.irondash_engine_context'
+    compileSdk 34
+}

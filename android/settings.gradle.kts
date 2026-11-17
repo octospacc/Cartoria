@@ -23,4 +23,22 @@ plugins {
     id("org.jetbrains.kotlin.android") version "2.4.0" apply false
 }
 
+gradle.settingsEvaluated {
+    listOf("super_native_extensions", "irondash_engine_context").forEach { pluginName ->
+        findProject(":$pluginName")?.let { descriptor ->
+            val dummyDir = File(rootProject.projectDir, "build/dummy_$pluginName")
+            dummyDir.mkdirs()
+            File(dummyDir, "build.gradle").writeText("""
+                apply plugin: 'com.android.library'
+                android {
+                    namespace 'com.superlist.$pluginName'
+                    compileSdk 34
+                }
+            """.trimIndent())
+            descriptor.projectDir = dummyDir
+            descriptor.buildFileName = "build.gradle"
+        }
+    }
+}
+
 include(":app")

@@ -47,3 +47,19 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+tasks.matching { it.name.startsWith("compile") && it.name.endsWith("JavaWithJavac") }.configureEach {
+    doFirst {
+        val registrant = file("${project.projectDir}/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java")
+        if (registrant.exists()) {
+            val cleaned = registrant.readLines()
+                .filterNot {
+                    it.contains("super_native_extensions") ||
+                    it.contains("SuperNativeExtensionsPlugin") ||
+                    it.contains("irondash")
+                }
+                .joinToString("\n")
+            registrant.writeText(cleaned)
+        }
+    }
+}
