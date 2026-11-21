@@ -1,24 +1,25 @@
+library drive;
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../data/models.dart';
 import '../../data/store.dart';
-import '../../platform/file_save.dart';
+import '../../l10n/l10n.dart';
 import '../../platform/clipboard_files.dart';
+import '../../platform/file_save.dart';
 import '../../util/file_category.dart';
 import '../widgets/escape_back.dart';
 import '../widgets/file_thumbnail.dart';
 import '../widgets/file_usage_sheet.dart';
 import 'drive/file_viewer.dart';
 
+part 'drive/drive_grid_tile.dart';
+part 'drive/drive_list_tile.dart';
+
 class DriveScreen extends StatefulWidget {
   final VaultStore store;
   final Space space;
-
-  /// Optional callback used by the "Show posts using this file…" sheet
-  /// when the user taps a post. Caller (usually the space feed) is
-  /// expected to pop the drive, then scroll to the post. Null disables
-  /// navigation from the sheet — posts still list, just not tappable.
   final void Function(String postId)? onViewPostInFeed;
 
   const DriveScreen({
@@ -33,10 +34,6 @@ class DriveScreen extends StatefulWidget {
 }
 
 class _DriveScreenState extends State<DriveScreen> {
-  /// Resolves the current version of this space from the store on every
-  /// read. `widget.space` is a snapshot taken at navigation time, so
-  /// without this the drive title keeps showing the old name/icon after
-  /// the space is edited elsewhere.
   Space get _space => widget.store.spaceById(widget.space.id) ?? widget.space;
 
   bool _grid = true;
@@ -77,27 +74,22 @@ class _DriveScreenState extends State<DriveScreen> {
   }
 
   Future<void> _deleteSelectedFiles() async {
+    final l = context.l10n;
     final selected = Set<String>.from(_selectedFileIds);
     if (selected.isEmpty) return;
 
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(
-          'Delete ${selected.length} '
-          '${selected.length == 1 ? "file" : "files"}?',
-        ),
-        content: const Text(
-          'Posts that reference these files will lose the attachments. '
-          'This cannot be undone.',
-        ),
+        title: Text(l.driveDeleteSelectedTitle(selected.length)),
+        content: Text(l.driveDeleteSelectedBody),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+              child: Text(l.commonCancel)),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Delete')),
+              child: Text(l.commonDelete)),
         ],
       ),
     );
@@ -108,17 +100,13 @@ class _DriveScreenState extends State<DriveScreen> {
   }
 
   Future<void> _pasteFromClipboard() async {
+    final l = context.l10n;
     try {
       final files = await readClipboardFiles();
       if (files.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'No image or file found in clipboard. On web, try pasting '
-                'into a composer.',
-              ),
-            ),
+            SnackBar(content: Text(l.drivePasteEmpty)),
           );
         }
         return;
@@ -135,24 +123,20 @@ class _DriveScreenState extends State<DriveScreen> {
         } catch (e) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Paste failed: $e')),
+              SnackBar(content: Text(l.drivePasteFailed(e.toString()))),
             );
           }
         }
       }
       if (mounted && added > 0) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Added $added file${added == 1 ? "" : "s"} from clipboard.',
-            ),
-          ),
+          SnackBar(content: Text(l.drivePastedFromClipboard(added))),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Paste failed: $e')),
+          SnackBar(content: Text(l.drivePasteFailed(e.toString()))),
         );
       }
     }
@@ -160,6 +144,7 @@ class _DriveScreenState extends State<DriveScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l = context.l10n;
     final theme = Theme.of(context);
     return EscapeBack(
         onEscape: _selectionMode || _searchActive
@@ -181,7 +166,6 @@ class _DriveScreenState extends State<DriveScreen> {
             final offloadedIds = widget.store.offloadedFileIds(widget.space.id);
             final used = widget.store.usedFileIds(widget.space.id);
 
-            // Filter by filename substring when search is active.
             final query = _searchActive ? _searchCtrl.text.trim() : '';
             final files = query.isEmpty
                 ? allFiles
@@ -198,11 +182,11 @@ class _DriveScreenState extends State<DriveScreen> {
               appBar:
                   _buildAppBar(context, allFiles, used, files.length, query),
               body: allFiles.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Padding(
-                        padding: EdgeInsets.all(24),
+                        padding: const EdgeInsets.all(24),
                         child: Text(
-                          'No files yet.\nUpload one here, or attach from a post.',
+                          l.driveEmptyState,
                           textAlign: TextAlign.center,
                         ),
                       ),
@@ -212,7 +196,7 @@ class _DriveScreenState extends State<DriveScreen> {
                           child: Padding(
                             padding: const EdgeInsets.all(24),
                             child: Text(
-                              'No files match "$query".',
+                              l.driveNoMatch(query),
                               textAlign: TextAlign.center,
                               style: theme.textTheme.bodyMedium,
                             ),
@@ -237,8 +221,8 @@ class _DriveScreenState extends State<DriveScreen> {
                                   const SizedBox(width: 6),
                                   Expanded(
                                     child: Text(
-                                      _driveSummary(files.length,
-                                          offloadedCount, unusedCount),
+                                      _driveSummary(
+                                          l, files.length, offloadedCount, unusedCount),
                                       style: theme.textTheme.bodySmall,
                                     ),
                                   ),
@@ -263,15 +247,12 @@ class _DriveScreenState extends State<DriveScreen> {
         ));
   }
 
-  /// "N files" always, then "M offloaded" and "K unused" only when
-  /// non-zero. `unused` counts any file not referenced by a post,
-  /// regardless of state (on-disk, offloaded, or missing) — so it's a
-  /// direct "how much can I clean up" number.
-  String _driveSummary(int total, int offloaded, int unused) {
+  String _driveSummary(
+      AppLocalizations l, int total, int offloaded, int unused) {
     final parts = <String>[
-      '$total ${total == 1 ? "file" : "files"}',
-      if (offloaded > 0) '$offloaded offloaded',
-      if (unused > 0) '$unused unused',
+      l.driveSummaryTotal(total),
+      if (offloaded > 0) l.driveSummaryOffloaded(offloaded),
+      if (unused > 0) l.driveSummaryUnused(unused),
     ];
     return parts.join(' · ');
   }
@@ -283,10 +264,6 @@ class _DriveScreenState extends State<DriveScreen> {
   ) {
     return GridView.builder(
       padding: const EdgeInsets.all(8),
-      // Do not keep off-screen tiles alive. `FileThumbnail`'s byte cache
-      // makes re-creating them cheap (a Map lookup), so freeing the
-      // widget's state on scroll-back costs nothing visually and eliminates
-      // the accumulated memory of hundreds of retained tile states.
       addAutomaticKeepAlives: false,
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 150,
@@ -321,86 +298,25 @@ class _DriveScreenState extends State<DriveScreen> {
     Set<String> offloadedIds,
     Set<String> used,
   ) {
-    final theme = Theme.of(context);
     return ListView.separated(
       addAutomaticKeepAlives: false,
       itemCount: files.length,
       separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (context, i) {
         final f = files[i];
-        final selected = _selectedFileIds.contains(f.id);
-        final isUsed = used.contains(f.id);
-        final isOffloaded = offloadedIds.contains(f.id);
-        return ListTile(
-          selected: _selectionMode && selected,
-          selectedTileColor:
-              theme.colorScheme.primaryContainer.withValues(alpha: 0.25),
-          leading: _selectionMode
-              ? Icon(
-                  selected ? Icons.check_circle : Icons.radio_button_unchecked,
-                  color: selected
-                      ? theme.colorScheme.primary
-                      : theme.colorScheme.onSurfaceVariant,
-                )
-              : Icon(iconForCategory(categoryFor(f.name))),
-          title: Text(f.name, overflow: TextOverflow.ellipsis),
-          subtitle: Row(
-            children: [
-              Text('${(f.sizeBytes / 1024).toStringAsFixed(1)} KB'),
-              const SizedBox(width: 8),
-              Icon(
-                isUsed ? Icons.link : Icons.link_off,
-                size: 12,
-                color: isUsed
-                    ? theme.colorScheme.onSurfaceVariant
-                    : theme.colorScheme.error,
-              ),
-              const SizedBox(width: 3),
-              Text(
-                isUsed ? 'used' : 'unused',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: isUsed
-                      ? theme.colorScheme.onSurfaceVariant
-                      : theme.colorScheme.error,
-                ),
-              ),
-              if (f.isMissing) ...[
-                const SizedBox(width: 8),
-                Icon(Icons.cloud_off, size: 12, color: theme.colorScheme.error),
-                const SizedBox(width: 3),
-                Text('missing',
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: theme.colorScheme.error)),
-              ] else if (isOffloaded) ...[
-                const SizedBox(width: 8),
-                Icon(Icons.cloud,
-                    size: 12, color: theme.colorScheme.onSurfaceVariant),
-                const SizedBox(width: 3),
-                Text('remote',
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-              ],
-            ],
-          ),
+        return _DriveListTile(
+          key: ValueKey(f.id),
+          file: f,
+          isUsed: used.contains(f.id),
+          isOffloaded: offloadedIds.contains(f.id),
+          selectionMode: _selectionMode,
+          isSelected: _selectedFileIds.contains(f.id),
           onTap: _selectionMode
               ? () => _toggleSelection(f.id)
               : () => _openViewer(f),
-          onLongPress: _selectionMode ? null : () => _enterSelectionMode(f.id),
-          trailing: _selectionMode
-              ? null
-              : PopupMenuButton<String>(
-                  onSelected: (v) => _handleMenu(v, f),
-                  itemBuilder: (_) => [
-                    const PopupMenuItem(value: 'open', child: Text('Open')),
-                    if (used.contains(f.id))
-                      const PopupMenuItem(
-                          value: 'usage',
-                          child: Text('Show posts using this file…')),
-                    const PopupMenuItem(
-                        value: 'share', child: Text('Share / download')),
-                    const PopupMenuItem(value: 'delete', child: Text('Delete')),
-                  ],
-                ),
+          onLongPress:
+              _selectionMode ? null : () => _enterSelectionMode(f.id),
+          onMenuAction: (v) => _handleMenu(v, f),
         );
       },
     );
@@ -426,26 +342,21 @@ class _DriveScreenState extends State<DriveScreen> {
   }
 
   Future<void> _openViewer(DriveFile f) async {
+    final l = context.l10n;
     if (f.isMissing) {
       final action = await showDialog<String>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: Text('"${f.name}" is missing'),
-          content: const Text(
-            'This file is referenced by one or more posts, but its content '
-            'isn\'t stored anywhere on this device or the sync remote.\n\n'
-            'You can restore it by re-importing the full export it came '
-            'from, pulling from the sync remote if it still has the file, '
-            'or by picking a replacement file from this device.',
-          ),
+          title: Text(l.driveMissingTitle(f.name)),
+          content: Text(l.driveMissingBody),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancel')),
+                child: Text(l.commonCancel)),
             FilledButton.icon(
                 onPressed: () => Navigator.pop(ctx, 'upload'),
                 icon: const Icon(Icons.upload_file),
-                label: const Text('Upload replacement…')),
+                label: Text(l.driveUploadReplacement)),
           ],
         ),
       );
@@ -461,15 +372,15 @@ class _DriveScreenState extends State<DriveScreen> {
       final ok = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Download from remote?'),
-          content: Text('"${f.name}" is not on this device. Fetch it now?'),
+          title: Text(l.driveDownloadTitle),
+          content: Text(l.driveDownloadBody(f.name)),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Cancel')),
+                child: Text(l.commonCancel)),
             FilledButton(
                 onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Download')),
+                child: Text(l.driveDownloadConfirm)),
           ],
         ),
       );
@@ -479,8 +390,9 @@ class _DriveScreenState extends State<DriveScreen> {
         await widget.store.fetchOffloadedFile(widget.space.id, f.id);
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text('Download failed: $e')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(l.driveDownloadFailed(e.toString()))),
+          );
         }
         return;
       }
@@ -497,8 +409,6 @@ class _DriveScreenState extends State<DriveScreen> {
           space: widget.space,
           file: f,
           allowDelete: true,
-          // Navigate between all files in the space, in creation order
-          // (which is the same order the drive grid renders).
           siblings: widget.store.filesForSpace(widget.space.id),
         ),
       ),
@@ -506,6 +416,7 @@ class _DriveScreenState extends State<DriveScreen> {
   }
 
   Future<void> _upload(BuildContext context) async {
+    final l = context.l10n;
     try {
       final pickedFiles = await openFiles();
       if (pickedFiles.isEmpty) return;
@@ -538,26 +449,21 @@ class _DriveScreenState extends State<DriveScreen> {
       if (!context.mounted) return;
 
       final parts = <String>[];
-      if (added > 0) {
-        parts.add('$added ${added == 1 ? "file" : "files"} uploaded');
-      }
-      if (failed > 0) {
-        parts.add('$failed ${failed == 1 ? "file" : "files"} failed');
-      }
+      if (added > 0) parts.add(l.driveUploadSummaryAdded(added));
+      if (failed > 0) parts.add(l.driveUploadSummaryFailed(failed));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            parts.isEmpty ? 'No files uploaded' : parts.join(' · '),
+            parts.isEmpty ? l.driveUploadNothing : parts.join(' · '),
           ),
           action: failed > 0
               ? SnackBarAction(
-                  label: 'Details',
+                  label: l.spaceImportDetails,
                   onPressed: () {
                     showDialog<void>(
                       context: context,
                       builder: (ctx) => AlertDialog(
-                        title: Text('$failed ${failed == 1 ? "file" : "files"} '
-                            'failed to upload'),
+                        title: Text(l.driveUploadDialogTitle(failed)),
                         content: SingleChildScrollView(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -573,7 +479,7 @@ class _DriveScreenState extends State<DriveScreen> {
                         actions: [
                           TextButton(
                             onPressed: () => Navigator.pop(ctx),
-                            child: const Text('Close'),
+                            child: Text(ctx.l10n.commonClose),
                           ),
                         ],
                       ),
@@ -586,26 +492,26 @@ class _DriveScreenState extends State<DriveScreen> {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Upload failed: $e')),
+          SnackBar(content: Text(l.driveUploadFailed(e.toString()))),
         );
       }
     }
   }
 
   Future<void> _confirmDelete(DriveFile f) async {
+    final l = context.l10n;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Delete "${f.name}"?'),
-        content: const Text(
-            'Posts that reference this file will lose the attachment.'),
+        title: Text(l.driveDeleteFileTitle(f.name)),
+        content: Text(l.driveDeleteFileBody),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+              child: Text(l.commonCancel)),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Delete')),
+              child: Text(l.commonDelete)),
         ],
       ),
     );
@@ -613,6 +519,7 @@ class _DriveScreenState extends State<DriveScreen> {
   }
 
   Future<void> _uploadReplacement(DriveFile f) async {
+    final l = context.l10n;
     try {
       final file = await openFile();
       if (file == null) return;
@@ -628,12 +535,12 @@ class _DriveScreenState extends State<DriveScreen> {
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Restored "${file.name}"')),
+        SnackBar(content: Text(l.driveRestored(file.name))),
       );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Restore failed: $e')),
+          SnackBar(content: Text(l.driveRestoreFailed(e.toString()))),
         );
       }
     }
@@ -646,21 +553,21 @@ class _DriveScreenState extends State<DriveScreen> {
     int filteredCount,
     String query,
   ) {
-    // Selection mode — unchanged behavior, takes priority over search.
+    final l = context.l10n;
     if (_selectionMode) {
       return AppBar(
         leading: IconButton(
           icon: const Icon(Icons.close),
-          tooltip: 'Exit selection',
+          tooltip: l.driveExitSelection,
           onPressed: _exitSelectionMode,
         ),
         title: Text(_selectedFileIds.isEmpty
-            ? 'Select files'
-            : '${_selectedFileIds.length} selected'),
+            ? l.driveSelectFiles
+            : l.driveSelectedCount(_selectedFileIds.length)),
         actions: [
           IconButton(
             icon: const Icon(Icons.cleaning_services_outlined),
-            tooltip: 'Select unused',
+            tooltip: l.driveSelectUnused,
             onPressed: () {
               final unused = allFiles
                   .where((f) => !used.contains(f.id))
@@ -676,19 +583,18 @@ class _DriveScreenState extends State<DriveScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
-            tooltip: 'Delete selected',
+            tooltip: l.driveDeleteSelected,
             onPressed: _selectedFileIds.isEmpty ? null : _deleteSelectedFiles,
           ),
         ],
       );
     }
 
-    // Search mode.
     if (_searchActive) {
       return AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          tooltip: 'Close search',
+          tooltip: l.driveSearchClose,
           onPressed: () => setState(() {
             _searchCtrl.clear();
             _searchActive = false;
@@ -699,7 +605,7 @@ class _DriveScreenState extends State<DriveScreen> {
           autofocus: true,
           textInputAction: TextInputAction.search,
           decoration: InputDecoration(
-            hintText: 'Search files…',
+            hintText: l.driveSearchHint,
             border: InputBorder.none,
             suffixText:
                 query.isEmpty ? null : '$filteredCount / ${allFiles.length}',
@@ -710,37 +616,36 @@ class _DriveScreenState extends State<DriveScreen> {
           if (_searchCtrl.text.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.close),
-              tooltip: 'Clear',
+              tooltip: l.driveClear,
               onPressed: () => setState(_searchCtrl.clear),
             ),
         ],
       );
     }
 
-    // Normal mode.
     return AppBar(
-      title: Text('${_space.icon} ${_space.name} · Drive'),
+      title: Text('${_space.icon} ${_space.name} · ${l.driveTitle}'),
       actions: [
         IconButton(
           icon: const Icon(Icons.search),
-          tooltip: 'Search',
+          tooltip: l.driveSearchTooltip,
           onPressed: allFiles.isEmpty
               ? null
               : () => setState(() => _searchActive = true),
         ),
         IconButton(
           icon: const Icon(Icons.content_paste),
-          tooltip: 'Paste from clipboard',
+          tooltip: l.attachmentPaste,
           onPressed: () => _pasteFromClipboard(),
         ),
         IconButton(
           icon: const Icon(Icons.checklist),
-          tooltip: 'Select',
+          tooltip: l.feedSelect,
           onPressed: allFiles.isEmpty ? null : () => _enterSelectionMode(),
         ),
         IconButton(
           icon: Icon(_grid ? Icons.view_list : Icons.grid_view),
-          tooltip: _grid ? 'List view' : 'Grid view',
+          tooltip: _grid ? l.driveListTooltip : l.driveGridTooltip,
           onPressed: () => setState(() => _grid = !_grid),
         ),
       ],
@@ -757,152 +662,6 @@ class _DriveScreenState extends State<DriveScreen> {
       file: f,
       posts: posts,
       onViewPostInFeed: widget.onViewPostInFeed,
-    );
-  }
-}
-
-class _GridTile extends StatelessWidget {
-  final VaultStore store;
-  final Space space;
-  final DriveFile file;
-  final bool isUsed;
-  final bool isOffloaded;
-  final bool selectionMode;
-  final bool isSelected;
-  final VoidCallback onTap;
-  final VoidCallback? onLongPress;
-  final void Function(String action) onMenuAction;
-
-  const _GridTile({
-    super.key,
-    required this.store,
-    required this.space,
-    required this.file,
-    required this.isUsed,
-    required this.isOffloaded,
-    required this.selectionMode,
-    required this.isSelected,
-    required this.onTap,
-    required this.onLongPress,
-    required this.onMenuAction,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: isSelected
-            ? BorderSide(color: theme.colorScheme.primary, width: 2)
-            : BorderSide.none,
-      ),
-      child: InkWell(
-        onTap: onTap,
-        onLongPress: onLongPress,
-        child: Stack(
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: FileThumbnail(
-                    store: store,
-                    spaceId: space.id,
-                    file: file,
-                    iconSize: 40,
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
-                  child: Text(
-                    file.name,
-                    style: theme.textTheme.bodySmall,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            Positioned(
-              top: 4,
-              left: 4,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                decoration: BoxDecoration(
-                  color: isUsed ? Colors.black45 : theme.colorScheme.error,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Icon(
-                  isUsed ? Icons.link : Icons.link_off,
-                  size: 12,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-            if (isOffloaded)
-              Positioned(
-                top: 4,
-                left: 30,
-                child: Container(
-                  padding: const EdgeInsets.all(2),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: const Icon(Icons.cloud, size: 12, color: Colors.white),
-                ),
-              ),
-            Positioned(
-              top: 0,
-              right: 0,
-              child: selectionMode
-                  ? Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: Container(
-                        width: 22,
-                        height: 22,
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? theme.colorScheme.primary
-                              : Colors.black45,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 1.5),
-                        ),
-                        child: isSelected
-                            ? const Icon(Icons.check,
-                                size: 14, color: Colors.white)
-                            : null,
-                      ),
-                    )
-                  : Material(
-                      color: Colors.black54,
-                      shape: const CircleBorder(),
-                      child: PopupMenuButton<String>(
-                        padding: EdgeInsets.zero,
-                        iconSize: 16,
-                        icon: const Icon(Icons.more_vert, color: Colors.white),
-                        tooltip: 'More',
-                        onSelected: onMenuAction,
-                        itemBuilder: (_) => [
-                          const PopupMenuItem(
-                              value: 'open', child: Text('Open')),
-                          if (isUsed)
-                            const PopupMenuItem(
-                                value: 'usage',
-                                child: Text('Show posts using this file…')),
-                          const PopupMenuItem(
-                              value: 'share', child: Text('Share / download')),
-                          const PopupMenuItem(
-                              value: 'delete', child: Text('Delete')),
-                        ],
-                      ),
-                    ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

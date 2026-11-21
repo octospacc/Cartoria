@@ -5,16 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../data/hooks.dart';
+import '../../l10n/l10n.dart';
 import '../widgets/escape_back.dart';
 
-/// Full-screen JSON view/edit for a [Hook].
-///
-/// Opened from [HookEditScreen]; returns the parsed [Hook] to the caller
-/// on Apply, or `null` on back/cancel.
-///
-/// The screen never persists anything itself — it hands the resulting
-/// [Hook] back to the caller, which decides whether to swap the form
-/// state or save directly.
 class HookJsonEditScreen extends StatefulWidget {
   final Hook initialHook;
   const HookJsonEditScreen({super.key, required this.initialHook});
@@ -43,13 +36,14 @@ class _HookJsonEditScreenState extends State<HookJsonEditScreen> {
   }
 
   void _format() {
+    final l = context.l10n;
     setState(() {
       _error = null;
       try {
         final parsed = jsonDecode(_ctrl.text);
         _ctrl.text = const JsonEncoder.withIndent('  ').convert(parsed);
       } catch (e) {
-        _error = 'Not valid JSON: $e';
+        _error = l.hookJsonErrParse(e.toString());
       }
     });
   }
@@ -58,7 +52,7 @@ class _HookJsonEditScreenState extends State<HookJsonEditScreen> {
     await Clipboard.setData(ClipboardData(text: _ctrl.text));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Copied to clipboard')),
+      SnackBar(content: Text(context.l10n.hookJsonCopied)),
     );
   }
 
@@ -74,17 +68,15 @@ class _HookJsonEditScreenState extends State<HookJsonEditScreen> {
   }
 
   void _apply() {
+    final l = context.l10n;
     setState(() {
       _error = null;
       try {
         final raw = jsonDecode(_ctrl.text);
         if (raw is! Map<String, dynamic>) {
-          _error = 'Top-level JSON value must be an object';
+          _error = l.hookJsonErrTopLevel;
           return;
         }
-        // The `id` field is internal (never user-visible in the form).
-        // Inject one when omitted so AI-generated or hand-written JSON
-        // works without the user having to invent UUIDs.
         final withId = <String, dynamic>{
           ...raw,
           'id': (raw['id'] as String?) ?? const Uuid().v7(),
@@ -92,7 +84,7 @@ class _HookJsonEditScreenState extends State<HookJsonEditScreen> {
         final hook = Hook.fromJson(withId);
         Navigator.pop(context, hook);
       } catch (e) {
-        _error = 'Invalid hook JSON: $e';
+        _error = l.hookJsonErrInvalid(e.toString());
       }
     });
   }
@@ -100,6 +92,7 @@ class _HookJsonEditScreenState extends State<HookJsonEditScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     final mono = theme.textTheme.bodySmall?.copyWith(
       fontFamily: 'monospace',
       fontSize: 12,
@@ -108,26 +101,26 @@ class _HookJsonEditScreenState extends State<HookJsonEditScreen> {
     return EscapeBack(
         child: Scaffold(
       appBar: AppBar(
-        title: const Text('Hook JSON'),
+        title: Text(l.hookJsonTitle),
         actions: [
           IconButton(
             icon: const Icon(Icons.copy_all),
-            tooltip: 'Copy',
+            tooltip: l.hookJsonCopy,
             onPressed: _copy,
           ),
           IconButton(
             icon: const Icon(Icons.content_paste),
-            tooltip: 'Paste',
+            tooltip: l.hookJsonPaste,
             onPressed: _paste,
           ),
           IconButton(
             icon: const Icon(Icons.format_align_left),
-            tooltip: 'Format',
+            tooltip: l.hookJsonFormat,
             onPressed: _format,
           ),
           TextButton(
             onPressed: _apply,
-            child: const Text('Apply'),
+            child: Text(l.hookJsonApply),
           ),
         ],
       ),
@@ -144,10 +137,7 @@ class _HookJsonEditScreenState extends State<HookJsonEditScreen> {
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                'Edit this hook as JSON. Useful for pasting AI-generated '
-                'hooks or moving a hook to another vault. The "id" field '
-                'is internal — leave it alone, or omit it to generate a '
-                'new one on Apply.',
+                l.hookJsonHelper,
                 style: theme.textTheme.bodySmall,
               ),
             ),

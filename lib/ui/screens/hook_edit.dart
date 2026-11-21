@@ -1,3 +1,5 @@
+library hook_edit;
+
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 
@@ -5,8 +7,13 @@ import '../../data/hooks.dart';
 import '../../data/models.dart';
 import '../../data/services/template.dart';
 import '../../data/store.dart';
+import '../../l10n/l10n.dart';
 import '../widgets/escape_back.dart';
 import 'hook_json_editor.dart';
+
+part 'hook_edit_rules.dart';
+part 'hook_edit_parts.dart';
+part 'hook_edit_vars.dart';
 
 class HookEditScreen extends StatefulWidget {
   final VaultStore store;
@@ -46,8 +53,6 @@ class _HookEditScreenState extends State<HookEditScreen> {
     super.dispose();
   }
 
-  // ── State load / dispose ───────────────────────────────────────────────
-
   void _loadFrom(Hook? hook) {
     _workingId = hook?.id ?? const Uuid().v7();
     _name = TextEditingController(text: hook?.name ?? '');
@@ -83,8 +88,6 @@ class _HookEditScreenState extends State<HookEditScreen> {
     }
   }
 
-  // ── JSON editor ────────────────────────────────────────────────────────
-
   Future<void> _openJsonEditor() async {
     final current = _buildHookForExport();
     final result = await Navigator.push<Hook>(
@@ -110,10 +113,6 @@ class _HookEditScreenState extends State<HookEditScreen> {
     return out;
   }
 
-  /// Best-effort snapshot of the current form state for the JSON view.
-  /// Invalid or incomplete parts are skipped rather than throwing, so the
-  /// user can open JSON at any point in their editing and see what they've
-  /// entered so far.
   Hook _buildHookForExport() {
     final rules = <HookRule>[];
     for (final r in _rules) {
@@ -127,8 +126,12 @@ class _HookEditScreenState extends State<HookEditScreen> {
         .toSet();
     return Hook(
       id: _workingId,
-      key: _key.text.trim().isEmpty ? 'unnamed' : _key.text.trim(),
-      name: _name.text.trim().isEmpty ? 'Unnamed hook' : _name.text.trim(),
+      key: _key.text.trim().isEmpty
+          ? context.l10n.hookEditFallbackKey
+          : _key.text.trim(),
+      name: _name.text.trim().isEmpty
+          ? context.l10n.hookEditFallbackName
+          : _name.text.trim(),
       enabled: widget.existing?.enabled ?? true,
       spaceIds: _spaceIds,
       triggers: _triggers,
@@ -169,8 +172,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
           ));
         }
       } catch (_) {
-        // Skip malformed parts during export; the user will see they're
-        // missing and can fix the form.
+        // Skip malformed parts during export.
       }
     }
     final headers = <String, String>{};
@@ -190,8 +192,6 @@ class _HookEditScreenState extends State<HookEditScreen> {
     );
   }
 
-  // ── Save ───────────────────────────────────────────────────────────────
-
   String _suggestKey(String name) {
     final slug = name
         .toLowerCase()
@@ -202,35 +202,50 @@ class _HookEditScreenState extends State<HookEditScreen> {
     return 'h_$slug';
   }
 
+  String _stripError(Object e) {
+    final s = e.toString();
+    const prefixes = [
+      'FormatException: ',
+      'ArgumentError: ',
+      'Invalid argument(s): ',
+      'StateError: ',
+    ];
+    for (final p in prefixes) {
+      if (s.startsWith(p)) return s.substring(p.length);
+    }
+    return s;
+  }
+
   Future<void> _save() async {
     setState(() {
       _error = null;
       _saving = true;
     });
+    final l = context.l10n;
     try {
       final name = _name.text.trim();
-      if (name.isEmpty) throw ArgumentError('Name is required');
+      if (name.isEmpty) throw FormatException(l.hookEditErrNameRequired);
       var key = _key.text.trim();
       if (key.isEmpty) key = _suggestKey(name);
       if (!RegExp(r'^[a-z][a-z0-9_]*$').hasMatch(key)) {
-        throw ArgumentError('Key must be lowercase letters/digits/underscore');
+        throw FormatException(l.hookEditErrKeyFormat);
       }
       if (_triggers.isEmpty) {
-        throw ArgumentError('Select at least one trigger');
+        throw FormatException(l.hookEditErrTriggers);
       }
       if (_rules.isEmpty) {
-        throw ArgumentError('Add at least one rule');
+        throw FormatException(l.hookEditErrRules);
       }
 
       final rules = <HookRule>[];
       for (var i = 0; i < _rules.length; i++) {
         final r = _rules[i];
         if (r.url.text.trim().isEmpty) {
-          throw ArgumentError('Rule ${i + 1}: URL is required');
+          throw FormatException(l.hookEditErrRuleUrl(i + 1));
         }
         final built = _buildRule(r);
         if (built == null) {
-          throw ArgumentError('Rule ${i + 1}: could not be built');
+          throw FormatException(l.hookEditErrRuleBuild(i + 1));
         }
         rules.add(built);
       }
@@ -241,23 +256,16 @@ class _HookEditScreenState extends State<HookEditScreen> {
           .where((s) => s.isNotEmpty)
           .toSet();
 
-// Validate variables.
       final seenNames = <String>{};
       for (var i = 0; i < _variables.length; i++) {
         final v = _variables[i];
-        final name = v.name.text.trim();
-        if (name.isEmpty) {
-          // Skip empty rows silently — the user might have tapped "Add"
-          // without filling in the name yet.
-          continue;
+        final vName = v.name.text.trim();
+        if (vName.isEmpty) continue;
+        if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$').hasMatch(vName)) {
+          throw FormatException(l.hookEditErrVarNameFormat(i + 1));
         }
-        if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$').hasMatch(name)) {
-          throw ArgumentError(
-              'Variable ${i + 1}: name must start with a letter or '
-              'underscore and contain only letters, digits, and underscores');
-        }
-        if (!seenNames.add(name)) {
-          throw ArgumentError('Variable ${i + 1}: name "$name" is duplicated');
+        if (!seenNames.add(vName)) {
+          throw FormatException(l.hookEditErrVarDup(i + 1, vName));
         }
       }
       final variables = _collectVariables();
@@ -279,32 +287,31 @@ class _HookEditScreenState extends State<HookEditScreen> {
       if (mounted) Navigator.pop(context);
     } catch (e) {
       setState(() {
-        _error = e.toString().replaceFirst('ArgumentError: ', '');
+        _error = _stripError(e);
         _saving = false;
       });
     }
   }
 
-  // ── Build ──────────────────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
     final spaces = widget.store.spaces;
     final isNew = widget.existing == null;
+    final l = context.l10n;
 
     return EscapeBack(
         child: Scaffold(
       appBar: AppBar(
-        title: Text(isNew ? 'New hook' : 'Edit hook'),
+        title: Text(isNew ? l.hookEditNew : l.hookEditExisting),
         actions: [
           IconButton(
             icon: const Icon(Icons.code),
-            tooltip: 'Edit as JSON',
+            tooltip: l.hookEditOpenJson,
             onPressed: _openJsonEditor,
           ),
           TextButton(
             onPressed: _saving ? null : _save,
-            child: const Text('Save'),
+            child: Text(l.hookEditSave),
           ),
         ],
       ),
@@ -319,26 +326,28 @@ class _HookEditScreenState extends State<HookEditScreen> {
             ),
           TextField(
             controller: _name,
-            decoration: const InputDecoration(
-              labelText: 'Name',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              labelText: l.hookEditNameLabel,
+              border: const OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _key,
-            decoration: const InputDecoration(
-              labelText: 'Key (used in {{previous.<key>.…}})',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              labelText: l.hookEditKeyLabel,
+              border: const OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 20),
-          _section('Triggers'),
+          _section(l.hookEditSectionTriggers),
           Wrap(
             spacing: 6,
             children: HookTrigger.values.map((t) {
               return FilterChip(
-                label: Text(t == HookTrigger.create ? 'On create' : 'On edit'),
+                label: Text(t == HookTrigger.create
+                    ? l.hookEditOnCreate
+                    : l.hookEditOnEdit),
                 selected: _triggers.contains(t),
                 onSelected: (v) => setState(() {
                   if (v) {
@@ -351,7 +360,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
             }).toList(),
           ),
           const SizedBox(height: 20),
-          _section('Spaces'),
+          _section(l.hookEditSectionSpaces),
           Wrap(
             spacing: 6,
             runSpacing: 6,
@@ -370,12 +379,14 @@ class _HookEditScreenState extends State<HookEditScreen> {
             }).toList(),
           ),
           const SizedBox(height: 20),
-          _section('Post kinds'),
+          _section(l.hookEditSectionPostKinds),
           Wrap(
             spacing: 6,
             children: PostKind.values.map((k) {
               return FilterChip(
-                label: Text(k == PostKind.note ? 'Notes' : 'Bookmarks'),
+                label: Text(k == PostKind.note
+                    ? l.hookEditPostKindNote
+                    : l.hookEditPostKindBookmark),
                 selected: _postKinds.contains(k),
                 onSelected: (v) => setState(() {
                   if (v) {
@@ -390,29 +401,27 @@ class _HookEditScreenState extends State<HookEditScreen> {
           const SizedBox(height: 20),
           TextField(
             controller: _tagFilters,
-            decoration: const InputDecoration(
-              labelText: 'Tag filter (comma-separated, optional)',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              labelText: l.hookEditTagFilterLabel,
+              border: const OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 20),
           TextField(
             controller: _timeout,
-            decoration: const InputDecoration(
-              labelText: 'Timeout (seconds)',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              labelText: l.hookEditTimeoutLabel,
+              border: const OutlineInputBorder(),
             ),
             keyboardType: TextInputType.number,
           ),
           const SizedBox(height: 24),
-          _section('Variables'),
-          const Padding(
-            padding: EdgeInsets.only(bottom: 8),
+          _section(l.hookEditSectionVariables),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
             child: Text(
-              'Named constants usable in any template as {{vars.NAME}}. '
-              'Values are literal — they are not re-interpolated. '
-              'Useful for tokens, chat IDs, or anything reused across rules.',
-              style: TextStyle(fontSize: 12),
+              l.hookEditVariablesHelper,
+              style: const TextStyle(fontSize: 12),
             ),
           ),
           ..._variables.asMap().entries.map((e) => _VariableRow(
@@ -429,16 +438,15 @@ class _HookEditScreenState extends State<HookEditScreen> {
               _variables.add(_VarRow.empty());
             }),
             icon: const Icon(Icons.add, size: 18),
-            label: const Text('Add variable'),
+            label: Text(l.hookEditAddVariable),
           ),
           const SizedBox(height: 24),
-          _section('Rules'),
-          const Padding(
-            padding: EdgeInsets.only(bottom: 8),
+          _section(l.hookEditSectionRules),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
             child: Text(
-              'The first rule whose "when" evaluates true fires. An empty '
-              '"when" always matches.',
-              style: TextStyle(fontSize: 12),
+              l.hookEditRulesHelper,
+              style: const TextStyle(fontSize: 12),
             ),
           ),
           ..._rules.asMap().entries.map((e) => _RuleCard(
@@ -457,15 +465,17 @@ class _HookEditScreenState extends State<HookEditScreen> {
               _rules.add(_RuleRow.empty());
             }),
             icon: const Icon(Icons.add),
-            label: const Text('Add rule'),
+            label: Text(l.hookEditAddRule),
           ),
           const SizedBox(height: 16),
           TextButton.icon(
             onPressed: () => setState(() => _showPreview = !_showPreview),
             icon: Icon(_showPreview ? Icons.expand_less : Icons.expand_more),
-            label: Text(_showPreview ? 'Hide preview' : 'Preview request'),
+            label: Text(_showPreview
+                ? l.hookEditHidePreview
+                : l.hookEditShowPreview),
           ),
-          if (_showPreview) _buildPreview(),
+          if (_showPreview) _buildPreview(l),
           const SizedBox(height: 40),
         ],
       ),
@@ -477,7 +487,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
         child: Text(text, style: Theme.of(context).textTheme.titleSmall),
       );
 
-  Widget _buildPreview() {
+  Widget _buildPreview(AppLocalizations l) {
     final built = _buildHookForExport();
     final samplePost = Post(
       id: 'preview-post',
@@ -508,7 +518,7 @@ class _HookEditScreenState extends State<HookEditScreen> {
         );
     final sections = <Widget>[];
     if (built.rules.isEmpty) {
-      sections.add(const Text('No complete rules to preview yet.'));
+      sections.add(Text(l.hookEditPreviewEmpty));
     }
     for (var i = 0; i < built.rules.length; i++) {
       final rule = built.rules[i];
@@ -519,13 +529,13 @@ class _HookEditScreenState extends State<HookEditScreen> {
       } catch (e) {
         url = '<render error: $e>';
       }
-      sections.add(Text('Rule ${i + 1} — ${rule.when ?? "always"}',
+      sections.add(Text(
+          l.hookEditPreviewRuleTitle(i + 1, rule.when ?? l.hookPreviewAlways),
           style: Theme.of(context).textTheme.titleSmall));
       sections.add(SelectableText('${rule.method} $url', style: mono));
       if (rule.multipartParts.isNotEmpty) {
         sections.add(SelectableText(
-            '(multipart: ${rule.multipartParts.length} part'
-            '${rule.multipartParts.length == 1 ? "" : "s"})',
+            l.hookEditPreviewMultipart(rule.multipartParts.length),
             style: mono));
       } else if (rule.bodyTemplate != null && rule.bodyTemplate!.isNotEmpty) {
         try {
@@ -548,529 +558,6 @@ class _HookEditScreenState extends State<HookEditScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: sections,
-      ),
-    );
-  }
-}
-
-// ── Rule row model ─────────────────────────────────────────────────────────
-
-class _RuleRow {
-  final String id;
-  final TextEditingController when;
-  final TextEditingController url;
-  final TextEditingController body;
-  String method;
-  final List<_PartRow> parts;
-  final List<MapEntry<TextEditingController, TextEditingController>> headers;
-
-  _RuleRow({
-    required this.id,
-    required this.when,
-    required this.url,
-    required this.body,
-    required this.method,
-    required this.parts,
-    required this.headers,
-  });
-
-  factory _RuleRow.empty() => _RuleRow(
-        id: const Uuid().v4(),
-        when: TextEditingController(),
-        url: TextEditingController(),
-        body: TextEditingController(),
-        method: 'POST',
-        parts: [],
-        headers: [],
-      );
-
-  factory _RuleRow.fromRule(HookRule r) => _RuleRow(
-        id: const Uuid().v4(),
-        when: TextEditingController(text: r.when ?? ''),
-        url: TextEditingController(text: r.urlTemplate),
-        body: TextEditingController(text: r.bodyTemplate ?? ''),
-        method: r.method,
-        parts: r.multipartParts.map(_PartRow.fromPart).toList(),
-        headers: r.headers.entries
-            .map((e) => MapEntry(
-                  TextEditingController(text: e.key),
-                  TextEditingController(text: e.value),
-                ))
-            .toList(),
-      );
-
-  void dispose() {
-    when.dispose();
-    url.dispose();
-    body.dispose();
-    for (final p in parts) {
-      p.dispose();
-    }
-    for (final h in headers) {
-      h.key.dispose();
-      h.value.dispose();
-    }
-  }
-}
-
-class _PartRow {
-  final String id;
-  final TextEditingController name;
-  final TextEditingController value;
-  final TextEditingController filename;
-  final TextEditingController join;
-  final TextEditingController prefix;
-  final TextEditingController suffix;
-  bool isFile;
-  bool repeat;
-
-  _PartRow({
-    required this.id,
-    required this.name,
-    required this.value,
-    required this.filename,
-    required this.join,
-    required this.prefix,
-    required this.suffix,
-    required this.isFile,
-    required this.repeat,
-  });
-
-  factory _PartRow.empty() => _PartRow(
-        id: const Uuid().v4(),
-        name: TextEditingController(),
-        value: TextEditingController(),
-        filename: TextEditingController(),
-        join: TextEditingController(),
-        prefix: TextEditingController(),
-        suffix: TextEditingController(),
-        isFile: false,
-        repeat: false,
-      );
-
-  factory _PartRow.fromPart(HookMultipartPart p) => _PartRow(
-        id: const Uuid().v4(),
-        name: TextEditingController(text: p.name),
-        value: TextEditingController(text: p.template ?? p.filePath ?? ''),
-        filename: TextEditingController(text: p.filename ?? ''),
-        join: TextEditingController(text: p.join ?? ''),
-        prefix: TextEditingController(text: p.prefix ?? ''),
-        suffix: TextEditingController(text: p.suffix ?? ''),
-        isFile: p.filePath != null,
-        repeat: p.repeat != null,
-      );
-
-  void dispose() {
-    name.dispose();
-    value.dispose();
-    filename.dispose();
-    join.dispose();
-    prefix.dispose();
-    suffix.dispose();
-  }
-}
-
-class _VarRow {
-  final String id;
-  final TextEditingController name;
-  final TextEditingController value;
-
-  _VarRow({
-    required this.id,
-    required this.name,
-    required this.value,
-  });
-
-  factory _VarRow.empty() => _VarRow(
-        id: const Uuid().v4(),
-        name: TextEditingController(),
-        value: TextEditingController(),
-      );
-
-  factory _VarRow.fromEntry(String name, String value) => _VarRow(
-        id: const Uuid().v4(),
-        name: TextEditingController(text: name),
-        value: TextEditingController(text: value),
-      );
-
-  void dispose() {
-    name.dispose();
-    value.dispose();
-  }
-}
-
-// ── Rule card ──────────────────────────────────────────────────────────────
-
-class _RuleCard extends StatelessWidget {
-  final int index;
-  final _RuleRow row;
-  final bool canDelete;
-  final VoidCallback onChanged;
-  final VoidCallback onDelete;
-
-  const _RuleCard({
-    super.key,
-    required this.index,
-    required this.row,
-    required this.canDelete,
-    required this.onChanged,
-    required this.onDelete,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final hasParts = row.parts.isNotEmpty;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Text('Rule ${index + 1}',
-                    style: Theme.of(context).textTheme.titleSmall),
-                const Spacer(),
-                if (canDelete)
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: onDelete,
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: row.when,
-              decoration: const InputDecoration(
-                labelText: 'When (optional)',
-                hintText: 'post.files.length >= 2 && post.files.length <= 10',
-                helperText: 'First rule whose condition is true fires. '
-                    'Empty always matches.',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                SizedBox(
-                  width: 120,
-                  child: DropdownButtonFormField<String>(
-                    value: row.method,
-                    decoration: const InputDecoration(labelText: 'Method'),
-                    items: const ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
-                        .map((m) => DropdownMenuItem(value: m, child: Text(m)))
-                        .toList(),
-                    onChanged: (v) {
-                      row.method = v ?? 'POST';
-                      onChanged();
-                    },
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    controller: row.url,
-                    decoration: const InputDecoration(
-                      labelText: 'URL template',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: row.body,
-              enabled: !hasParts,
-              decoration: InputDecoration(
-                labelText: hasParts
-                    ? 'Body template (disabled — multipart in use)'
-                    : 'Body template',
-                border: const OutlineInputBorder(),
-              ),
-              minLines: 3,
-              maxLines: 8,
-            ),
-            const SizedBox(height: 12),
-            _header(context, 'Headers'),
-            ...row.headers.asMap().entries.map((e) {
-              final i = e.key;
-              final pair = e.value;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: pair.key,
-                        decoration: const InputDecoration(labelText: 'Name'),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: TextField(
-                        controller: pair.value,
-                        decoration: const InputDecoration(labelText: 'Value'),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.remove_circle_outline),
-                      onPressed: () {
-                        pair.key.dispose();
-                        pair.value.dispose();
-                        row.headers.removeAt(i);
-                        onChanged();
-                      },
-                    ),
-                  ],
-                ),
-              );
-            }),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () {
-                  row.headers.add(MapEntry(
-                    TextEditingController(),
-                    TextEditingController(),
-                  ));
-                  onChanged();
-                },
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Add header'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            _header(context, 'Multipart parts'),
-            ...row.parts.asMap().entries.map((e) {
-              final i = e.key;
-              return _PartCard(
-                key: ValueKey(e.value.id),
-                row: e.value,
-                onChanged: onChanged,
-                onDelete: () {
-                  e.value.dispose();
-                  row.parts.removeAt(i);
-                  onChanged();
-                },
-              );
-            }),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () {
-                  row.parts.add(_PartRow.empty());
-                  onChanged();
-                },
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Add part'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _header(BuildContext context, String text) => Padding(
-        padding: const EdgeInsets.only(top: 4, bottom: 6),
-        child: Text(text,
-            style: Theme.of(context)
-                .textTheme
-                .labelLarge
-                ?.copyWith(fontWeight: FontWeight.w600)),
-      );
-}
-
-// ── Part card ──────────────────────────────────────────────────────────────
-
-class _PartCard extends StatelessWidget {
-  final _PartRow row;
-  final VoidCallback onChanged;
-  final VoidCallback onDelete;
-
-  const _PartCard({
-    super.key,
-    required this.row,
-    required this.onChanged,
-    required this.onDelete,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 0,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: row.name,
-                    decoration: const InputDecoration(
-                      labelText: 'Name',
-                      hintText: 'chat_id, caption, photo, media…',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(value: false, label: Text('Text')),
-                    ButtonSegment(value: true, label: Text('File')),
-                  ],
-                  selected: {row.isFile},
-                  onSelectionChanged: (s) {
-                    row.isFile = s.first;
-                    onChanged();
-                  },
-                  showSelectedIcon: false,
-                  style: const ButtonStyle(
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            TextField(
-              controller: row.value,
-              decoration: InputDecoration(
-                labelText: row.isFile
-                    ? 'File path (e.g. post.files.0.id or repeat.file.id)'
-                    : 'Value template',
-              ),
-              minLines: 1,
-              maxLines: 4,
-            ),
-            const SizedBox(height: 6),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Repeat over post.files'),
-              value: row.repeat,
-              onChanged: (v) {
-                row.repeat = v;
-                onChanged();
-              },
-            ),
-            if (row.repeat)
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: row.join,
-                      decoration: const InputDecoration(
-                        labelText: 'Join (optional)',
-                        hintText: ',',
-                        helperText: 'If set, iterations merge into one field',
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: TextField(
-                      controller: row.prefix,
-                      decoration: const InputDecoration(labelText: 'Prefix'),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: TextField(
-                      controller: row.suffix,
-                      decoration: const InputDecoration(labelText: 'Suffix'),
-                    ),
-                  ),
-                ],
-              ),
-            if (row.isFile && !row.repeat)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: TextField(
-                  controller: row.filename,
-                  decoration: const InputDecoration(
-                    labelText: 'Filename override (optional)',
-                  ),
-                ),
-              ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton.icon(
-                onPressed: onDelete,
-                icon: const Icon(Icons.remove_circle_outline, size: 18),
-                label: const Text('Remove'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _VariableRow extends StatelessWidget {
-  final _VarRow row;
-  final VoidCallback onChanged;
-  final VoidCallback onDelete;
-
-  const _VariableRow({
-    super.key,
-    required this.row,
-    required this.onChanged,
-    required this.onDelete,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 160,
-            child: TextField(
-              controller: row.name,
-              decoration: const InputDecoration(
-                labelText: 'Name',
-                hintText: 'bot_token',
-                isDense: true,
-                border: OutlineInputBorder(),
-              ),
-              style: const TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 13,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: row.value,
-              decoration: const InputDecoration(
-                labelText: 'Value',
-                isDense: true,
-                border: OutlineInputBorder(),
-              ),
-              style: const TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 13,
-              ),
-              minLines: 1,
-              maxLines: 4,
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.remove_circle_outline),
-            tooltip: 'Remove variable',
-            onPressed: onDelete,
-          ),
-        ],
       ),
     );
   }

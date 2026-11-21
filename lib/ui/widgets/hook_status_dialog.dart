@@ -3,21 +3,9 @@ import 'package:flutter/material.dart';
 import '../../data/hooks.dart';
 import '../../data/models.dart';
 import '../../data/store.dart';
+import '../../l10n/l10n.dart';
 import '../../util/hook_outcome.dart';
 
-/// Inspector + manual-run UI for a post's hooks.
-///
-/// Shows three kinds of rows:
-///   - Applicable hooks whose last state is recorded — with prior status.
-///   - Applicable hooks that have never fired — with "Never fired" badge.
-///   - Orphaned states: hookState entries whose hook no longer exists.
-///     Read-only, no Run button.
-///
-/// Any applicable hook can be fired manually; the "Run all" button runs
-/// all of them in sequence. Firing uses the hook's own trigger set to
-/// choose create/edit (preferring the trigger that matches the post's
-/// edited state), so templates referencing `{{trigger}}` behave
-/// sensibly.
 Future<void> showHookStatusDialog(
   BuildContext context,
   Post post,
@@ -50,9 +38,6 @@ class _HookStatusDialog extends StatefulWidget {
 }
 
 class _HookStatusDialogState extends State<_HookStatusDialog> {
-  /// Hook keys with a run started from this dialog. Distinct from
-  /// `store.hasActiveHooks` so the buttons disable as soon as the user
-  /// taps, even before `notifyListeners()` reaches the dialog.
   final Set<String> _running = {};
   bool _runningAll = false;
 
@@ -114,24 +99,25 @@ class _HookStatusDialogState extends State<_HookStatusDialog> {
         widget.store.hasActiveHooks(post.id);
 
     final theme = Theme.of(context);
+    final l = context.l10n;
 
     return AlertDialog(
-      title: const Text('Hook status'),
+      title: Text(l.hookStatusTitle),
       content: SizedBox(
         width: 520,
         child: (applicable.isEmpty && orphaned.isEmpty)
-            ? const Text('No hooks apply to this post.')
+            ? Text(l.hookStatusNone)
             : ListView(
                 shrinkWrap: true,
                 children: [
                   if (applicable.isNotEmpty) ...[
                     _SectionHeader(
-                      title: 'Applicable (${applicable.length})',
+                      title: l.hookStatusApplicable(applicable.length),
                       trailing: applicable.length > 1
                           ? TextButton.icon(
                               onPressed: anyRunning ? null : _runAll,
                               icon: const Icon(Icons.play_arrow, size: 16),
-                              label: const Text('Run all'),
+                              label: Text(l.hookStatusRunAll),
                             )
                           : null,
                     ),
@@ -147,7 +133,7 @@ class _HookStatusDialogState extends State<_HookStatusDialog> {
                   ],
                   if (orphaned.isNotEmpty) ...[
                     if (applicable.isNotEmpty) const Divider(height: 24),
-                    const _SectionHeader(title: 'Past runs'),
+                    _SectionHeader(title: l.hookStatusPast),
                     const SizedBox(height: 4),
                     for (final e in orphaned)
                       _HookRow(
@@ -161,9 +147,7 @@ class _HookStatusDialogState extends State<_HookStatusDialog> {
                   ],
                   const SizedBox(height: 4),
                   Text(
-                    'Hooks can be fired manually at any time. Templates '
-                    'using {{trigger}} see the trigger from the hook\'s '
-                    'own settings.',
+                    l.hookStatusHelper,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                       fontStyle: FontStyle.italic,
@@ -175,7 +159,7 @@ class _HookStatusDialogState extends State<_HookStatusDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Close'),
+          child: Text(l.commonClose),
         ),
       ],
     );
@@ -231,6 +215,7 @@ class _HookRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     final mono = theme.textTheme.bodySmall?.copyWith(
       fontFamily: 'monospace', fontSize: 11);
     final body = state?.lastBody;
@@ -262,19 +247,21 @@ class _HookRow extends StatelessWidget {
                     if (isRunning)
                       _Badge(
                         color: theme.colorScheme.onSurfaceVariant,
-                        label: 'Running',
+                        label: l.hookStatusRunning,
                       )
                     else if (never)
                       _Badge(
                         color: theme.colorScheme.onSurfaceVariant,
-                        label: 'Never fired',
+                        label: l.hookStatusNeverFired,
                       )
                     else
                       _Badge(
                         color: failed
                             ? theme.colorScheme.error
                             : Colors.green.shade600,
-                        label: failed ? 'Failed' : 'Success',
+                        label: failed
+                            ? l.hookStatusFailed
+                            : l.hookStatusSuccess,
                       ),
                   ],
                 ),
@@ -289,7 +276,7 @@ class _HookRow extends StatelessWidget {
                   TextButton.icon(
                     onPressed: enabled ? onRun : null,
                     icon: const Icon(Icons.play_arrow, size: 16),
-                    label: const Text('Run'),
+                    label: Text(l.hookStatusRun),
                     style: TextButton.styleFrom(
                       visualDensity: VisualDensity.compact,
                       padding:
@@ -299,10 +286,10 @@ class _HookRow extends StatelessWidget {
               ],
             ],
           ),
-          Text('key: $_key', style: theme.textTheme.bodySmall),
+          Text(l.hookStatusKey(_key), style: theme.textTheme.bodySmall),
           if (hook == null)
             Text(
-              'This hook no longer exists in the vault.',
+              l.hookStatusOrphan,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.error,
                 fontStyle: FontStyle.italic,
@@ -310,18 +297,18 @@ class _HookRow extends StatelessWidget {
             ),
           if (state != null) ...[
             Text(
-              'fired: ${state!.lastFiredAt.toLocal()}',
+              l.hookStatusFired(state!.lastFiredAt.toLocal().toString()),
               style: theme.textTheme.bodySmall,
             ),
             if (state!.lastError != null)
               Text(
-                'error: ${state!.lastError}',
+                l.hookStatusError(state!.lastError!),
                 style: theme.textTheme.bodySmall
                     ?.copyWith(color: theme.colorScheme.error),
               )
             else if (state!.lastStatus != null)
               Text(
-                'status: ${state!.lastStatus}',
+                l.hookStatusStatus(state!.lastStatus!.toString()),
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: failed ? theme.colorScheme.error : null,
                 ),

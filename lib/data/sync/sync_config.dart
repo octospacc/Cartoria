@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:fs_shim/fs_shim.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../util/json_format.dart';

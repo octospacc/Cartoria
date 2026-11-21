@@ -11,9 +11,9 @@ import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_highlight/themes/atom-one-light.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:http/http.dart' as http;
 
 import '../../data/html_image_cache.dart';
+import '../../l10n/l10n.dart';
 
 /// Renders a post body with full HTML support.
 ///
@@ -409,9 +409,7 @@ class _PostBodyTextState extends State<PostBodyText> {
   /// Handles all three; returns null when the fence had no info string.
   String? _codeLanguage(dom.Element pre) {
     final code = pre.querySelector('code');
-    final cls = (code?.attributes['class'] ?? '') +
-        ' ' +
-        (pre.attributes['class'] ?? '');
+    final cls = '${code?.attributes['class'] ?? ''} ${pre.attributes['class'] ?? ''}';
     final m = RegExp(r'(?:language|lang)-([A-Za-z0-9_+#-]+)').firstMatch(cls);
     return m?.group(1)?.toLowerCase();
   }
@@ -496,7 +494,7 @@ class _PostBodyTextState extends State<PostBodyText> {
   Widget _standaloneImage(dom.Element img, ThemeData theme) {
     final src = img.attributes['src'] ?? '';
     final alt = img.attributes['alt'] ?? '';
-    if (src.isEmpty) return _imagePlaceholder(alt, theme);
+    if (src.isEmpty) return _imagePlaceholder(alt, theme, context.l10n);
 
     // Data URI: inline bytes, no network.
     if (src.startsWith('data:')) {
@@ -548,7 +546,7 @@ class _PostBodyTextState extends State<PostBodyText> {
     //   - base64 payload: `iVBORw0…`
     //   - URL-encoded payload (rare): `%3Csvg%3E…`
     final commaIdx = src.indexOf(',');
-    if (commaIdx < 0) return _imageErrorBox(alt, theme);
+    if (commaIdx < 0) return _imageErrorBox(alt, theme, context.l10n);
 
     final header = src.substring('data:'.length, commaIdx);
     final payload = src.substring(commaIdx + 1);
@@ -563,11 +561,11 @@ class _PostBodyTextState extends State<PostBodyText> {
           ? base64Decode(payload)
           : Uint8List.fromList(Uri.decodeFull(payload).codeUnits);
     } catch (_) {
-      return _imageErrorBox(alt, theme);
+      return _imageErrorBox(alt, theme, context.l10n);
     }
 
     if (mimeType.startsWith('image/svg')) {
-      if (!_looksLikeSvg(bytes)) return _imageErrorBox(alt, theme);
+      if (!_looksLikeSvg(bytes)) return _imageErrorBox(alt, theme, context.l10n);
       return Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: ConstrainedBox(
@@ -591,7 +589,8 @@ class _PostBodyTextState extends State<PostBodyText> {
           child: Image.memory(
             bytes,
             fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => _imageErrorBox(alt, theme),
+            errorBuilder: (_, __, ___) =>
+                _imageErrorBox(alt, theme, context.l10n),
           ),
         ),
       ),
@@ -821,32 +820,19 @@ class _PostBodyTextState extends State<PostBodyText> {
       final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!ok && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open $url')),
+          SnackBar(content: Text(context.l10n.postBodyOpenFailed(url))),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open link: $e')),
+          SnackBar(content: Text(context.l10n.postBodyOpenError(e.toString()))),
         );
       }
     }
   }
 
   final Map<String, Future<Uint8List?>> _imageFutures = {};
-
-  /// One future per URL, cached for the lifetime of this widget state.
-  /// Without this, every rebuild of `PostBodyText` (each `notifyListeners`
-  /// in the store) would call `getOrFetch` afresh — forcing the
-  /// FutureBuilder through a fresh `connectionState = waiting` cycle and
-  /// showing a spinner flash. The cache itself dedupes concurrent fetches
-  /// (in-flight map), but the FutureBuilder instance still resets.
-  Future<Uint8List?> _imageFutureFor(String url) {
-    return _imageFutures.putIfAbsent(
-      url,
-      () => widget.imageCache?.getOrFetch(url) ?? Future.value(null),
-    );
-  }
 }
 
 /// One `<img>` from a post body, rendered with a fixed-aspect box that
@@ -1036,13 +1022,14 @@ class _HtmlImageState extends State<_HtmlImage> {
 
   Widget _buildContent(double displayWidth) {
     final theme = widget.theme;
+    final l = context.l10n;
 
     if (widget.fallbackToNetwork) {
-      if (widget.isSvg) return _imageErrorBox(widget.alt, theme);
+      if (widget.isSvg) return _imageErrorBox(widget.alt, theme, l);
       return Image.network(
         widget.url,
         fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => _imageErrorBox(widget.alt, theme),
+        errorBuilder: (_, __, ___) => _imageErrorBox(widget.alt, theme, l),
         loadingBuilder: (context, child, progress) {
           if (progress == null) return child;
           return _imageLoadingBox(theme);
@@ -1050,10 +1037,10 @@ class _HtmlImageState extends State<_HtmlImage> {
       );
     }
     if (_loading) return _imageLoadingBox(theme);
-    if (_error || _bytes == null) return _imageErrorBox(widget.alt, theme);
+    if (_error || _bytes == null) return _imageErrorBox(widget.alt, theme, l);
 
     if (widget.isSvg) {
-      if (!_looksLikeSvg(_bytes!)) return _imageErrorBox(widget.alt, theme);
+      if (!_looksLikeSvg(_bytes!)) return _imageErrorBox(widget.alt, theme, l);
       return SvgPicture.memory(_bytes!, fit: BoxFit.contain);
     }
 
@@ -1067,7 +1054,7 @@ class _HtmlImageState extends State<_HtmlImage> {
       _bytes!,
       fit: BoxFit.contain,
       cacheWidth: cacheW,
-      errorBuilder: (_, __, ___) => _imageErrorBox(widget.alt, theme),
+      errorBuilder: (_, __, ___) => _imageErrorBox(widget.alt, theme, l),
     );
   }
 }
@@ -1076,7 +1063,7 @@ class _HtmlImageState extends State<_HtmlImage> {
 // Top-level so both `_PostBodyTextState` and `_HtmlImageState` can use
 // them. Stateless — pure functions of their arguments.
 
-Widget _imagePlaceholder(String alt, ThemeData theme) {
+Widget _imagePlaceholder(String alt, ThemeData theme, AppLocalizations l) {
   return Padding(
     padding: const EdgeInsets.only(bottom: 8),
     child: Container(
@@ -1086,7 +1073,9 @@ Widget _imagePlaceholder(String alt, ThemeData theme) {
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
-        alt.isEmpty ? '[image]' : '[image: $alt]',
+        alt.isEmpty
+            ? l.postBodyImagePlaceholder
+            : l.postBodyImagePlaceholderAlt(alt),
         style: TextStyle(
           color: theme.colorScheme.onSurfaceVariant,
           fontStyle: FontStyle.italic,
@@ -1096,7 +1085,7 @@ Widget _imagePlaceholder(String alt, ThemeData theme) {
   );
 }
 
-Widget _imageErrorBox(String alt, ThemeData theme) {
+Widget _imageErrorBox(String alt, ThemeData theme, AppLocalizations l) {
   return Container(
     height: 120,
     decoration: BoxDecoration(
@@ -1116,7 +1105,7 @@ Widget _imageErrorBox(String alt, ThemeData theme) {
             const SizedBox(width: 8),
             Flexible(
               child: Text(
-                alt.isEmpty ? 'Image failed to load' : alt,
+                alt.isEmpty ? l.postBodyImageFailed : alt,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: theme.colorScheme.onSurfaceVariant,

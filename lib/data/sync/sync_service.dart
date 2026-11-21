@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:fs_shim/fs_shim.dart';
 import 'package:flutter/foundation.dart';
@@ -12,14 +11,6 @@ import 'offloaded_store.dart';
 import 'sync_config.dart';
 import 'sync_provider.dart';
 import 'sync_scope.dart';
-
-/// Short-hash for status lines: `"sha a1b2c3d"`, or null when the SHA is
-/// absent (first-ever sync, or empty repo).
-String? _shortSha(String? sha) {
-  if (sha == null || sha.isEmpty) return null;
-  final s = sha.length > 7 ? sha.substring(0, 7) : sha;
-  return 'sha $s';
-}
 
 class SyncPushResult {
   /// Files the push created on the remote (didn't exist there before).
@@ -43,19 +34,6 @@ class SyncPushResult {
     this.skippedOffloaded = 0,
     required this.commitSha,
   });
-
-  /// Human-readable one-line summary for UI status lines.
-  String get summary {
-    final parts = <String>[
-      '$created created',
-      '$updated updated',
-      '$deleted deleted',
-    ];
-    if (skippedLarge > 0) parts.add('$skippedLarge skipped (large)');
-    if (skippedOffloaded > 0) parts.add('$skippedOffloaded offloaded');
-    final sha = _shortSha(commitSha);
-    return 'Pushed: ${parts.join(', ')}${sha != null ? ' · $sha' : ''}';
-  }
 }
 
 class SyncPullResult {
@@ -88,18 +66,6 @@ class SyncPullResult {
   });
 
   int get deleted => deletedNonDrive + deletedDrive;
-
-  /// Human-readable one-line summary for UI status lines.
-  String get summary {
-    final parts = <String>[
-      '$added added',
-      '$updated updated',
-      '$deleted deleted ($deletedNonDrive posts, $deletedDrive blobs)',
-    ];
-    if (offloaded > 0) parts.add('$offloaded offloaded');
-    final sha = _shortSha(commitSha);
-    return 'Pulled: ${parts.join(', ')}${sha != null ? ' · $sha' : ''}';
-  }
 }
 
 /// A pending change tracked between pass 1 (SHA computation) and pass 2

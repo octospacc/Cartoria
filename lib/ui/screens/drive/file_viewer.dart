@@ -8,42 +8,17 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../../data/models.dart';
 import '../../../data/store.dart';
+import '../../../l10n/l10n.dart';
 import '../../../platform/file_save.dart';
 import '../../../platform/media.dart';
 import '../../../util/file_category.dart';
 import '../../widgets/video_aspect.dart';
 
-/// Full-screen viewer for a single file, or a set of files that can be
-/// navigated between with arrow keys and on-screen chevrons.
-///
-/// ## Navigation
-///
-/// If [siblings] is provided (a list of drive files, including [file]),
-/// the viewer starts on [file] and allows navigating to the others via:
-///   - ← and → arrow keys on a hardware keyboard
-///   - On-screen chevron buttons (visible when a prev/next exists)
-///   - Horizontal swipe on video/audio/text/PDF pages (PageView)
-///
-/// Swipe does not work on image pages: `InteractiveViewer` claims
-/// horizontal drag gestures for panning when zoomed. Use buttons or
-/// arrow keys on image pages.
-///
-/// A `3 / 12` counter in the app bar and a dot row (up to 10 items)
-/// at the bottom give navigation context.
 class FileViewerScreen extends StatefulWidget {
   final VaultStore store;
   final Space space;
-
-  /// The file to show first.
   final DriveFile file;
-
-  /// Whether the app bar shows a delete action. If [siblings] is
-  /// provided, delete removes the *current* file, not necessarily
-  /// [file] — use case: user navigated away from [file].
   final bool allowDelete;
-
-  /// All files navigable from here, in display order. Must contain
-  /// [file] if non-null. Null means single-file mode (no navigation).
   final List<DriveFile>? siblings;
 
   const FileViewerScreen({
@@ -144,6 +119,7 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
   Widget build(BuildContext context) {
     final file = _currentFile;
     final theme = Theme.of(context);
+    final l = context.l10n;
 
     return Focus(
       autofocus: true,
@@ -175,7 +151,7 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
           actions: [
             IconButton(
               icon: const Icon(Icons.ios_share),
-              tooltip: 'Share / download',
+              tooltip: l.driveShareAction,
               onPressed: () async {
                 final bytes =
                     await widget.store.readFileBytes(widget.space.id, file.id);
@@ -185,7 +161,7 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
             if (widget.allowDelete)
               IconButton(
                 icon: const Icon(Icons.delete_outline),
-                tooltip: 'Delete',
+                tooltip: l.driveDeleteAction,
                 onPressed: () => _delete(context),
               ),
           ],
@@ -298,20 +274,20 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
   }
 
   Future<void> _delete(BuildContext context) async {
+    final l = context.l10n;
     final file = _currentFile;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Delete "${file.name}"?'),
-        content: const Text(
-            'Posts that reference this file will lose the attachment.'),
+        title: Text(l.driveDeleteFileTitle(file.name)),
+        content: Text(l.driveDeleteFileBody),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+              child: Text(l.commonCancel)),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Delete')),
+              child: Text(l.commonDelete)),
         ],
       ),
     );
@@ -380,23 +356,19 @@ class _ViewerImageState extends State<_ViewerImage> {
   }
 
   Future<Uint8List> _load() async {
-    // Auto-download offloaded files to disk on viewer open. The user
-    // is explicitly navigating here; prompting per-file would break
-    // the navigation flow. `ensureFileLocal` writes bytes to disk,
-    // unoffloads, updates caches, and notifies — so the drive screen
-    // stops showing this file as offloaded on the next rebuild.
     await widget.store.ensureFileLocal(widget.spaceId, widget.file.id);
     return widget.store.readImageBytes(widget.spaceId, widget.file.id);
   }
 
   @override
   Widget build(BuildContext context) {
+    final l = context.l10n;
     return FutureBuilder<Uint8List>(
       future: _future,
       builder: (context, snap) {
         if (snap.hasError) {
           return _ViewerError(
-            message: 'Failed to load image',
+            message: l.fileViewerImageLoadFailed,
             error: snap.error,
             onRetry: () => setState(() => _future = _load()),
           );
@@ -477,7 +449,8 @@ class _ViewerVideoState extends State<_ViewerVideo> {
   @override
   Widget build(BuildContext context) {
     if (_error != null) {
-      return Center(child: Text('Cannot play video: $_error'));
+      return Center(
+          child: Text(context.l10n.fileViewerCannotPlayVideo(_error!)));
     }
     final controller = _controller;
     if (controller == null) {
@@ -551,7 +524,8 @@ class _ViewerAudioState extends State<_ViewerAudio> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     if (_error != null) {
-      return Center(child: Text('Cannot play audio: $_error'));
+      return Center(
+          child: Text(context.l10n.fileViewerCannotPlayAudio(_error!)));
     }
     final player = _player;
     if (player == null) {
@@ -692,6 +666,7 @@ class _ViewerGeneric extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -716,7 +691,7 @@ class _ViewerGeneric extends StatelessWidget {
                 await saveOrShareFile(bytes, file.name);
               },
               icon: const Icon(Icons.ios_share),
-              label: const Text('Share / download'),
+              label: Text(l.driveShareAction),
             ),
           ],
         ),
@@ -739,14 +714,14 @@ class _ViewerError extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.cloud_off, size: 48,
-                color: theme.colorScheme.error),
+            Icon(Icons.cloud_off, size: 48, color: theme.colorScheme.error),
             const SizedBox(height: 12),
             Text(message, style: theme.textTheme.titleMedium),
             if (error != null) ...[
@@ -764,7 +739,7 @@ class _ViewerError extends StatelessWidget {
             FilledButton.icon(
               onPressed: onRetry,
               icon: const Icon(Icons.refresh),
-              label: const Text('Retry'),
+              label: Text(l.fileViewerRetry),
             ),
           ],
         ),

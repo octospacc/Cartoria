@@ -1,14 +1,12 @@
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
-import '../../../l10n/l10n.dart';
 import '../../../data/models.dart';
 import '../../../data/store.dart';
-import '../../widgets/recall_files_sheet.dart';
+import '../../../l10n/l10n.dart';
 import '../../../platform/clipboard_files.dart';
+import '../../widgets/recall_files_sheet.dart';
 
-/// Lets the user either upload a new file or recall one from the drive.
-/// Returns the IDs of the files to attach (empty list if cancelled).
 /// Lets the user either upload new file(s) or recall existing ones from
 /// the drive. Returns the IDs of the files to attach (empty list if
 /// cancelled, or if every pick failed).
@@ -17,27 +15,28 @@ Future<List<String>> pickOrRecallFiles(
   VaultStore store,
   Space space,
 ) async {
+  final l = context.l10n;
   final choice = await showModalBottomSheet<String>(
     context: context,
     builder: (ctx) {
-      final l = ctx.l10n;
+      final ml = ctx.l10n;
       return SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
               leading: const Icon(Icons.upload_file),
-              title: Text(l.attachmentUpload),
+              title: Text(ml.attachmentUpload),
               onTap: () => Navigator.pop(ctx, 'new'),
             ),
             ListTile(
               leading: const Icon(Icons.content_paste),
-              title: Text(l.attachmentPaste),
+              title: Text(ml.attachmentPaste),
               onTap: () => Navigator.pop(ctx, 'paste'),
             ),
             ListTile(
               leading: const Icon(Icons.folder_open),
-              title: Text(l.attachmentRecall),
+              title: Text(ml.attachmentRecall),
               onTap: () => Navigator.pop(ctx, 'existing'),
             ),
           ],
@@ -77,9 +76,7 @@ Future<List<String>> pickOrRecallFiles(
       if (failedNames.isNotEmpty && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              context.l10n.attachmentUploadFailedCount(failedNames.length),
-            ),
+            content: Text(l.attachmentUploadFailedCount(failedNames.length)),
           ),
         );
       }
@@ -88,7 +85,7 @@ Future<List<String>> pickOrRecallFiles(
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.l10n.attachmentUploadFailed(e.toString()))),
+          SnackBar(content: Text(l.attachmentUploadFailed(e.toString()))),
         );
       }
       return const [];
@@ -101,9 +98,7 @@ Future<List<String>> pickOrRecallFiles(
       if (files.isEmpty) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(context.l10n.attachmentPasteEmpty),
-            ),
+            SnackBar(content: Text(l.attachmentPasteEmpty)),
           );
         }
         return const [];
@@ -120,7 +115,7 @@ Future<List<String>> pickOrRecallFiles(
         } catch (e) {
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(context.l10n.attachmentPasteFailed(e.toString()))),
+              SnackBar(content: Text(l.attachmentPasteFailed(e.toString()))),
             );
           }
         }
@@ -129,7 +124,7 @@ Future<List<String>> pickOrRecallFiles(
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Paste failed: $e')),
+          SnackBar(content: Text(l.attachmentPasteFailed(e.toString()))),
         );
       }
       return const [];
@@ -140,7 +135,7 @@ Future<List<String>> pickOrRecallFiles(
     if (store.filesForSpace(space.id).isEmpty) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.l10n.attachmentDriveEmpty)),
+          SnackBar(content: Text(l.attachmentDriveEmpty)),
         );
       }
       return const [];

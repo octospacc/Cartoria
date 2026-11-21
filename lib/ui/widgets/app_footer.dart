@@ -39,7 +39,7 @@ class _AppFooterState extends State<AppFooter> {
       final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!ok && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open $kProjectUrl')),
+          const SnackBar(content: Text('Could not open $kProjectUrl')),
         );
       }
     } catch (e) {

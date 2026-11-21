@@ -207,7 +207,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String?>(
-              value: widget.store.locale?.languageCode,
+              initialValue: widget.store.locale?.languageCode,
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
                 isDense: true,

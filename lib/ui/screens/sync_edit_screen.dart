@@ -1,11 +1,17 @@
-import 'package:flutter/material.dart';
-import 'package:uuid/uuid.dart';
+library sync_edit_screen;
+
 import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:uuid/uuid.dart';
+
+import '../../data/store.dart';
 import '../../data/sync/sync_config.dart';
 import '../../data/sync/sync_provider.dart';
-import '../../data/store.dart';
+import '../../l10n/l10n.dart';
 import '../widgets/escape_back.dart';
+
+part 'sync_edit/space_selector.dart';
 
 class SyncEditScreen extends StatefulWidget {
   final VaultStore store;
@@ -37,13 +43,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
   String? _error;
   SyncProgress? _progress;
 
-  /// Remote spaces fetched from the config's repository. Null = not yet
-  /// loaded (user hasn't verified or tapped "Load remote spaces").
   Map<String, String?>? _remoteSpaces;
-  // Set<String>? _remoteSpaces;
-
-  /// True while a remote-space fetch is in flight (spinner next to the
-  /// button).
   bool _loadingRemoteSpaces = false;
 
   @override
@@ -110,10 +110,12 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
   }
 
   Future<bool> _save() async {
+    final l = context.l10n;
     setState(() => _error = null);
     final config = _buildCurrent();
     if (config.owner.isEmpty || config.repo.isEmpty) {
-      setState(() => _error = 'Owner and repository are required');
+      setState(() => _error =
+          '${l.syncEditOwnerLabel} / ${l.syncEditRepoLabel}: required');
       return false;
     }
 
@@ -127,20 +129,15 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
         final proceed = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('Re-enter token'),
-            content: const Text(
-              'The provider, host, owner, or repo changed. Tokens are '
-              'scoped to that combination, so the previously saved token '
-              'can\'t be reused here.\n\nYou\'ll need to enter a new token. '
-              'Save anyway without a token?',
-            ),
+            title: Text(l.syncEditReenterTitle),
+            content: Text(l.syncEditReenterBody),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('Cancel')),
+                  child: Text(ctx.l10n.commonCancel)),
               FilledButton(
                   onPressed: () => Navigator.pop(ctx, true),
-                  child: const Text('Save anyway')),
+                  child: Text(ctx.l10n.syncEditSaveAnyway)),
             ],
           ),
         );
@@ -155,7 +152,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
         _token.clear();
         await _loadTokenState();
       }
-      if (mounted) setState(() => _status = 'Saved');
+      if (mounted) setState(() => _status = l.syncEditSaved);
       return true;
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -164,9 +161,10 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
   }
 
   Future<void> _verify() async {
+    final l = context.l10n;
     if (!await _save()) return;
     if (!_tokenStored && _token.text.trim().isEmpty) {
-      setState(() => _error = 'Enter a token first');
+      setState(() => _error = l.syncEditTokenRequired);
       return;
     }
     setState(() {
@@ -179,9 +177,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
       await widget.store.verifySyncAccess(_id);
       if (!mounted) return;
       setState(() {
-        _status = 'Access verified';
-        // Free the UI immediately — the form should be usable while the
-        // remote-space list loads in the background.
+        _status = l.syncEditAccessVerified;
         _busy = false;
       });
     } catch (e) {
@@ -194,14 +190,11 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
       return;
     }
 
-    // Fire-and-forget. `_loadRemoteSpaces` has its own timeout, its own
-    // loading state on the button, and its own error handling; it must
-    // not extend `_busy` or the whole form freezes for the duration of
-    // the (potentially slow) name fetches.
     unawaited(_loadRemoteSpaces());
   }
 
   Future<void> _loadRemoteSpaces() async {
+    final l = context.l10n;
     if (_loadingRemoteSpaces) return;
     setState(() => _loadingRemoteSpaces = true);
     try {
@@ -210,25 +203,17 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
           .timeout(const Duration(seconds: 25));
       if (mounted) {
         setState(() => _remoteSpaces = spaces);
-        debugPrint('Loaded ${spaces.length} remote spaces');
       }
     } on TimeoutException {
-      debugPrint('Timed out loading remote spaces');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Timed out loading remote spaces. Tap "Load remote spaces" '
-              'to retry.',
-            ),
-          ),
+          SnackBar(content: Text(l.syncEditRemoteLoadTimedOut)),
         );
       }
     } catch (e) {
-      debugPrint('Could not load remote spaces: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not load remote spaces: $e')),
+          SnackBar(content: Text(l.syncEditRemoteLoadFailed(e.toString()))),
         );
       }
     } finally {
@@ -237,27 +222,24 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
   }
 
   Future<void> _push() async {
+    final l = context.l10n;
     if (!await _save()) return;
     if (!_tokenStored && _token.text.trim().isEmpty) {
-      setState(() => _error = 'Enter a token first');
+      setState(() => _error = l.syncEditTokenRequired);
       return;
     }
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Push to remote?'),
-        content: const Text(
-          'This uploads the selected spaces (and vault-level data if this '
-          'is the primary) to the remote. Any changes on the remote that '
-          'you haven\'t pulled will be overwritten.',
-        ),
+        title: Text(l.syncEditPushConfirmTitle),
+        content: Text(l.syncEditPushConfirmBody),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+              child: Text(l.commonCancel)),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Push')),
+              child: Text(l.syncPushButton)),
         ],
       ),
     );
@@ -274,7 +256,8 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
         if (mounted) setState(() => _progress = p);
       });
       if (mounted) {
-        setState(() => _status = r.summary);
+        setState(() => _status =
+            l.syncPushResultLine(r.created, r.updated, r.deleted));
       }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -284,29 +267,24 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
   }
 
   Future<void> _pull() async {
+    final l = context.l10n;
     if (!await _save()) return;
     if (!_tokenStored && _token.text.trim().isEmpty) {
-      setState(() => _error = 'Enter a token first');
+      setState(() => _error = l.syncEditTokenRequired);
       return;
     }
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Pull from remote?'),
-        content: const Text(
-          'This overwrites local files in the selected spaces (and vault-'
-          'level data if this is the primary) with the remote version. '
-          'A backup of the vault is saved before pulling.\n\n'
-          'On web, the backup is stored in the browser\'s local storage '
-          'and keeps only the 3 most recent backups.',
-        ),
+        title: Text(l.syncEditPullConfirmTitle),
+        content: Text(l.syncEditPullConfirmBody),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+              child: Text(l.commonCancel)),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Pull')),
+              child: Text(l.syncPullButton)),
         ],
       ),
     );
@@ -323,7 +301,8 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
         if (mounted) setState(() => _progress = p);
       });
       if (mounted) {
-        setState(() => _status = r.summary);
+        setState(() => _status =
+            l.syncPullResultLine(r.added, r.updated, r.deleted));
       }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -335,17 +314,18 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     final spaces = widget.store.spaces;
     final isNew = widget.existing == null;
     final onlyConfig = widget.store.syncConfigs.length <= 1 && !isNew;
 
     return EscapeBack(child: Scaffold(
       appBar: AppBar(
-        title: Text(isNew ? 'New repository' : 'Edit repository'),
+        title: Text(isNew ? l.syncEditNewTitle : l.syncEditExistingTitle),
         actions: [
           TextButton(
             onPressed: _busy ? null : _save,
-            child: const Text('Save'),
+            child: Text(l.syncEditSave),
           ),
         ],
       ),
@@ -375,23 +355,23 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                   style: theme.textTheme.bodySmall
                       ?.copyWith(color: theme.colorScheme.primary)),
             ),
-          _section(theme, 'Name'),
+          _section(theme, l.syncEditNameSection),
           TextField(
             controller: _name,
             enabled: !_busy,
-            decoration: const InputDecoration(
-              hintText: 'My backup',
-              helperText: 'Display name for this repository',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              hintText: l.syncEditNameHint,
+              helperText: l.syncEditNameHelper,
+              border: const OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 20),
-          _section(theme, 'Remote'),
+          _section(theme, l.syncEditRemoteSection),
           DropdownButtonFormField<SyncProviderKind>(
             value: _provider,
-            decoration: const InputDecoration(
-              labelText: 'Provider',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              labelText: l.syncEditProviderLabel,
+              border: const OutlineInputBorder(),
             ),
             items: SyncProviderKind.values
                 .map((p) => DropdownMenuItem(
@@ -418,10 +398,9 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
             controller: _host,
             enabled: !_busy,
             decoration: InputDecoration(
-              labelText: 'Host (optional)',
+              labelText: l.syncEditHostLabel,
               hintText: _provider.defaultHost,
-              helperText: 'Leave empty for ${_provider.defaultHost}. '
-                  'For self-hosted, enter the hostname.',
+              helperText: l.syncEditHostHelper(_provider.defaultHost),
               border: const OutlineInputBorder(),
             ),
           ),
@@ -429,15 +408,17 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
           TextField(
             controller: _owner,
             enabled: !_busy,
-            decoration: const InputDecoration(
-                labelText: 'Owner / group', border: OutlineInputBorder()),
+            decoration: InputDecoration(
+                labelText: l.syncEditOwnerLabel,
+                border: const OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _repo,
             enabled: !_busy,
-            decoration: const InputDecoration(
-                labelText: 'Repository', border: OutlineInputBorder()),
+            decoration: InputDecoration(
+                labelText: l.syncEditRepoLabel,
+                border: const OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
           Row(
@@ -446,8 +427,9 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                 child: TextField(
                   controller: _branch,
                   enabled: !_busy,
-                  decoration: const InputDecoration(
-                      labelText: 'Branch', border: OutlineInputBorder()),
+                  decoration: InputDecoration(
+                      labelText: l.syncEditBranchLabel,
+                      border: const OutlineInputBorder()),
                 ),
               ),
               const SizedBox(width: 12),
@@ -455,24 +437,24 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                 child: TextField(
                   controller: _prefix,
                   enabled: !_busy,
-                  decoration: const InputDecoration(
-                      labelText: 'Path prefix (optional)',
-                      border: OutlineInputBorder()),
+                  decoration: InputDecoration(
+                      labelText: l.syncEditPrefixLabel,
+                      border: const OutlineInputBorder()),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 20),
-          _section(theme, 'Primary'),
+          _section(theme, l.syncEditPrimarySection),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
-            title: const Text('Set as primary'),
+            title: Text(l.syncEditPrimarySwitchTitle),
             subtitle: Text(
               _isPrimary
-                  ? 'This repo also backs up vault-level data (hooks).'
+                  ? l.syncEditPrimarySubtitleOn
                   : onlyConfig
-                      ? 'The only repository is automatically primary.'
-                      : 'Enabling this will demote the current primary.',
+                      ? l.syncEditPrimarySubtitleOnly
+                      : l.syncEditPrimarySubtitleOff,
             ),
             value: _isPrimary,
             onChanged: _busy || onlyConfig
@@ -480,11 +462,11 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                 : (v) => setState(() => _isPrimary = v),
           ),
           const SizedBox(height: 20),
-          _section(theme, 'Spaces'),
+          _section(theme, l.syncEditSpacesSection),
           RadioListTile<bool>(
             contentPadding: EdgeInsets.zero,
             dense: true,
-            title: const Text('All spaces (including future ones)'),
+            title: Text(l.syncEditSpacesAll),
             value: true,
             groupValue: _spaceIds == null,
             onChanged: _busy ? null : (_) => setState(() => _spaceIds = null),
@@ -492,25 +474,22 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
           RadioListTile<bool>(
             contentPadding: EdgeInsets.zero,
             dense: true,
-            title: const Text('Selected spaces'),
+            title: Text(l.syncEditSpacesSelected),
             value: true,
             groupValue: _spaceIds != null,
             onChanged: _busy ? null : (_) => setState(() => _spaceIds ??= {}),
           ),
           if (_spaceIds != null) ...[
             const SizedBox(height: 6),
-            // Local spaces first, remote-only after.
-            ..._buildSpaceCheckboxes(theme),
+            _SpaceCheckboxes(state: this),
             const SizedBox(height: 8),
             Row(
               children: [
                 Expanded(
                   child: Text(
                     _remoteSpaces == null
-                        ? 'Tap "Load remote spaces" to see spaces that exist on the '
-                            'remote but haven\'t been pulled yet.'
-                        : '${_remoteSpaces!.length} space(s) on the remote. '
-                            'Remote-only spaces are marked.',
+                        ? l.syncEditRemoteHintUnloaded
+                        : l.syncEditRemoteHintLoaded(_remoteSpaces!.length),
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -527,7 +506,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.cloud_download_outlined, size: 16),
-                  label: const Text('Load remote spaces'),
+                  label: Text(l.syncEditLoadRemote),
                 ),
               ],
             ),
@@ -549,8 +528,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
-                      '$missing space(s) exist on the remote but are not '
-                      'selected. They will not be pulled by this config until added.',
+                      l.syncEditMissingRemote(missing),
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -560,32 +538,30 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
               }),
           ],
           const SizedBox(height: 20),
-          _section(theme, 'Drive offloading'),
+          _section(theme, l.syncEditDriveSection),
           TextField(
             controller: _keepLocal,
             enabled: !_busy,
             keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Keep on disk (files per space)',
-              helperText: 'Newest N files stay on disk; older files are '
-                  'offloaded to the remote and fetched on demand. '
-                  'Empty = keep everything.',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              labelText: l.syncEditKeepLocalLabel,
+              helperText: l.syncEditKeepLocalHelper,
+              border: const OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 20),
-          _section(theme, 'Token'),
+          _section(theme, l.syncEditTokenSection),
           if (_tokenStored && !_showTokenInput)
             Row(
               children: [
                 const Icon(Icons.lock, size: 16),
                 const SizedBox(width: 8),
-                const Expanded(child: Text('Token stored')),
+                Expanded(child: Text(l.syncEditTokenStored)),
                 TextButton(
                   onPressed: _busy
                       ? null
                       : () => setState(() => _showTokenInput = true),
-                  child: const Text('Change'),
+                  child: Text(l.syncEditTokenChange),
                 ),
                 TextButton(
                   onPressed: _busy
@@ -595,7 +571,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                           await _loadTokenState();
                           if (mounted) setState(() {});
                         },
-                  child: const Text('Clear'),
+                  child: Text(l.syncEditTokenClear),
                 ),
               ],
             )
@@ -605,11 +581,10 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
               enabled: !_busy,
               obscureText: true,
               decoration: InputDecoration(
-                labelText: 'Personal access token',
+                labelText: l.syncEditTokenLabel,
                 helperText: _provider == SyncProviderKind.github
-                    ? 'Create at github.com/settings/tokens with "repo" scope'
-                    : 'Create at gitlab.com/-/user_settings/'
-                        'personal_access_tokens with "api" scope',
+                    ? l.syncEditTokenHelperGithub
+                    : l.syncEditTokenHelperGitlab,
                 border: const OutlineInputBorder(),
               ),
             ),
@@ -620,7 +595,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                 child: OutlinedButton.icon(
                   onPressed: _busy ? null : _verify,
                   icon: const Icon(Icons.check_circle_outline),
-                  label: const Text('Verify access'),
+                  label: Text(l.syncEditVerify),
                 ),
               ),
             ],
@@ -632,7 +607,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                 child: FilledButton.icon(
                   onPressed: _busy ? null : _push,
                   icon: const Icon(Icons.cloud_upload_outlined),
-                  label: const Text('Push to remote'),
+                  label: Text(l.syncEditPushButton),
                 ),
               ),
             ],
@@ -644,7 +619,7 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
                 child: FilledButton.tonalIcon(
                   onPressed: _busy ? null : _pull,
                   icon: const Icon(Icons.cloud_download_outlined),
-                  label: const Text('Pull from remote'),
+                  label: Text(l.syncEditPullButton),
                 ),
               ),
             ],
@@ -668,113 +643,4 @@ class _SyncEditScreenState extends State<SyncEditScreen> {
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(text, style: theme.textTheme.titleSmall),
       );
-
-  List<Widget> _buildSpaceCheckboxes(ThemeData theme) {
-    final localIds = <String>{};
-    final localWidgets = <Widget>[];
-    for (final s in widget.store.spaces) {
-      localIds.add(s.id);
-      final checked = _spaceIds!.contains(s.id);
-      localWidgets.add(CheckboxListTile(
-        contentPadding: const EdgeInsets.only(left: 32, right: 0),
-        dense: true,
-        value: checked,
-        title: Text('${s.icon} ${s.name}'),
-        onChanged: _busy
-            ? null
-            : (v) => setState(() {
-                  if (v == true) {
-                    _spaceIds!.add(s.id);
-                  } else {
-                    _spaceIds!.remove(s.id);
-                  }
-                }),
-      ));
-    }
-
-    // Remote-only spaces: not present locally. Show display name if we
-    // could fetch it, fall back to the bare id otherwise. Sort by name
-    // so the list stays stable when spaces have names.
-    final remoteOnly = <({String id, String? name})>[];
-    if (_remoteSpaces != null) {
-      for (final entry in _remoteSpaces!.entries) {
-        if (localIds.contains(entry.key)) continue;
-        remoteOnly.add((id: entry.key, name: entry.value));
-      }
-      remoteOnly.sort((a, b) {
-        final an = (a.name ?? a.id).toLowerCase();
-        final bn = (b.name ?? b.id).toLowerCase();
-        return an.compareTo(bn);
-      });
-    }
-
-    final remoteWidgets = <Widget>[];
-    for (final r in remoteOnly) {
-      final checked = _spaceIds!.contains(r.id);
-      remoteWidgets.add(CheckboxListTile(
-        contentPadding: const EdgeInsets.only(left: 32, right: 0),
-        dense: true,
-        value: checked,
-        title: Row(
-          children: [
-            Expanded(
-              child: Text(
-                r.name ?? r.id,
-                overflow: TextOverflow.ellipsis,
-                style: r.name == null
-                    ? theme.textTheme.bodyMedium?.copyWith(
-                        fontFamily: 'monospace',
-                        fontSize: 12,
-                      )
-                    : null,
-              ),
-            ),
-            Container(
-              margin: const EdgeInsets.only(left: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.tertiaryContainer,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                'remote only',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: theme.colorScheme.onTertiaryContainer,
-                ),
-              ),
-            ),
-          ],
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (r.name != null)
-              Text(
-                'id: ${r.id}',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            Text(
-              'Not on this device yet — will be pulled on next sync',
-              style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
-            ),
-          ],
-        ),
-        onChanged: _busy
-            ? null
-            : (v) => setState(() {
-                  if (v == true) {
-                    _spaceIds!.add(r.id);
-                  } else {
-                    _spaceIds!.remove(r.id);
-                  }
-                }),
-      ));
-    }
-
-    return [...localWidgets, ...remoteWidgets];
-  }
 }

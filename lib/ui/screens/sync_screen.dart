@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../data/sync/sync_config.dart';
 import '../../data/sync/sync_provider.dart';
 import '../../data/store.dart';
+import '../../l10n/l10n.dart';
 import '../widgets/escape_back.dart';
 import 'sync_edit_screen.dart';
 
@@ -12,15 +13,24 @@ class SyncScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l = context.l10n;
     return EscapeBack(
         child: AnimatedBuilder(
       animation: store,
       builder: (context, _) {
         final configs = store.syncConfigs;
         return Scaffold(
-          appBar: AppBar(title: const Text('Sync')),
+          appBar: AppBar(title: Text(l.syncTitle)),
           body: configs.isEmpty
-              ? const _EmptyState()
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      l.syncEmpty,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                )
               : ListView.separated(
                   itemCount: configs.length,
                   separatorBuilder: (_, __) => const Divider(height: 1),
@@ -46,27 +56,6 @@ class SyncScreen extends StatelessWidget {
   }
 }
 
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Padding(
-        padding: EdgeInsets.all(24),
-        child: Text(
-          'No sync repositories configured.\n\n'
-          'A repository backs up some or all of your spaces to GitHub or '
-          'GitLab. Exactly one repository is marked primary and '
-          'additionally backs up vault-level data (hooks).\n\n'
-          'Tap + to add one.',
-          textAlign: TextAlign.center,
-        ),
-      ),
-    );
-  }
-}
-
 class _ConfigTile extends StatelessWidget {
   final VaultStore store;
   final SyncConfig config;
@@ -76,15 +65,16 @@ class _ConfigTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     final subtitleParts = <String>[
       '${config.provider.emoji} ${config.provider.label}',
       if (config.host != null && config.host!.isNotEmpty) config.host!,
       '${config.owner}/${config.repo}',
       config.branch,
     ];
-    final spaces = _spacesSummary();
+    final spaces = _spacesSummary(l);
     if (spaces != null) subtitleParts.add(spaces);
-    if (config.isPrimary) subtitleParts.add('+ vault data');
+    if (config.isPrimary) subtitleParts.add(l.syncVaultDataSuffix);
 
     return ListTile(
       leading: CircleAvatar(
@@ -115,7 +105,7 @@ class _ConfigTile extends StatelessWidget {
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
-                'PRIMARY',
+                l.syncPrimaryBadge,
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: theme.colorScheme.onPrimaryContainer,
                   fontWeight: FontWeight.w600,
@@ -131,7 +121,7 @@ class _ConfigTile extends StatelessWidget {
           Text(subtitleParts.join(' · ')),
           if (config.lastSyncedAt != null)
             Text(
-              'Last synced: ${_fmtTime(config.lastSyncedAt!)}',
+              l.syncLastSynced(_fmtTime(config.lastSyncedAt!)),
               style: theme.textTheme.bodySmall,
             ),
         ],
@@ -141,13 +131,13 @@ class _ConfigTile extends StatelessWidget {
         children: [
           IconButton(
             icon: const Icon(Icons.cloud_upload_outlined, size: 20),
-            tooltip: 'Push now',
+            tooltip: l.syncPushNow,
             visualDensity: VisualDensity.compact,
             onPressed: () => _runSync(context, isPush: true),
           ),
           IconButton(
             icon: const Icon(Icons.cloud_download_outlined, size: 20),
-            tooltip: 'Pull now',
+            tooltip: l.syncPullNow,
             visualDensity: VisualDensity.compact,
             onPressed: () => _runSync(context, isPush: false),
           ),
@@ -158,11 +148,11 @@ class _ConfigTile extends StatelessWidget {
               if (v == 'delete') _confirmDelete(context);
             },
             itemBuilder: (_) => [
-              const PopupMenuItem(value: 'edit', child: Text('Edit…')),
+              PopupMenuItem(value: 'edit', child: Text(l.syncMenuEdit)),
               if (!config.isPrimary)
-                const PopupMenuItem(
-                    value: 'primary', child: Text('Set as primary')),
-              const PopupMenuItem(value: 'delete', child: Text('Delete…')),
+                PopupMenuItem(
+                    value: 'primary', child: Text(l.syncMenuSetPrimary)),
+              PopupMenuItem(value: 'delete', child: Text(l.syncMenuDelete)),
             ],
           ),
         ],
@@ -171,12 +161,11 @@ class _ConfigTile extends StatelessWidget {
     );
   }
 
-  String? _spacesSummary() {
+  String? _spacesSummary(AppLocalizations l) {
     final ids = config.spaceIds;
-    if (ids == null) return 'All spaces';
-    if (ids.isEmpty) return 'No spaces';
-    final n = ids.length;
-    return '$n space${n == 1 ? "" : "s"}';
+    if (ids == null) return l.syncAllSpaces;
+    if (ids.isEmpty) return l.syncNoSpaces;
+    return l.syncSpacesCount(ids.length);
   }
 
   String _fmtTime(DateTime t) {
@@ -197,36 +186,33 @@ class _ConfigTile extends StatelessWidget {
   }
 
   Future<void> _setPrimary(BuildContext context) async {
+    final l = context.l10n;
     await store.saveSyncConfig(config.copyWith(isPrimary: true));
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text('"${config.name}" is now the primary repository')),
+        SnackBar(content: Text(l.syncPrimaryNow(config.name))),
       );
     }
   }
 
   Future<void> _confirmDelete(BuildContext context) async {
+    final l = context.l10n;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Delete "${config.name}"?'),
+        title: Text(l.syncDeleteTitle(config.name)),
         content: Text(
           config.isPrimary && store.syncConfigs.length > 1
-              ? 'This is the primary repository. Another will be '
-                  'automatically promoted to primary. The remote repository '
-                  'itself is not affected — only this app\'s configuration '
-                  'for it.'
-              : 'The remote repository itself is not affected — only this '
-                  'app\'s configuration for it.',
+              ? l.syncDeleteBodyPrimary
+              : l.syncDeleteBody,
         ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+              child: Text(l.commonCancel)),
           FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Delete')),
+              child: Text(l.commonDelete)),
         ],
       ),
     );
@@ -234,42 +220,33 @@ class _ConfigTile extends StatelessWidget {
   }
 
   Future<void> _runSync(BuildContext context, {required bool isPush}) async {
-    // 1. Token must exist before we bother with the confirmation.
+    final l = context.l10n;
     final token = await store.loadSyncToken(config.id);
     if (!context.mounted) return;
     if (token == null || token.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'No token for "${config.name}". Open Edit to add one.',
-          ),
-        ),
+        SnackBar(content: Text(l.syncNoTokenSnack(config.name))),
       );
       return;
     }
 
-    // 2. Confirm the action (both directions can overwrite data).
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(
-          isPush ? 'Push "${config.name}"?' : 'Pull "${config.name}"?',
-        ),
+        title: Text(isPush
+            ? l.syncPushConfirmTitle(config.name)
+            : l.syncPullConfirmTitle(config.name)),
         content: Text(
-          isPush
-              ? 'Uploads local changes to the remote. Unpulled remote '
-                  'changes will be overwritten.'
-              : 'Overwrites local files in this config\'s scope with the '
-                  'remote version. A backup of the vault is saved first.',
+          isPush ? l.syncPushConfirmBody : l.syncPullConfirmBody,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+            child: Text(l.commonCancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text(isPush ? 'Push' : 'Pull'),
+            child: Text(isPush ? l.syncPushButton : l.syncPullButton),
           ),
         ],
       ),
@@ -277,10 +254,6 @@ class _ConfigTile extends StatelessWidget {
     if (confirmed != true) return;
     if (!context.mounted) return;
 
-    // 3. Progress dialog drives the actual sync. Non-dismissible because
-    //    the sync is in flight; the user can't open another config's
-    //    push/pull while one is running, which is the desired safety
-    //    guarantee for overlapping writes.
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -294,17 +267,6 @@ class _ConfigTile extends StatelessWidget {
   }
 }
 
-/// Modal dialog that runs a push or pull and reports progress inline.
-///
-/// Three-phase state machine:
-///   - running: progress bar + message, no actions, barrier disabled
-///   - success: checkmark + summary, single Close button
-///   - failure: error icon + exception text, single Close button
-///
-/// The sync itself is started in [initState], so the dialog is purely a
-/// view onto a future that has already been launched. Closing the
-/// dialog cannot abort the sync — it has already completed by the time
-/// Close becomes available.
 class _SyncProgressDialog extends StatefulWidget {
   final VaultStore store;
   final String configId;
@@ -344,9 +306,10 @@ class _SyncProgressDialogState extends State<_SyncProgressDialog> {
           },
         );
         if (!mounted) return;
+        final l = context.l10n;
         setState(() {
           _done = true;
-          _summary = r.summary;
+          _summary = l.syncPushResultLine(r.created, r.updated, r.deleted);
         });
       } else {
         final r = await widget.store.syncPull(
@@ -356,9 +319,10 @@ class _SyncProgressDialogState extends State<_SyncProgressDialog> {
           },
         );
         if (!mounted) return;
+        final l = context.l10n;
         setState(() {
           _done = true;
-          _summary = r.summary;
+          _summary = l.syncPullResultLine(r.added, r.updated, r.deleted);
         });
       }
     } catch (e) {
@@ -374,11 +338,12 @@ class _SyncProgressDialogState extends State<_SyncProgressDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
 
     return AlertDialog(
-      title: Text(
-        '${widget.isPush ? "Push" : "Pull"} "${widget.configName}"',
-      ),
+      title: Text(widget.isPush
+          ? l.syncDialogPushTitle(widget.configName)
+          : l.syncDialogPullTitle(widget.configName)),
       content: SizedBox(
         width: 420,
         child: Column(
@@ -389,7 +354,7 @@ class _SyncProgressDialogState extends State<_SyncProgressDialog> {
               LinearProgressIndicator(value: _progress?.fraction),
               const SizedBox(height: 12),
               Text(
-                _progress?.message ?? 'Starting…',
+                _progress?.message ?? l.syncProgressStarting,
                 style: theme.textTheme.bodySmall,
               ),
             ] else if (_error != null) ...[
@@ -399,7 +364,7 @@ class _SyncProgressDialogState extends State<_SyncProgressDialog> {
                   const SizedBox(width: 8),
                   Expanded(
                     child:
-                        Text('Sync failed', style: theme.textTheme.titleSmall),
+                        Text(l.syncFailed, style: theme.textTheme.titleSmall),
                   ),
                 ],
               ),
@@ -425,7 +390,7 @@ class _SyncProgressDialogState extends State<_SyncProgressDialog> {
                   Icon(Icons.check_circle, color: Colors.green.shade600),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text('Sync complete',
+                    child: Text(l.syncComplete,
                         style: theme.textTheme.titleSmall),
                   ),
                 ],
@@ -440,7 +405,7 @@ class _SyncProgressDialogState extends State<_SyncProgressDialog> {
           ? [
               FilledButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('Close'),
+                child: Text(l.syncDialogClose),
               ),
             ]
           : const [],

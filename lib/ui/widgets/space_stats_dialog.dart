@@ -3,6 +3,7 @@ import 'package:path/path.dart' as p;
 
 import '../../data/models.dart';
 import '../../data/store.dart';
+import '../../l10n/l10n.dart';
 import '../../util/format.dart';
 
 class SpaceStatsDialog extends StatelessWidget {
@@ -25,6 +26,7 @@ class SpaceStatsDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l = context.l10n;
     return AlertDialog(
       title: Row(
         children: [
@@ -41,7 +43,7 @@ class SpaceStatsDialog extends StatelessWidget {
           if (snap.hasError) {
             return SizedBox(
               width: 300,
-              child: Text('Could not compute stats: ${snap.error}'),
+              child: Text(l.spaceStatsCouldNotCompute(snap.error.toString())),
             );
           }
           if (!snap.hasData) {
@@ -61,41 +63,37 @@ class SpaceStatsDialog extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _Section(
-                    title: 'Content',
+                    title: l.spaceStatsContent,
                     children: [
-                      _StatRow(label: 'Total', value: '${s.totalPosts}'),
-                      _StatRow(label: 'Notes', value: '${s.notes}'),
-                      _StatRow(label: 'Bookmarks', value: '${s.bookmarks}'),
+                      _StatRow(label: l.spaceStatsTotal, value: '${s.totalPosts}'),
+                      _StatRow(label: l.spaceStatsNotes, value: '${s.notes}'),
+                      _StatRow(label: l.spaceStatsBookmarks, value: '${s.bookmarks}'),
                       _StatRow(
-                        label: 'Replies (nested)',
+                        label: l.spaceStatsReplies,
                         value: '${s.replies}',
                       ),
                     ],
                   ),
                   const Divider(height: 24),
                   _Section(
-                    title: 'Drive',
+                    title: l.spaceStatsDrive,
                     children: [
-                      _StatRow(label: 'Files', value: '${s.files}'),
+                      _StatRow(label: l.spaceStatsFiles, value: '${s.files}'),
                     ],
                   ),
                   const Divider(height: 24),
                   _Section(
-                    title: 'Storage',
+                    title: l.spaceStatsStorage,
                     children: [
                       _StatRow(
-                        label: 'Space size',
+                        label: l.spaceStatsSpaceSize,
                         value: formatBytes(s.storageBytes),
                       ),
                     ],
                   ),
                   const Divider(height: 24),
-                  // Where this space actually lives on disk. Useful when
-                  // the vault is git-synced (paste into a terminal to
-                  // `cd` into the space, or open the folder in a file
-                  // manager) or when the user wants to back up manually.
                   _Section(
-                    title: 'Location',
+                    title: l.spaceStatsLocation,
                     children: [
                       SelectableText(
                         p.join(store.vaultPath, space.id),
@@ -117,7 +115,7 @@ class SpaceStatsDialog extends StatelessWidget {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Close'),
+          child: Text(l.commonClose),
         ),
       ],
     );

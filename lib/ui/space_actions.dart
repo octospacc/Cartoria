@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/models.dart';
 import '../data/space_archive.dart';
 import '../data/store.dart';
+import '../l10n/l10n.dart';
 import '../platform/file_save.dart';
 
 Future<void> exportSpaceZip(
@@ -10,9 +11,9 @@ Future<void> exportSpaceZip(
   VaultStore store,
   Space space,
 ) async {
+  final l = context.l10n;
   final files = store.filesForSpace(space.id);
   if (files.isEmpty) {
-    // Nothing to export but a space; still allow, no dialog.
     await _doExport(context, store, space, ExportMediaMode.noMedia);
     return;
   }
@@ -21,53 +22,47 @@ Future<void> exportSpaceZip(
 
   final mode = await showDialog<ExportMediaMode>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text('Export "${space.name}"'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _ExportOption(
-            mode: ExportMediaMode.full,
-            title: 'Full',
-            description: 'Includes every file. Offloaded files are '
-                '${offloadedCount == 0 ? "none" : "$offloadedCount and "}'
-                'downloaded from the sync remote before the zip is built. '
-                'Slowest, but the export is self-contained.',
-            disabled: false,
-            onTap: (m) => Navigator.pop(ctx, m),
-          ),
-          const SizedBox(height: 8),
-          _ExportOption(
-            mode: ExportMediaMode.onDiskOnly,
-            title: 'On-disk only',
-            description: 'Includes files currently stored on this device. '
-                '${offloadedCount == 0 ? "No files are offloaded." : "$offloadedCount offloaded file${offloadedCount == 1 ? "" : "s"} skipped."} '
-                'File references are preserved in the export; re-importing '
-                'the full zip (or syncing) later can restore the missing '
-                'blobs.',
-            disabled: false,
-            onTap: (m) => Navigator.pop(ctx, m),
-          ),
-          const SizedBox(height: 8),
-          _ExportOption(
-            mode: ExportMediaMode.noMedia,
-            title: 'Without media',
-            description: 'No files at all. Only the text (notes, bookmarks) '
-                'and file references. Smallest export; every file will '
-                'appear as missing on import until restored.',
-            disabled: false,
-            onTap: (m) => Navigator.pop(ctx, m),
+    builder: (ctx) {
+      final ml = ctx.l10n;
+      return AlertDialog(
+        title: Text(ml.spaceActionsExportTitle(space.name)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _ExportOption(
+              mode: ExportMediaMode.full,
+              title: ml.spaceActionsFull,
+              description: ml.spaceActionsFullBody(offloadedCount),
+              disabled: false,
+              onTap: (m) => Navigator.pop(ctx, m),
+            ),
+            const SizedBox(height: 8),
+            _ExportOption(
+              mode: ExportMediaMode.onDiskOnly,
+              title: ml.spaceActionsOnDisk,
+              description: ml.spaceActionsOnDiskBody(offloadedCount),
+              disabled: false,
+              onTap: (m) => Navigator.pop(ctx, m),
+            ),
+            const SizedBox(height: 8),
+            _ExportOption(
+              mode: ExportMediaMode.noMedia,
+              title: ml.spaceActionsNoMedia,
+              description: ml.spaceActionsNoMediaBody,
+              disabled: false,
+              onTap: (m) => Navigator.pop(ctx, m),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(ml.commonCancel),
           ),
         ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx),
-          child: const Text('Cancel'),
-        ),
-      ],
-    ),
+      );
+    },
   );
 
   if (mode == null || !context.mounted) return;
@@ -94,8 +89,9 @@ Future<void> _doExport(
     await saveOrShareFile(bytes, 'space-${space.name}$suffix-$stamp.zip');
   } catch (e) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Export failed: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.l10n.spaceActionsExportFailed(e.toString()))),
+      );
     }
   }
 }

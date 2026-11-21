@@ -164,9 +164,8 @@ class _InlineImageState extends State<_InlineImage> {
     }
 
     if (!mounted) return;
-    _InlineImageData data;
     try {
-      data = await _future;
+      await _future;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -416,16 +415,16 @@ class _InlineVideoState extends State<_InlineVideo> {
                   return AspectRatio(
                     aspectRatio: ratio,
                     child: MaterialVideoControlsTheme(
-                      normal: MaterialVideoControlsThemeData(
+                      normal: const MaterialVideoControlsThemeData(
                         displaySeekBar: true,
                         buttonBarButtonSize: 18.0,
                         buttonBarHeight: 32.0,
                         seekBarHeight: 2.0,
                         padding: EdgeInsets.zero,
                         bottomButtonBarMargin: EdgeInsets.zero,
-                        topButtonBar: const [],
-                        primaryButtonBar: const [],
-                        bottomButtonBar: const [
+                        topButtonBar: [],
+                        primaryButtonBar: [],
+                        bottomButtonBar: [
                           MaterialPlayOrPauseButton(),
                           MaterialPositionIndicator(),
                         ],

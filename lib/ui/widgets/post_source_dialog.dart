@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 
 import '../../data/models.dart';
 import '../../data/store.dart';
+import '../../l10n/l10n.dart';
 
 /// Displays the raw on-disk representation of a post (frontmatter + body)
 /// in a scrollable, copyable dialog.
@@ -19,7 +20,9 @@ Future<void> showPostSourceDialog(
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not read source: $e')),
+        SnackBar(
+            content:
+                Text(context.l10n.postSourceReadFailed(e.toString()))),
       );
     }
     return;
@@ -57,6 +60,7 @@ class _PostSourceDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l = context.l10n;
     final theme = Theme.of(context);
     final mono = theme.textTheme.bodySmall?.copyWith(
       fontFamily: 'monospace',
@@ -75,7 +79,7 @@ class _PostSourceDialog extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Source · ${postId.substring(0, 8)}…',
+              l.postSourceTitle(postId.substring(0, 8)),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -122,16 +126,16 @@ class _PostSourceDialog extends StatelessWidget {
             await Clipboard.setData(ClipboardData(text: source));
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Source copied')),
+                SnackBar(content: Text(l.postSourceCopied)),
               );
             }
           },
           icon: const Icon(Icons.copy_all, size: 16),
-          label: const Text('Copy'),
+          label: Text(l.postSourceCopy),
         ),
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Close'),
+          child: Text(l.commonClose),
         ),
       ],
     );

@@ -2,12 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../data/models.dart';
 import '../../data/store.dart';
+import '../../l10n/l10n.dart';
 import '../../util/file_category.dart';
 import 'file_thumbnail.dart';
 
-/// Bottom sheet for selecting files from a space's drive to attach to a
-/// post, reply, or edit. Consistent with the drive browsing screen: same
-/// thumbnail rendering, grid-by-default with a grid/list toggle.
 class RecallFilesSheet extends StatefulWidget {
   final VaultStore store;
   final Space space;
@@ -18,8 +16,6 @@ class RecallFilesSheet extends StatefulWidget {
     required this.space,
   });
 
-  /// Shows the sheet and returns the IDs of the selected files.
-  /// Returns an empty list if the user cancels or selects nothing.
   static Future<List<String>> show(
     BuildContext context,
     VaultStore store,
@@ -55,6 +51,7 @@ class _RecallFilesSheetState extends State<RecallFilesSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     final files = widget.store.filesForSpace(widget.space.id);
 
     return DraggableScrollableSheet(
@@ -65,7 +62,6 @@ class _RecallFilesSheetState extends State<RecallFilesSheet> {
       builder: (context, scrollController) {
         return Column(
           children: [
-            // Drag handle
             Container(
               margin: const EdgeInsets.only(top: 8),
               width: 40,
@@ -75,7 +71,6 @@ class _RecallFilesSheetState extends State<RecallFilesSheet> {
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-            // Header
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
               child: Row(
@@ -84,11 +79,11 @@ class _RecallFilesSheetState extends State<RecallFilesSheet> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Recall files',
+                        Text(l.recallFilesTitle,
                             style: theme.textTheme.titleMedium),
                         Text(
-                          '${widget.space.name} · ${files.length} '
-                          '${files.length == 1 ? "file" : "files"}',
+                          l.recallFilesSubtitle(
+                              widget.space.name, files.length),
                           style: theme.textTheme.bodySmall,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -97,25 +92,26 @@ class _RecallFilesSheetState extends State<RecallFilesSheet> {
                   ),
                   IconButton(
                     icon: Icon(_grid ? Icons.view_list : Icons.grid_view),
-                    tooltip: _grid ? 'List view' : 'Grid view',
+                    tooltip: _grid
+                        ? l.recallFilesListTooltip
+                        : l.recallFilesGridTooltip,
                     onPressed: () => setState(() => _grid = !_grid),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close),
-                    tooltip: 'Cancel',
+                    tooltip: l.commonCancel,
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
               ),
             ),
             const Divider(height: 1),
-            // Body
             Expanded(
               child: files.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Text('Drive is empty',
+                        padding: const EdgeInsets.all(24),
+                        child: Text(l.recallFilesEmpty,
                             textAlign: TextAlign.center),
                       ),
                     )
@@ -123,7 +119,6 @@ class _RecallFilesSheetState extends State<RecallFilesSheet> {
                       ? _buildGrid(files, scrollController)
                       : _buildList(files, scrollController)),
             ),
-            // Footer
             SafeArea(
               top: false,
               child: Padding(
@@ -132,14 +127,14 @@ class _RecallFilesSheetState extends State<RecallFilesSheet> {
                   children: [
                     Text(
                       _selected.isEmpty
-                          ? 'No files selected'
-                          : '${_selected.length} selected',
+                          ? l.recallFilesNoneSelected
+                          : l.recallFilesSelectedCount(_selected.length),
                       style: theme.textTheme.bodySmall,
                     ),
                     const Spacer(),
                     TextButton(
                       onPressed: () => Navigator.pop(context),
-                      child: const Text('Cancel'),
+                      child: Text(l.commonCancel),
                     ),
                     const SizedBox(width: 8),
                     FilledButton.icon(
@@ -147,7 +142,7 @@ class _RecallFilesSheetState extends State<RecallFilesSheet> {
                           ? null
                           : () => Navigator.pop(context, _selected.toList()),
                       icon: const Icon(Icons.check, size: 18),
-                      label: const Text('Attach'),
+                      label: Text(l.recallFilesAttach),
                     ),
                   ],
                 ),

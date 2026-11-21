@@ -2,9 +2,8 @@ import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-/// Opens the emoji picker in a bottom sheet. Emojis insert directly
-/// into [controller] at the current cursor position (or replace the
-/// current selection) — no need to read the return value.
+import '../../l10n/l10n.dart';
+
 Future<void> showEmojiPickerSheet(
   BuildContext context,
   TextEditingController controller,
@@ -25,6 +24,7 @@ class _EmojiPickerSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     return SizedBox(
       height: MediaQuery.sizeOf(context).height * 0.45,
       child: Column(
@@ -33,11 +33,11 @@ class _EmojiPickerSheet extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
             child: Row(
               children: [
-                Text('Emoji', style: theme.textTheme.titleMedium),
+                Text(l.emojiTitle, style: theme.textTheme.titleMedium),
                 const Spacer(),
                 IconButton(
                   icon: const Icon(Icons.close),
-                  tooltip: 'Close',
+                  tooltip: l.emojiCloseTooltip,
                   onPressed: () => Navigator.pop(context),
                 ),
               ],
@@ -49,8 +49,6 @@ class _EmojiPickerSheet extends StatelessWidget {
               textEditingController: controller,
               onEmojiSelected: (_, __) {},
               config: Config(
-                // `null` lets the Expanded fill the sheet; the picker's
-                // internal view handles its own scrolling.
                 height: null,
                 checkPlatformCompatibility: true,
                 emojiViewConfig: EmojiViewConfig(

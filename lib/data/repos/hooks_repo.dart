@@ -107,7 +107,7 @@ class HooksRepository {
       for (final e in list) {
         if (e is! Map) continue;
         try {
-          _cache.add(Hook.fromJson((e as Map).cast<String, dynamic>()));
+          _cache.add(Hook.fromJson((e).cast<String, dynamic>()));
         } catch (err) {
           debugPrint('Bad legacy hook: $err');
         }
@@ -219,7 +219,7 @@ class HooksRepository {
           debugPrint('Malformed hook entry in hooks.json; aborting migration');
           return;
         }
-        final hookJson = (entry as Map).cast<String, dynamic>();
+        final hookJson = (entry).cast<String, dynamic>();
         final key = hookJson['key'] as String?;
         if (key == null || !RegExp(r'^[a-z][a-z0-9_]*$').hasMatch(key)) {
           debugPrint(

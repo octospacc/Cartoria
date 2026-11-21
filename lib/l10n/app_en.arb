@@ -356,5 +356,599 @@
   "@postHideQuotes": {
     "placeholders": { "count": { "type": "int" } }
   },
-  "postQuotedByHeader": "QUOTED BY"
+  "postQuotedByHeader": "QUOTED BY",
+
+  "startupErrorTitle": "Startup error",
+  "startupErrorBody": "Cartoria could not finish starting up. This is usually a permissions or disk issue, not a bug in the app.",
+  "startupErrorStack": "Stack:",
+
+  "driveTitle": "Drive",
+  "driveMoreTooltip": "More",
+  "driveOpen": "Open",
+  "driveUsageAction": "Show posts using this file…",
+  "driveShareAction": "Share / download",
+  "driveDeleteAction": "Delete",
+  "driveSelectFiles": "Select files",
+  "driveSelectedCount": "{count} selected",
+  "@driveSelectedCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "driveExitSelection": "Exit selection",
+  "driveSelectUnused": "Select unused",
+  "driveDeleteSelected": "Delete selected",
+  "driveSearchTooltip": "Search",
+  "driveSearchClose": "Close search",
+  "driveSearchHint": "Search files…",
+  "driveClear": "Clear",
+  "driveGridTooltip": "Grid view",
+  "driveListTooltip": "List view",
+  "driveEmptyState": "No files yet.\nUpload one here, or attach from a post.",
+  "driveNoMatch": "No files match \"{query}\".",
+  "@driveNoMatch": {
+    "placeholders": { "query": { "type": "String" } }
+  },
+  "driveSummaryTotal": "{count, plural, =1{1 file} other{{count} files}}",
+  "@driveSummaryTotal": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "driveSummaryOffloaded": "{count} offloaded",
+  "@driveSummaryOffloaded": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "driveSummaryUnused": "{count} unused",
+  "@driveSummaryUnused": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "driveUsageUsed": "used",
+  "driveUsageUnused": "unused",
+  "driveStatusMissing": "missing",
+  "driveStatusRemote": "remote",
+  "driveDeleteSelectedTitle": "Delete {count, plural, =1{1 file} other{{count} files}}?",
+  "@driveDeleteSelectedTitle": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "driveDeleteSelectedBody": "Posts that reference these files will lose the attachments. This cannot be undone.",
+  "driveDeleteFileTitle": "Delete \"{name}\"?",
+  "@driveDeleteFileTitle": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "driveDeleteFileBody": "Posts that reference this file will lose the attachment.",
+  "driveMissingTitle": "\"{name}\" is missing",
+  "@driveMissingTitle": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "driveMissingBody": "This file is referenced by one or more posts, but its content isn't stored anywhere on this device or the sync remote.\n\nYou can restore it by re-importing the full export it came from, pulling from the sync remote if it still has the file, or by picking a replacement file from this device.",
+  "driveUploadReplacement": "Upload replacement…",
+  "driveRestored": "Restored \"{name}\"",
+  "@driveRestored": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "driveRestoreFailed": "Restore failed: {error}",
+  "@driveRestoreFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "driveUploadFailed": "Upload failed: {error}",
+  "@driveUploadFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "driveUploadSummaryAdded": "{count, plural, =1{1 file uploaded} other{{count} files uploaded}}",
+  "@driveUploadSummaryAdded": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "driveUploadSummaryFailed": "{count, plural, =1{1 file failed} other{{count} files failed}}",
+  "@driveUploadSummaryFailed": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "driveUploadNothing": "No files uploaded",
+  "driveUploadDialogTitle": "{count, plural, =1{1 file failed to upload} other{{count} files failed to upload}}",
+  "@driveUploadDialogTitle": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "drivePastedFromClipboard": "Added {count, plural, =1{1 file} other{{count} files}} from clipboard.",
+  "@drivePastedFromClipboard": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "drivePasteEmpty": "No image or file found in clipboard. On web, try pasting into a composer.",
+  "drivePasteFailed": "Paste failed: {error}",
+  "@drivePasteFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "driveDownloadTitle": "Download from remote?",
+  "driveDownloadBody": "\"{name}\" is not on this device. Fetch it now?",
+  "@driveDownloadBody": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "driveDownloadConfirm": "Download",
+  "driveDownloadFailed": "Download failed: {error}",
+  "@driveDownloadFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+
+  "linkPreviewOpenFailed": "Could not open {url}",
+  "@linkPreviewOpenFailed": {
+    "placeholders": { "url": { "type": "String" } }
+  },
+  "linkPreviewOpenError": "Could not open link: {error}",
+  "@linkPreviewOpenError": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+
+  "postBodyImagePlaceholder": "[image]",
+  "postBodyImagePlaceholderAlt": "[image: {alt}]",
+  "@postBodyImagePlaceholderAlt": {
+    "placeholders": { "alt": { "type": "String" } }
+  },
+  "postBodyImageFailed": "Image failed to load",
+  "postBodyOpenFailed": "Could not open {url}",
+  "@postBodyOpenFailed": {
+    "placeholders": { "url": { "type": "String" } }
+  },
+  "postBodyOpenError": "Could not open link: {error}",
+  "@postBodyOpenError": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+
+  "emojiTitle": "Emoji",
+  "emojiCloseTooltip": "Close",
+
+  "fileUsageEmptyTitle": "Not referenced by any post",
+  "fileUsageCount": "{count, plural, =1{1 post references this file} other{{count} posts reference this file}}",
+  "@fileUsageCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "fileUsageNoPosts": "No posts reference this file.",
+  "fileUsageNoText": "(no text)",
+
+  "postSourceTitle": "Source · {shortId}…",
+  "@postSourceTitle": {
+    "placeholders": { "shortId": { "type": "String" } }
+  },
+  "postSourceCopied": "Source copied",
+  "postSourceCopy": "Copy",
+  "postSourceReadFailed": "Could not read source: {error}",
+  "@postSourceReadFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+
+  "spaceActionsExportTitle": "Export \"{name}\"",
+  "@spaceActionsExportTitle": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "spaceActionsFull": "Full",
+  "spaceActionsFullBody": "Includes every file. Offloaded files are {count, plural, =0{none} =1{1 and downloaded} other{{count} and downloaded}} from the sync remote before the zip is built. Slowest, but the export is self-contained.",
+  "@spaceActionsFullBody": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "spaceActionsOnDisk": "On-disk only",
+  "spaceActionsOnDiskBody": "Includes files currently stored on this device. {count, plural, =0{No files are offloaded.} =1{1 offloaded file skipped.} other{{count} offloaded files skipped.}} File references are preserved in the export; re-importing the full zip (or syncing) later can restore the missing blobs.",
+  "@spaceActionsOnDiskBody": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "spaceActionsNoMedia": "Without media",
+  "spaceActionsNoMediaBody": "No files at all. Only the text (notes, bookmarks) and file references. Smallest export; every file will appear as missing on import until restored.",
+  "spaceActionsExportFailed": "Export failed: {error}",
+  "@spaceActionsExportFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+
+  "spaceStatsCouldNotCompute": "Could not compute stats: {error}",
+  "@spaceStatsCouldNotCompute": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "spaceStatsContent": "Content",
+  "spaceStatsTotal": "Total",
+  "spaceStatsNotes": "Notes",
+  "spaceStatsBookmarks": "Bookmarks",
+  "spaceStatsReplies": "Replies (nested)",
+  "spaceStatsDrive": "Drive",
+  "spaceStatsFiles": "Files",
+  "spaceStatsStorage": "Storage",
+  "spaceStatsSpaceSize": "Space size",
+  "spaceStatsLocation": "Location",
+
+  "fullScreenEditorEmojiTooltip": "Emoji",
+  "fullScreenEditorWordCount": "{words, plural, =1{1 word} other{{words} words}} · {chars, plural, =1{1 char} other{{chars} chars}}",
+  "@fullScreenEditorWordCount": {
+    "placeholders": {
+      "words": { "type": "int" },
+      "chars": { "type": "int" }
+    }
+  },
+
+  "bookmarkImportEmpty": "No bookmarks found in file",
+  "bookmarkImportAllPresent": "All {count, plural, =1{1 bookmark} other{{count} bookmarks}} already present",
+  "@bookmarkImportAllPresent": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "bookmarkImportAdded": "{count, plural, =1{1 bookmark added} other{{count} bookmarks added}}",
+  "@bookmarkImportAdded": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "bookmarkImportSkippedDup": "{count, plural, =1{1 duplicate skipped} other{{count} duplicates skipped}}",
+  "@bookmarkImportSkippedDup": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "bookmarkImportSkippedInvalid": "{count} invalid skipped",
+  "@bookmarkImportSkippedInvalid": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "spaceZipImportEmpty": "No posts found in the zip",
+  "spaceZipImportAllPresent": "All {count, plural, =1{1 item} other{{count} items}} already present",
+  "@spaceZipImportAllPresent": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "spaceZipImportImported": "{count, plural, =1{1 item imported} other{{count} items imported}}",
+  "@spaceZipImportImported": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "spaceZipImportSkippedDup": "{count, plural, =1{1 duplicate skipped} other{{count} duplicates skipped}}",
+  "@spaceZipImportSkippedDup": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "spaceZipImportFiles": "{count, plural, =1{1 file imported} other{{count} files imported}}",
+  "@spaceZipImportFiles": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+
+  "fileViewerImageLoadFailed": "Failed to load image",
+  "fileViewerRetry": "Retry",
+  "fileViewerCannotPlayVideo": "Cannot play video: {error}",
+  "@fileViewerCannotPlayVideo": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "fileViewerCannotPlayAudio": "Cannot play audio: {error}",
+  "@fileViewerCannotPlayAudio": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "fullScreenEditorDefaultTitle": "Edit",
+
+  "hooksTitle": "Hooks",
+  "hooksEmpty": "No hooks yet.\nA hook runs an HTTP request when a post is created or edited.",
+  "hooksDeleteTitle": "Delete \"{name}\"?",
+  "@hooksDeleteTitle": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "hooksDeleteBody": "Posts keep their last hook results, but the hook will no longer fire.",
+  "hooksSummary": "{rules} · {triggers} · {spaces} · key: {key}",
+  "@hooksSummary": {
+    "placeholders": {
+      "rules": { "type": "String" },
+      "triggers": { "type": "String" },
+      "spaces": { "type": "String" },
+      "key": { "type": "String" }
+    }
+  },
+  "hooksRulesCount": "{count, plural, =1{1 rule} other{{count} rules}}",
+  "@hooksRulesCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "hooksSpacesAll": "all spaces",
+  "hooksSpacesCount": "{count, plural, =1{1 space} other{{count} spaces}}",
+  "@hooksSpacesCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "hookTriggerCreate": "create",
+  "hookTriggerEdit": "edit",
+  "hookPreviewAlways": "always",
+
+  "hookEditNew": "New hook",
+  "hookEditExisting": "Edit hook",
+  "hookEditOpenJson": "Edit as JSON",
+  "hookEditSave": "Save",
+  "hookEditNameLabel": "Name",
+  "hookEditKeyLabel": "Key (used in prior-hook references)",
+  "hookEditSectionTriggers": "Triggers",
+  "hookEditOnCreate": "On create",
+  "hookEditOnEdit": "On edit",
+  "hookEditSectionSpaces": "Spaces",
+  "hookEditSectionPostKinds": "Post kinds",
+  "hookEditPostKindNote": "Notes",
+  "hookEditPostKindBookmark": "Bookmarks",
+  "hookEditTagFilterLabel": "Tag filter (comma-separated, optional)",
+  "hookEditTimeoutLabel": "Timeout (seconds)",
+  "hookEditSectionVariables": "Variables",
+  "hookEditVariablesHelper": "Named constants usable in any template. Reference them as vars.NAME. Values are literal — not re-interpolated. Useful for tokens, chat IDs, or anything reused across rules.",
+  "hookEditAddVariable": "Add variable",
+  "hookEditSectionRules": "Rules",
+  "hookEditRulesHelper": "The first rule whose \"when\" evaluates true fires. An empty \"when\" always matches.",
+  "hookEditAddRule": "Add rule",
+  "hookEditShowPreview": "Preview request",
+  "hookEditHidePreview": "Hide preview",
+  "hookEditPreviewEmpty": "No complete rules to preview yet.",
+  "hookEditPreviewRuleTitle": "Rule {n} — {when}",
+  "@hookEditPreviewRuleTitle": {
+    "placeholders": {
+      "n": { "type": "int" },
+      "when": { "type": "String" }
+    }
+  },
+  "hookEditPreviewMultipart": "(multipart: {count, plural, =1{1 part} other{{count} parts}})",
+  "@hookEditPreviewMultipart": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "hookEditErrNameRequired": "Name is required",
+  "hookEditErrKeyFormat": "Key must be lowercase letters/digits/underscore",
+  "hookEditErrTriggers": "Select at least one trigger",
+  "hookEditErrRules": "Add at least one rule",
+  "hookEditErrRuleUrl": "Rule {n}: URL is required",
+  "@hookEditErrRuleUrl": {
+    "placeholders": { "n": { "type": "int" } }
+  },
+  "hookEditErrRuleBuild": "Rule {n}: could not be built",
+  "@hookEditErrRuleBuild": {
+    "placeholders": { "n": { "type": "int" } }
+  },
+  "hookEditErrVarNameFormat": "Variable {n}: name must start with a letter or underscore and contain only letters, digits, and underscores",
+  "@hookEditErrVarNameFormat": {
+    "placeholders": { "n": { "type": "int" } }
+  },
+  "hookEditErrVarDup": "Variable {n}: name \"{name}\" is duplicated",
+  "@hookEditErrVarDup": {
+    "placeholders": {
+      "n": { "type": "int" },
+      "name": { "type": "String" }
+    }
+  },
+
+  "hookRuleTitle": "Rule {n}",
+  "@hookRuleTitle": {
+    "placeholders": { "n": { "type": "int" } }
+  },
+  "hookRuleWhenLabel": "When (optional)",
+  "hookRuleWhenHint": "post.files.length >= 2 && post.files.length <= 10",
+  "hookRuleWhenHelper": "First rule whose condition is true fires. Empty always matches.",
+  "hookRuleMethodLabel": "Method",
+  "hookRuleUrlLabel": "URL template",
+  "hookRuleBodyLabel": "Body template",
+  "hookRuleBodyLabelDisabled": "Body template (disabled — multipart in use)",
+  "hookRuleHeadersSection": "Headers",
+  "hookRuleHeaderNameLabel": "Name",
+  "hookRuleHeaderValueLabel": "Value",
+  "hookRuleAddHeader": "Add header",
+  "hookRuleMultipartSection": "Multipart parts",
+  "hookRuleAddPart": "Add part",
+
+  "hookPartNameLabel": "Name",
+  "hookPartNameHint": "chat_id, caption, photo, media…",
+  "hookPartKindText": "Text",
+  "hookPartKindFile": "File",
+  "hookPartFilePathLabel": "File path (e.g. post.files.0.id or repeat.file.id)",
+  "hookPartValueTemplateLabel": "Value template",
+  "hookPartRepeatLabel": "Repeat over post.files",
+  "hookPartJoinLabel": "Join (optional)",
+  "hookPartJoinHint": ",",
+  "hookPartJoinHelper": "If set, iterations merge into one field",
+  "hookPartPrefixLabel": "Prefix",
+  "hookPartSuffixLabel": "Suffix",
+  "hookPartFilenameLabel": "Filename override (optional)",
+  "hookPartRemove": "Remove",
+
+  "hookVarNameLabel": "Name",
+  "hookVarNameHint": "bot_token",
+  "hookVarValueLabel": "Value",
+  "hookVarRemove": "Remove variable",
+
+  "hookJsonTitle": "Hook JSON",
+  "hookJsonCopy": "Copy",
+  "hookJsonPaste": "Paste",
+  "hookJsonFormat": "Format",
+  "hookJsonApply": "Apply",
+  "hookJsonCopied": "Copied to clipboard",
+  "hookJsonHelper": "Edit this hook as JSON. Useful for pasting AI-generated hooks or moving a hook to another vault. The \"id\" field is internal — leave it alone, or omit it to generate a new one on Apply.",
+  "hookJsonErrParse": "Not valid JSON: {error}",
+  "@hookJsonErrParse": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "hookJsonErrTopLevel": "Top-level JSON value must be an object",
+  "hookJsonErrInvalid": "Invalid hook JSON: {error}",
+  "@hookJsonErrInvalid": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+
+  "hookStatusTitle": "Hook status",
+  "hookStatusNone": "No hooks apply to this post.",
+  "hookStatusApplicable": "Applicable ({count})",
+  "@hookStatusApplicable": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "hookStatusPast": "Past runs",
+  "hookStatusRunAll": "Run all",
+  "hookStatusRun": "Run",
+  "hookStatusHelper": "Hooks can be fired manually at any time. Templates referencing the trigger variable see the trigger from the hook's own settings.",
+  "hookStatusRunning": "Running",
+  "hookStatusNeverFired": "Never fired",
+  "hookStatusFailed": "Failed",
+  "hookStatusSuccess": "Success",
+  "hookStatusKey": "key: {key}",
+  "@hookStatusKey": {
+    "placeholders": { "key": { "type": "String" } }
+  },
+  "hookStatusOrphan": "This hook no longer exists in the vault.",
+  "hookStatusFired": "fired: {when}",
+  "@hookStatusFired": {
+    "placeholders": { "when": { "type": "String" } }
+  },
+  "hookStatusError": "error: {message}",
+  "@hookStatusError": {
+    "placeholders": { "message": { "type": "String" } }
+  },
+  "hookStatusStatus": "status: {code}",
+  "@hookStatusStatus": {
+    "placeholders": { "code": { "type": "String" } }
+  },
+
+  "syncTitle": "Sync",
+  "syncEmpty": "No sync repositories configured.\n\nA repository backs up some or all of your spaces to GitHub or GitLab. Exactly one repository is marked primary and additionally backs up vault-level data (hooks).\n\nTap + to add one.",
+  "syncPushNow": "Push now",
+  "syncPullNow": "Pull now",
+  "syncMenuEdit": "Edit…",
+  "syncMenuSetPrimary": "Set as primary",
+  "syncMenuDelete": "Delete…",
+  "syncAllSpaces": "All spaces",
+  "syncNoSpaces": "No spaces",
+  "syncSpacesCount": "{count, plural, =1{1 space} other{{count} spaces}}",
+  "@syncSpacesCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "syncVaultDataSuffix": "+ vault data",
+  "syncLastSynced": "Last synced: {when}",
+  "@syncLastSynced": {
+    "placeholders": { "when": { "type": "String" } }
+  },
+  "syncPrimaryBadge": "PRIMARY",
+  "syncPrimaryNow": "\"{name}\" is now the primary repository",
+  "@syncPrimaryNow": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "syncDeleteTitle": "Delete \"{name}\"?",
+  "@syncDeleteTitle": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "syncDeleteBodyPrimary": "This is the primary repository. Another will be automatically promoted to primary. The remote repository itself is not affected — only this app's configuration for it.",
+  "syncDeleteBody": "The remote repository itself is not affected — only this app's configuration for it.",
+  "syncNoTokenSnack": "No token for \"{name}\". Open Edit to add one.",
+  "@syncNoTokenSnack": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "syncPushConfirmTitle": "Push \"{name}\"?",
+  "@syncPushConfirmTitle": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "syncPushConfirmBody": "Uploads local changes to the remote. Unpulled remote changes will be overwritten.",
+  "syncPullConfirmTitle": "Pull \"{name}\"?",
+  "@syncPullConfirmTitle": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "syncPullConfirmBody": "Overwrites local files in this config's scope with the remote version. A backup of the vault is saved first.",
+  "syncPushButton": "Push",
+  "syncPullButton": "Pull",
+  "syncProgressStarting": "Starting…",
+  "syncFailed": "Sync failed",
+  "syncComplete": "Sync complete",
+  "syncDialogClose": "Close",
+  "syncDialogPushTitle": "Push \"{name}\"",
+  "@syncDialogPushTitle": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "syncDialogPullTitle": "Pull \"{name}\"",
+  "@syncDialogPullTitle": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "syncPushResultLine": "Pushed: {created} created, {updated} updated, {deleted} deleted",
+  "@syncPushResultLine": {
+    "placeholders": {
+      "created": { "type": "int" },
+      "updated": { "type": "int" },
+      "deleted": { "type": "int" }
+    }
+  },
+  "syncPullResultLine": "Pulled: {added} added, {updated} updated, {deleted} deleted",
+  "@syncPullResultLine": {
+    "placeholders": {
+      "added": { "type": "int" },
+      "updated": { "type": "int" },
+      "deleted": { "type": "int" }
+    }
+  },
+
+  "syncEditNewTitle": "New repository",
+  "syncEditExistingTitle": "Edit repository",
+  "syncEditSave": "Save",
+  "syncEditNameSection": "NAME",
+  "syncEditNameHint": "My backup",
+  "syncEditNameHelper": "Display name for this repository",
+  "syncEditRemoteSection": "REMOTE",
+  "syncEditProviderLabel": "Provider",
+  "syncEditHostLabel": "Host (optional)",
+  "syncEditHostHelper": "Leave empty for {defaultHost}. For self-hosted, enter the hostname.",
+  "@syncEditHostHelper": {
+    "placeholders": { "defaultHost": { "type": "String" } }
+  },
+  "syncEditOwnerLabel": "Owner / group",
+  "syncEditRepoLabel": "Repository",
+  "syncEditBranchLabel": "Branch",
+  "syncEditPrefixLabel": "Path prefix (optional)",
+  "syncEditPrimarySection": "PRIMARY",
+  "syncEditPrimarySwitchTitle": "Set as primary",
+  "syncEditPrimarySubtitleOn": "This repo also backs up vault-level data (hooks).",
+  "syncEditPrimarySubtitleOnly": "The only repository is automatically primary.",
+  "syncEditPrimarySubtitleOff": "Enabling this will demote the current primary.",
+  "syncEditSpacesSection": "SPACES",
+  "syncEditSpacesAll": "All spaces (including future ones)",
+  "syncEditSpacesSelected": "Selected spaces",
+  "syncEditLoadRemote": "Load remote spaces",
+  "syncEditRemoteHintUnloaded": "Tap \"Load remote spaces\" to see spaces that exist on the remote but haven't been pulled yet.",
+  "syncEditRemoteHintLoaded": "{count, plural, =1{1 space} other{{count} spaces}} on the remote. Remote-only spaces are marked.",
+  "@syncEditRemoteHintLoaded": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "syncEditRemoteOnlyBadge": "remote only",
+  "syncEditRemoteOnlySubtitle": "Not on this device yet — will be pulled on next sync",
+  "syncEditRemoteId": "id: {id}",
+  "@syncEditRemoteId": {
+    "placeholders": { "id": { "type": "String" } }
+  },
+  "syncEditMissingRemote": "{count, plural, =1{1 space exists on the remote but is not selected. It will not be pulled by this config until added.} other{{count} spaces exist on the remote but are not selected. They will not be pulled by this config until added.}}",
+  "@syncEditMissingRemote": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "syncEditDriveSection": "DRIVE OFFLOADING",
+  "syncEditKeepLocalLabel": "Keep on disk (files per space)",
+  "syncEditKeepLocalHelper": "Newest N files stay on disk; older files are offloaded to the remote and fetched on demand. Empty = keep everything.",
+  "syncEditTokenSection": "TOKEN",
+  "syncEditTokenStored": "Token stored",
+  "syncEditTokenChange": "Change",
+  "syncEditTokenClear": "Clear",
+  "syncEditTokenLabel": "Personal access token",
+  "syncEditTokenHelperGithub": "Create at github.com/settings/tokens with \"repo\" scope",
+  "syncEditTokenHelperGitlab": "Create at gitlab.com/-/user_settings/personal_access_tokens with \"api\" scope",
+  "syncEditVerify": "Verify access",
+  "syncEditPushButton": "Push to remote",
+  "syncEditPullButton": "Pull from remote",
+  "syncEditReenterTitle": "Re-enter token",
+  "syncEditReenterBody": "The provider, host, owner, or repo changed. Tokens are scoped to that combination, so the previously saved token can't be reused here.\n\nYou'll need to enter a new token. Save anyway without a token?",
+  "syncEditSaveAnyway": "Save anyway",
+  "syncEditSaved": "Saved",
+  "syncEditAccessVerified": "Access verified",
+  "syncEditTokenRequired": "Enter a token first",
+  "syncEditPushConfirmTitle": "Push to remote?",
+  "syncEditPushConfirmBody": "This uploads the selected spaces (and vault-level data if this is the primary) to the remote. Any changes on the remote that you haven't pulled will be overwritten.",
+  "syncEditPullConfirmTitle": "Pull from remote?",
+  "syncEditPullConfirmBody": "This overwrites local files in the selected spaces (and vault-level data if this is the primary) with the remote version. A backup of the vault is saved before pulling.\n\nOn web, the backup is stored in the browser's local storage and keeps only the 3 most recent backups.",
+  "syncEditRemoteLoadTimedOut": "Timed out loading remote spaces. Tap \"Load remote spaces\" to retry.",
+  "syncEditRemoteLoadFailed": "Could not load remote spaces: {error}",
+  "@syncEditRemoteLoadFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+
+  "recallFilesTitle": "Recall files",
+  "recallFilesSubtitle": "{space} · {count, plural, =1{1 file} other{{count} files}}",
+  "@recallFilesSubtitle": {
+    "placeholders": {
+      "space": { "type": "String" },
+      "count": { "type": "int" }
+    }
+  },
+  "recallFilesListTooltip": "List view",
+  "recallFilesGridTooltip": "Grid view",
+  "recallFilesEmpty": "Drive is empty",
+  "recallFilesNoneSelected": "No files selected",
+  "recallFilesSelectedCount": "{count} selected",
+  "@recallFilesSelectedCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "recallFilesAttach": "Attach",
+
+  "hookEditFallbackName": "Unnamed hook",
+  "hookEditFallbackKey": "unnamed",
+  "importFileEmpty": "Selected file is empty",
+  "importFileReadFailed": "Could not read file: {error}",
+  "@importFileReadFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  },
+  "importFilesNoneReadable": "No readable files selected",
+  "importFilesReadFailed": "Could not read files: {error}",
+  "@importFilesReadFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  }
 }

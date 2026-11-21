@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../data/models.dart';
+import '../../l10n/l10n.dart';
 
 /// Bottom sheet listing the posts that reference a drive file.
 ///
@@ -39,6 +40,7 @@ class FileUsageSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l = context.l10n;
     final theme = Theme.of(context);
     return DraggableScrollableSheet(
       expand: false,
@@ -77,8 +79,8 @@ class FileUsageSheet extends StatelessWidget {
                       ),
                       Text(
                         posts.isEmpty
-                            ? 'Not referenced by any post'
-                            : '${posts.length} post${posts.length == 1 ? "" : "s"} reference this file',
+                            ? l.fileUsageEmptyTitle
+                            : l.fileUsageCount(posts.length),
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -88,7 +90,7 @@ class FileUsageSheet extends StatelessWidget {
                 ),
                 IconButton(
                   icon: const Icon(Icons.close),
-                  tooltip: 'Close',
+                  tooltip: l.commonClose,
                   onPressed: () => Navigator.pop(context),
                 ),
               ],
@@ -102,7 +104,7 @@ class FileUsageSheet extends StatelessWidget {
                     child: Padding(
                       padding: const EdgeInsets.all(24),
                       child: Text(
-                        'No posts reference this file.',
+                        l.fileUsageNoPosts,
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                           fontStyle: FontStyle.italic,
@@ -126,9 +128,10 @@ class FileUsageSheet extends StatelessWidget {
 
   Widget _buildItem(BuildContext context, Post post) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     final preview = post.plaintext.isNotEmpty
         ? post.plaintext
-        : (post.title ?? post.url ?? '(no text)');
+        : (post.title ?? post.url ?? l.fileUsageNoText);
     final truncated = preview.length > 120
         ? '${preview.substring(0, 120)}…'
         : preview;

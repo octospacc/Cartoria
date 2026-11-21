@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../data/models.dart';
+import '../../../l10n/l10n.dart';
 
 class LinkPreviewCard extends StatelessWidget {
   final Post post;
@@ -154,6 +155,7 @@ class LinkPreviewCard extends StatelessWidget {
   }
 
   Future<void> _openUrl(BuildContext context) async {
+    final l = context.l10n;
     final url = post.url;
     if (url == null || url.isEmpty) return;
     final uri = Uri.tryParse(url);
@@ -162,13 +164,13 @@ class LinkPreviewCard extends StatelessWidget {
       final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!ok && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open $url')),
+          SnackBar(content: Text(l.linkPreviewOpenFailed(url))),
         );
       }
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open link: $e')),
+          SnackBar(content: Text(l.linkPreviewOpenError(e.toString()))),
         );
       }
     }

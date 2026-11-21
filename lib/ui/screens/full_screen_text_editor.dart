@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../widgets/emoji_picker_sheet.dart';
 import '../widgets/native_text_field.dart';
+import '../../l10n/l10n.dart';
 
 const bool _kUseNativeTextField = true;
 
@@ -82,8 +83,7 @@ class FullScreenTextEditor extends StatelessWidget {
                       : trimmed.split(RegExp(r'\s+')).length;
                   final chars = text.runes.length;
                   return Text(
-                    '$words word${words == 1 ? "" : "s"} · '
-                    '$chars char${chars == 1 ? "" : "s"}',
+                    context.l10n.fullScreenEditorWordCount(words, chars),
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -95,7 +95,7 @@ class FullScreenTextEditor extends StatelessWidget {
           actions: [
             IconButton(
               icon: const Icon(Icons.emoji_emotions_outlined),
-              tooltip: 'Emoji',
+              tooltip: context.l10n.fullScreenEditorEmojiTooltip,
               onPressed: () => showEmojiPickerSheet(context, controller),
             ),
           ],

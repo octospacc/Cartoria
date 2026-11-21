@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
@@ -87,16 +86,13 @@ class _InitErrorScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     return Scaffold(
-      appBar: AppBar(title: const Text('Startup error')),
+      appBar: AppBar(title: Text(l.startupErrorTitle)),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text(
-            'Cartoria could not finish starting up. This is usually a '
-            'permissions or disk issue, not a bug in the app.',
-            style: theme.textTheme.bodyMedium,
-          ),
+          Text(l.startupErrorBody, style: theme.textTheme.bodyMedium),
           const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.all(12),
@@ -115,10 +111,7 @@ class _InitErrorScreen extends StatelessWidget {
           ),
           if (stack != null) ...[
             const SizedBox(height: 12),
-            Text(
-              'Stack:',
-              style: theme.textTheme.labelLarge,
-            ),
+            Text(l.startupErrorStack, style: theme.textTheme.labelLarge),
             const SizedBox(height: 4),
             SelectableText(
               stack.toString(),
