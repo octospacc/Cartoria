@@ -684,19 +684,27 @@ class _PostBodyTextState extends State<PostBodyText> {
               .copyWith(fontStyle: FontStyle.italic),
         );
       case 'u':
+        final base = baseStyle ?? const TextStyle();
+        final combined = TextDecoration.combine([
+          base.decoration ?? TextDecoration.none,
+          TextDecoration.underline,
+        ]);
         return _inlineSpans(
           node,
           theme,
-          baseStyle: (baseStyle ?? const TextStyle())
-              .copyWith(decoration: TextDecoration.underline),
+          baseStyle: base.copyWith(decoration: combined),
         );
       case 'del':
       case 's':
+        final base = baseStyle ?? const TextStyle();
+        final combined = TextDecoration.combine([
+          base.decoration ?? TextDecoration.none,
+          TextDecoration.lineThrough,
+        ]);
         return _inlineSpans(
           node,
           theme,
-          baseStyle: (baseStyle ?? const TextStyle())
-              .copyWith(decoration: TextDecoration.lineThrough),
+          baseStyle: base.copyWith(decoration: combined),
         );
       case 'code':
         return [
@@ -717,10 +725,14 @@ class _PostBodyTextState extends State<PostBodyText> {
         _recognizers.add(rec);
         return childSpans.map((s) {
           if (s is TextSpan) {
-            final effective =
-                (s.style ?? baseStyle ?? const TextStyle()).copyWith(
+            final spanBase = s.style ?? baseStyle ?? const TextStyle();
+            final combined = TextDecoration.combine([
+              spanBase.decoration ?? TextDecoration.none,
+              TextDecoration.underline,
+            ]);
+            final effective = spanBase.copyWith(
               color: theme.colorScheme.primary,
-              decoration: TextDecoration.underline,
+              decoration: combined,
               decorationColor: theme.colorScheme.primary,
             );
             return TextSpan(

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
+import 'package:flutter_quill/flutter_quill.dart' as quill;
 
 import '../../data/bookmarks.dart';
 import '../../data/composer_draft.dart';
@@ -19,6 +20,7 @@ import '../space_actions.dart';
 import '../space_dialogs.dart';
 import '../widgets/escape_back.dart';
 import '../widgets/space_stats_dialog.dart';
+import '../widgets/quill_bridge.dart';
 import 'drive.dart';
 import 'space_feed/attachment_picker.dart';
 import 'space_feed/composer.dart';
@@ -52,6 +54,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   Space get _space => widget.store.spaceById(widget.space.id) ?? widget.space;
 
   final _bodyCtrl = TextEditingController();
+  quill.QuillController? _inlineQuillCtrl;
   final _urlCtrl = TextEditingController();
   final _searchCtrl = TextEditingController();
   PostKind _kind = PostKind.note;
@@ -96,6 +99,13 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       store: widget.store,
       fieldKey: 'space:${widget.space.id}:inline',
     );
+    _inlineQuillCtrl = widget.store.richEditorEnabled
+        ? quill.QuillController(
+            document: quill.Document(),
+            selection: const TextSelection.collapsed(offset: 0),
+          )
+        : null;
+    _inlineQuillCtrl?.addListener(_onInlineFieldChanged);
     _bodyCtrl.addListener(_onInlineFieldChanged);
     _urlCtrl.addListener(_onInlineFieldChanged);
     _loadInlineDraft();
@@ -107,6 +117,8 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       _inlineDraftCtrl.saveNow(_buildInlineDraft());
     }
     _inlineDraftCtrl.dispose();
+    _inlineQuillCtrl?.removeListener(_onInlineFieldChanged);
+    _inlineQuillCtrl?.dispose();
     _bodyCtrl.dispose();
     _urlCtrl.dispose();
     _searchCtrl.dispose();
@@ -155,6 +167,8 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                               onKindChanged: (k) =>
                                   _updateInlineState(() => _kind = k),
                               bodyCtrl: _bodyCtrl,
+                              quillCtrl: _inlineQuillCtrl,
+                              rich: widget.store.richEditorEnabled,
                               urlCtrl: _urlCtrl,
                               pendingFileIds: _pendingFileIds,
                               store: widget.store,
@@ -178,5 +192,20 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                 );
               },
             )));
+  }
+
+  void _resetQuillToEmpty() {
+    if (_inlineQuillCtrl == null) return;
+    _replaceInlineQuill(quill.QuillController(
+      document: quill.Document(),
+      selection: const TextSelection.collapsed(offset: 0),
+    ));
+  }
+
+  void _replaceInlineQuill(quill.QuillController next) {
+    _inlineQuillCtrl?.removeListener(_onInlineFieldChanged);
+    _inlineQuillCtrl?.dispose();
+    _inlineQuillCtrl = next;
+    _inlineQuillCtrl?.addListener(_onInlineFieldChanged);
   }
 }

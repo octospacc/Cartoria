@@ -534,5 +534,15 @@
   "importFileEmpty": "Il file selezionato è vuoto",
   "importFileReadFailed": "Impossibile leggere il file: {error}",
   "importFilesNoneReadable": "Nessun file leggibile selezionato",
-  "importFilesReadFailed": "Impossibile leggere i file: {error}"
+  "importFilesReadFailed": "Impossibile leggere i file: {error}",
+
+  "settingsRichEditorSection": "EDITOR",
+  "settingsRichEditorTitle": "Editor di testo formattato",
+  "settingsRichEditorDescription": "Mostra la barra di formattazione nel compositore. Se disattivato, il compositore usa solo testo semplice.",
+  "richEditorBold": "Grassetto",
+  "richEditorItalic": "Corsivo",
+  "richEditorUnderline": "Sottolineato",
+  "richEditorStrikethrough": "Barrato",
+  "richEditorInlineCode": "Codice in linea",
+  "richEditorClearFormatting": "Rimuovi formattazione"
 }

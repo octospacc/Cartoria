@@ -2078,4 +2078,32 @@ class AppLocalizationsEn extends AppLocalizations {
   String importFilesReadFailed(String error) {
     return 'Could not read files: $error';
   }
+
+  @override
+  String get settingsRichEditorSection => 'EDITOR';
+
+  @override
+  String get settingsRichEditorTitle => 'Rich text editor';
+
+  @override
+  String get settingsRichEditorDescription =>
+      'Show formatting toolbar in the composer. When off, the composer uses plain text only.';
+
+  @override
+  String get richEditorBold => 'Bold';
+
+  @override
+  String get richEditorItalic => 'Italic';
+
+  @override
+  String get richEditorUnderline => 'Underline';
+
+  @override
+  String get richEditorStrikethrough => 'Strikethrough';
+
+  @override
+  String get richEditorInlineCode => 'Inline code';
+
+  @override
+  String get richEditorClearFormatting => 'Clear formatting';
 }

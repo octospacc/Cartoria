@@ -132,4 +132,89 @@ void main() {
       expect(r.kind, PostKind.note);
     });
   });
+
+  group('bodyDelta', () {
+    test('round-trips a quill-style delta string', () {
+      const delta =
+          '[{"insert":"hello"},{"insert":"world","attributes":{"bold":true}}]';
+      final d = ComposerDraft(
+        fieldKey: 'post:abc:edit',
+        kind: PostKind.note,
+        body: 'helloworld',
+        bodyDelta: delta,
+        savedAt: DateTime.utc(2025, 1, 1),
+      );
+      final r = ComposerDraft.fromJson(d.toJson());
+      expect(r.bodyDelta, delta);
+      expect(r.body, 'helloworld');
+    });
+
+    test('legacy draft (no bodyDelta key) loads with null bodyDelta', () {
+      final r = ComposerDraft.fromJson({
+        'fieldKey': 'x',
+        'kind': 'note',
+        'body': 'text',
+        'savedAt': '2025-01-01T00:00:00.000Z',
+      });
+      expect(r.bodyDelta, isNull);
+    });
+
+    test('plaintext draft with empty bodyDelta is treated as empty', () {
+      final d = ComposerDraft(
+        fieldKey: 'x',
+        kind: PostKind.note,
+        body: '',
+        bodyDelta: '',
+        savedAt: DateTime.utc(2025),
+      );
+      expect(d.isEmpty, isTrue);
+    });
+
+    test('minimal quill empty-doc delta is treated as empty', () {
+      // The Quill "empty document" serialisation. A composer with no
+      // text should not be considered a draft with content, otherwise
+      // every edit that gets cancelled persists a bogus draft.
+      final d = ComposerDraft(
+        fieldKey: 'x',
+        kind: PostKind.note,
+        body: '',
+        bodyDelta: '[{"insert":"\\n"}]',
+        savedAt: DateTime.utc(2025),
+      );
+      expect(d.isEmpty, isTrue);
+    });
+
+    test('minimal delta with whitespace is still minimal', () {
+      final d = ComposerDraft(
+        fieldKey: 'x',
+        kind: PostKind.note,
+        body: '',
+        bodyDelta: '[\n  {"insert":"\\n"}\n]',
+        savedAt: DateTime.utc(2025),
+      );
+      expect(d.isEmpty, isTrue);
+    });
+
+    test('delta with content is not empty', () {
+      final d = ComposerDraft(
+        fieldKey: 'x',
+        kind: PostKind.note,
+        body: '',
+        bodyDelta: '[{"insert":"hi\\n"}]',
+        savedAt: DateTime.utc(2025),
+      );
+      expect(d.isEmpty, isFalse);
+    });
+
+    test('non-empty body but empty delta is not empty', () {
+      final d = ComposerDraft(
+        fieldKey: 'x',
+        kind: PostKind.note,
+        body: 'text',
+        bodyDelta: '[{"insert":"\\n"}]',
+        savedAt: DateTime.utc(2025),
+      );
+      expect(d.isEmpty, isFalse);
+    });
+  });
 }

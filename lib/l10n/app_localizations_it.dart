@@ -2068,4 +2068,32 @@ class AppLocalizationsIt extends AppLocalizations {
   String importFilesReadFailed(String error) {
     return 'Impossibile leggere i file: $error';
   }
+
+  @override
+  String get settingsRichEditorSection => 'EDITOR';
+
+  @override
+  String get settingsRichEditorTitle => 'Editor di testo formattato';
+
+  @override
+  String get settingsRichEditorDescription =>
+      'Mostra la barra di formattazione nel compositore. Se disattivato, il compositore usa solo testo semplice.';
+
+  @override
+  String get richEditorBold => 'Grassetto';
+
+  @override
+  String get richEditorItalic => 'Corsivo';
+
+  @override
+  String get richEditorUnderline => 'Sottolineato';
+
+  @override
+  String get richEditorStrikethrough => 'Barrato';
+
+  @override
+  String get richEditorInlineCode => 'Codice in linea';
+
+  @override
+  String get richEditorClearFormatting => 'Rimuovi formattazione';
 }

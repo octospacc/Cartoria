@@ -19,16 +19,23 @@ class AppSettings {
   /// switches languages does not lose their onboarding flag.
   final String? localeCode;
 
+  /// Whether the composer shows the rich-text toolbar. Defaults to `true`
+  /// — formatting is available for users who want it, and the plain-text
+  /// path is one toggle away in settings.
+  final bool richEditorEnabled;
+
   const AppSettings({
     this.onboarded = false,
     this.backupRetentionCount,
     this.localeCode,
+    this.richEditorEnabled = true,
   });
 
   AppSettings copyWith({
     bool? onboarded,
     Object? backupRetentionCount = _sentinel,
     Object? localeCode = _sentinel,
+    bool? richEditorEnabled,
   }) =>
       AppSettings(
         onboarded: onboarded ?? this.onboarded,
@@ -38,6 +45,7 @@ class AppSettings {
         localeCode: identical(localeCode, _sentinel)
             ? this.localeCode
             : localeCode as String?,
+        richEditorEnabled: richEditorEnabled ?? this.richEditorEnabled,
       );
 
   Map<String, dynamic> toJson() => {
@@ -46,12 +54,14 @@ class AppSettings {
         if (backupRetentionCount != null)
           'backupRetentionCount': backupRetentionCount,
         if (localeCode != null) 'localeCode': localeCode,
+        'richEditorEnabled': richEditorEnabled,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
         onboarded: (j['onboarded'] as bool?) ?? false,
         backupRetentionCount: j['backupRetentionCount'] as int?,
         localeCode: j['localeCode'] as String?,
+        richEditorEnabled: (j['richEditorEnabled'] as bool?) ?? true,
       );
 }
 

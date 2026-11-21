@@ -9,9 +9,28 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
     return re.allMatches(body).map((m) => m.group(1)!).toSet().toList();
   }
 
+  /// True when the rich editor is active for the inline composer.
+  bool get _inlineRich =>
+      widget.store.richEditorEnabled && _inlineQuillCtrl != null;
+
+  /// Reads the current inline body text via whichever controller is
+  /// active. Always returns plaintext — callers that need HTML use
+  /// `_inlineHtml` instead.
+  String _inlineText() {
+    if (_inlineRich) return quillToPlaintext(_inlineQuillCtrl!);
+    return _bodyCtrl.text;
+  }
+
+  /// HTML form of the inline body, or null when the rich editor is off.
+  String? _inlineHtml() {
+    if (!_inlineRich) return null;
+    final html = quillToHtml(_inlineQuillCtrl!);
+    return html.isEmpty ? null : html;
+  }
+
   Future<void> _send() async {
     final l = context.l10n;
-    final body = _bodyCtrl.text.trim();
+    final body = _inlineText().trim();
     final url = _kind == PostKind.bookmark ? _urlCtrl.text.trim() : null;
     if (_kind == PostKind.bookmark && (url == null || url.isEmpty)) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -39,6 +58,7 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
         spaceId: widget.space.id,
         kind: _kind,
         plaintextBody: body,
+        bodyHtml: _inlineHtml(),
         url: url,
         title: fetchedTitle,
         description: fetchedDescription,
@@ -59,6 +79,7 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
           _skipHooks = false;
         });
         _bodyCtrl.clear();
+        _resetQuillToEmpty();
         _urlCtrl.clear();
       } finally {
         _loadingInlineDraft = false;
@@ -94,6 +115,12 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
         _skipHooks = draft.skipHooks;
       });
       _bodyCtrl.text = draft.body;
+      if (_inlineQuillCtrl != null) {
+        _replaceInlineQuill(quillFromDraft(
+          body: draft.body,
+          bodyDelta: draft.bodyDelta,
+        ));
+      }
       _urlCtrl.text = draft.url ?? '';
     } finally {
       _loadingInlineDraft = false;
@@ -116,7 +143,10 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
     return ComposerDraft(
       fieldKey: _inlineDraftCtrl.fieldKey,
       kind: _kind,
-      body: _bodyCtrl.text,
+      body: _inlineText(),
+      bodyDelta: _inlineRich
+          ? quillToDeltaJson(_inlineQuillCtrl!)
+          : null,
       url: _urlCtrl.text.isEmpty ? null : _urlCtrl.text,
       fileIds: List.of(_pendingFileIds),
       postDateTime: _postDateTime,
@@ -137,6 +167,7 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
         _skipHooks = false;
       });
       _bodyCtrl.clear();
+      _resetQuillToEmpty();
       _urlCtrl.clear();
     } finally {
       _loadingInlineDraft = false;
@@ -176,6 +207,7 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
       spaceId: widget.space.id,
       kind: result.kind,
       plaintextBody: result.body,
+      bodyHtml: result.bodyHtml,
       url: result.url,
       title: title,
       description: description,
@@ -228,6 +260,7 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
       spaceId: widget.space.id,
       kind: result.kind,
       plaintextBody: result.body,
+      bodyHtml: result.bodyHtml,
       url: result.url,
       title: title,
       description: description,
@@ -257,6 +290,7 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
       postId: post.id,
       kind: result.kind,
       plaintextBody: result.body,
+      bodyHtml: result.bodyHtml,
       url: result.url,
       title: result.title,
       description: result.description,

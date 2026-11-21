@@ -199,7 +199,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         body: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            _sectionHeader(theme, l.settingsLanguageSection),
+            _sectionHeader(theme, l.settingsLanguageSection), // LANGUAGE
             const SizedBox(height: 8),
             Text(
               l.settingsLanguageDescription,
@@ -231,7 +231,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
               },
             ),
             const SizedBox(height: 24),
-            _sectionHeader(theme, l.settingsBackupsSection),
+
+            _sectionHeader(theme, l.settingsRichEditorSection), // EDITOR
+            const SizedBox(height: 8),
+            Text(
+              l.settingsRichEditorDescription,
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(l.settingsRichEditorTitle),
+              value: widget.store.richEditorEnabled,
+              onChanged: (v) => widget.store.setRichEditorEnabled(v),
+            ),
+            const SizedBox(height: 24),
+
+            _sectionHeader(theme, l.settingsBackupsSection), // BACKUPS
             const SizedBox(height: 8),
             Text(
               l.settingsBackupsDescription,

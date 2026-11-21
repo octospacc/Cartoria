@@ -73,6 +73,7 @@ class PostRepository {
     required String spaceId,
     required PostKind kind,
     required String plaintextBody,
+    String? bodyHtml,
     String? url,
     String? title,
     String? description,
@@ -90,7 +91,8 @@ class PostRepository {
     // must be stored as UTC to compare correctly against DateTime.now().toUtc()
     // and to render back through .toLocal().
     final now = (createdAt ?? DateTime.now()).toUtc();
-    final html = _appendBlockquotes(bodyToHtml(plaintextBody), quotedExternals);
+    final effectiveBody = bodyHtml ?? bodyToHtml(plaintextBody);
+    final html = _appendBlockquotes(effectiveBody, quotedExternals);
     final meta = <String, dynamic>{
       'id': id,
       'kind': kind.name,
@@ -115,7 +117,7 @@ class PostRepository {
       id: id,
       parentId: parentId,
       kind: kind,
-      body: bodyToHtml(plaintextBody),
+      body: effectiveBody,
       url: url,
       title: title,
       description: description,
@@ -134,6 +136,7 @@ class PostRepository {
     required Post existing,
     required PostKind kind,
     required String plaintextBody,
+    String? bodyHtml,
     String? url,
     String? title,
     String? description,
@@ -141,7 +144,7 @@ class PostRepository {
     List<String> tags = const [],
     List<String> fileIds = const [],
   }) async {
-    final cleanBody = bodyToHtml(plaintextBody);
+    final cleanBody = bodyHtml ?? bodyToHtml(plaintextBody);
     final html = _appendBlockquotes(cleanBody, existing.quotedExternals);
     final now = DateTime.now().toUtc();
     final meta = <String, dynamic>{

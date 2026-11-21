@@ -950,5 +950,15 @@
   "importFilesReadFailed": "Could not read files: {error}",
   "@importFilesReadFailed": {
     "placeholders": { "error": { "type": "String" } }
-  }
+  },
+
+  "settingsRichEditorSection": "EDITOR",
+  "settingsRichEditorTitle": "Rich text editor",
+  "settingsRichEditorDescription": "Show formatting toolbar in the composer. When off, the composer uses plain text only.",
+  "richEditorBold": "Bold",
+  "richEditorItalic": "Italic",
+  "richEditorUnderline": "Underline",
+  "richEditorStrikethrough": "Strikethrough",
+  "richEditorInlineCode": "Inline code",
+  "richEditorClearFormatting": "Clear formatting"
 }

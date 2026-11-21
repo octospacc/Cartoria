@@ -396,6 +396,7 @@ class VaultStore extends ChangeNotifier {
     required String spaceId,
     required PostKind kind,
     required String plaintextBody,
+    String? bodyHtml,
     String? url,
     String? title,
     String? description,
@@ -411,6 +412,7 @@ class VaultStore extends ChangeNotifier {
       spaceId: spaceId,
       kind: kind,
       plaintextBody: plaintextBody,
+      bodyHtml: bodyHtml,
       url: url,
       title: title,
       description: description,
@@ -445,6 +447,7 @@ class VaultStore extends ChangeNotifier {
     required String postId,
     required PostKind kind,
     required String plaintextBody,
+    String? bodyHtml,
     String? url,
     String? title,
     String? description,
@@ -465,6 +468,7 @@ class VaultStore extends ChangeNotifier {
         existing: previous,
         kind: kind,
         plaintextBody: plaintextBody,
+        bodyHtml: bodyHtml,
         url: url,
         title: title,
         description: description,
@@ -577,6 +581,19 @@ class VaultStore extends ChangeNotifier {
       debugPrint('Could not persist locale: $e');
     }
     notifyListeners();
+  }
+
+  bool get richEditorEnabled => _settings.richEditorEnabled;
+
+  Future<void> setRichEditorEnabled(bool enabled) async {
+    if (_settings.richEditorEnabled == enabled) return;
+    _settings = _settings.copyWith(richEditorEnabled: enabled);
+    try {
+      await _settingsStore.save(_settings);
+    } catch (e) {
+      debugPrint('Could not persist rich editor setting: $e');
+    }
+    notifyInternal();
   }
 
   Future<T> _withPostLock<T>(String postId, Future<T> Function() fn) {

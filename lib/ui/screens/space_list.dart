@@ -8,7 +8,6 @@ import '../../data/models.dart';
 import '../../data/store.dart';
 import '../../data/space_icons.dart';
 import '../../l10n/l10n.dart';
-import '../../util/json_format.dart';
 import '../bookmark_import_helpers.dart';
 import '../space_actions.dart';
 import '../space_dialogs.dart';
@@ -88,8 +87,9 @@ class SpaceListScreen extends StatelessWidget {
                               SpaceStatsDialog.show(context, store, space);
                             }
                             if (v == 'edit') _editSpace(context, space);
-                            if (v == 'export')
+                            if (v == 'export') {
                               exportSpaceZip(context, store, space);
+                            }
                             if (v == 'delete')
                               _confirmDelete(context, space);
                           },

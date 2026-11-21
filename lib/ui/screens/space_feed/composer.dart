@@ -3,23 +3,27 @@ library composer;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_quill/flutter_quill.dart' as quill;
 import 'package:intl/intl.dart';
 
-import '../../../platform/clipboard_files.dart';
+import '../../../data/composer_draft.dart';
 import '../../../data/models.dart';
 import '../../../data/store.dart';
-import '../../../util/html_utils.dart';
-import '../../widgets/spell_check.dart';
-import '../../widgets/emoji_picker_sheet.dart';
-import '../../screens/full_screen_text_editor.dart';
-import '../../../data/composer_draft.dart';
 import '../../../l10n/l10n.dart';
+import '../../../platform/clipboard_files.dart';
+import '../../../util/html_utils.dart';
+import '../../widgets/emoji_picker_sheet.dart';
+import '../../widgets/quill_bridge.dart';
+import '../../widgets/rich_text_editor.dart';
+import '../../widgets/spell_check.dart';
 import '../drive/file_viewer.dart';
-import 'composer_draft_controller.dart';
+import '../full_screen_plain_text_editor.dart';
+import '../full_screen_text_editor.dart';
 import 'attachment_picker.dart';
+import 'composer_draft_controller.dart';
 
-part 'composer_sheet.dart';
 part 'composer_datetime.dart';
+part 'composer_sheet.dart';
 
 // ── Shared: date/time picker + formatter ──────────────────────────────────
 
@@ -46,27 +50,6 @@ Future<DateTime?> _pickPostDateTime(
   return DateTime(date.year, date.month, date.day, time.hour, time.minute);
 }
 
-const _monthsShort = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
-/// Formats a post's timestamp in the current UI locale.
-///
-/// Month names and 24-hour time come from `intl`'s locale data, which
-/// `flutter_localizations` initializes at app startup for every locale
-/// in `MaterialApp.supportedLocales`. Same-year timestamps omit the
-/// year to keep the chip compact; different-year timestamps include it.
 String _formatPostDateTime(BuildContext context, DateTime dt) {
   final local = dt.toLocal();
   final now = DateTime.now();
@@ -83,35 +66,21 @@ String _formatPostDateTime(BuildContext context, DateTime dt) {
 class ComposerResult {
   final PostKind kind;
   final String body;
+  final String? bodyHtml;
   final String? url;
   final String? title;
   final String? description;
   final String? thumbnail;
   final List<String> fileIds;
-
-  /// Only meaningful for new posts (reply or top-level). Null means
-  /// "use now at send time"; ignored for edits.
   final DateTime? createdAt;
-
-  /// The post being quoted, if this composition is a quote. Null for
-  /// ordinary new posts and for replies. Ignored on edit — the existing
-  /// post's quote reference is preserved by `updatePost` regardless.
   final String? quotedPostId;
-
-  /// When true, hooks are not fired for this save. Only meaningful for
-  /// create and edit actions; ignored when composing a reply or quote
-  /// that reuses the previous value (currently always false for both).
   final bool skipHooks;
-
-  /// Field key used by the sheet's draft controller. Parents clear the
-  /// draft via `store.deleteComposerDraft(result.draftFieldKey)` after
-  /// the post is successfully persisted — this preserves the draft if
-  /// post creation fails.
   final String draftFieldKey;
 
   const ComposerResult({
     required this.kind,
     required this.body,
+    this.bodyHtml,
     required this.url,
     required this.title,
     required this.description,
@@ -130,6 +99,8 @@ class InlineComposer extends StatelessWidget {
   final PostKind kind;
   final ValueChanged<PostKind> onKindChanged;
   final TextEditingController bodyCtrl;
+  final quill.QuillController? quillCtrl;
+  final bool rich;
   final TextEditingController urlCtrl;
   final List<String> pendingFileIds;
   final VaultStore store;
@@ -137,14 +108,10 @@ class InlineComposer extends StatelessWidget {
   final VoidCallback onAttach;
   final VoidCallback? onSend;
   final ValueChanged<String> onRemoveFile;
-
-  /// Post datetime override. Null = "now at send time".
   final DateTime? postDateTime;
   final ValueChanged<DateTime?> onPostDateTimeChanged;
-
   final bool skipHooks;
   final ValueChanged<bool> onSkipHooksChanged;
-
   final VoidCallback onReset;
 
   const InlineComposer({
@@ -152,6 +119,8 @@ class InlineComposer extends StatelessWidget {
     required this.kind,
     required this.onKindChanged,
     required this.bodyCtrl,
+    this.quillCtrl,
+    this.rich = false,
     required this.urlCtrl,
     required this.pendingFileIds,
     required this.store,
@@ -169,6 +138,7 @@ class InlineComposer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l = context.l10n;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -181,12 +151,10 @@ class InlineComposer extends StatelessWidget {
               children: pendingFileIds.map((id) {
                 final f = store.fileById(space.id, id);
                 return InputChip(
-                  label: Text(f?.name ?? id,
-                      overflow: TextOverflow.ellipsis),
+                  label: Text(f?.name ?? id, overflow: TextOverflow.ellipsis),
                   onDeleted: () => onRemoveFile(id),
-                  onPressed: f == null
-                      ? null
-                      : () => _openFileViewer(context, f),
+                  onPressed:
+                      f == null ? null : () => _openFileViewer(context, f),
                 );
               }).toList(),
             ),
@@ -205,20 +173,39 @@ class InlineComposer extends StatelessWidget {
               ),
             ),
           ),
-        TextField(
-          controller: bodyCtrl,
-          minLines: 1,
-          maxLines: 6,
-          spellCheckConfiguration: kSpellCheckConfig,
-          contextMenuBuilder: spellCheckContextMenuBuilder,
-          decoration: InputDecoration(
-            isDense: true,
-            hintText: kind == PostKind.note
-                ? l.composerBodyHintNote
-                : l.composerBodyHintBookmark,
-            border: InputBorder.none,
+        if (rich && quillCtrl != null)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: RichTextEditor(
+              controller: quillCtrl!,
+              hintText: kind == PostKind.note
+                  ? l.composerBodyHintNote
+                  : l.composerBodyHintBookmark,
+              minHeight: 40,
+              maxHeight: 180,
+            ),
+          )
+        else
+          TextField(
+            controller: bodyCtrl,
+            minLines: 1,
+            maxLines: 6,
+            spellCheckConfiguration: kSpellCheckConfig,
+            contextMenuBuilder: spellCheckContextMenuBuilder,
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: kind == PostKind.note
+                  ? l.composerBodyHintNote
+                  : l.composerBodyHintBookmark,
+              border: InputBorder.none,
+            ),
           ),
-        ),
         const SizedBox(height: 2),
         LayoutBuilder(
           builder: (context, constraints) {
@@ -248,7 +235,7 @@ class InlineComposer extends StatelessWidget {
               icon: const Icon(Icons.emoji_emotions_outlined, size: 20),
               tooltip: l.composerEmojiTooltip,
               visualDensity: VisualDensity.compact,
-              onPressed: () => showEmojiPickerSheet(context, bodyCtrl),
+              onPressed: () => _openEmoji(context),
             );
 
             final hooksButton = IconButton(
@@ -267,7 +254,7 @@ class InlineComposer extends StatelessWidget {
               icon: const Icon(Icons.open_in_full, size: 20),
               tooltip: l.composerExpand,
               visualDensity: VisualDensity.compact,
-              onPressed: () => _openFullScreenEditor(context, bodyCtrl),
+              onPressed: () => _openFullScreenEditor(context),
             );
 
             final attachButton = IconButton(
@@ -335,47 +322,73 @@ class InlineComposer extends StatelessWidget {
     );
   }
 
-  Future<void> _openFullScreenEditor(
-    BuildContext context,
-    TextEditingController ctrl,
-  ) async {
+  Future<void> _openEmoji(BuildContext context) async {
+    if (rich && quillCtrl != null) {
+      final emoji = await pickEmoji(context);
+      if (emoji == null) return;
+      final sel = quillCtrl!.selection;
+      final index = sel.isValid ? sel.start : quillCtrl!.document.length - 1;
+      quillCtrl!.document.insert(index, emoji);
+      quillCtrl!.updateSelection(
+        TextSelection.collapsed(offset: index + emoji.length),
+        quill.ChangeSource.local,
+      );
+    } else {
+      await showEmojiPickerSheet(context, bodyCtrl);
+    }
+  }
+
+  Future<void> _openFullScreenEditor(BuildContext context) async {
     FocusScope.of(context).unfocus();
     final l = context.l10n;
     final isNote = kind == PostKind.note;
-    await FullScreenTextEditor.show(
-      context,
-      controller: ctrl,
-      title: isNote
-          ? l.composerFullScreenNoteTitle
-          : l.composerFullScreenBookmarkTitle,
-      hintText: isNote
-          ? l.composerFullScreenNoteHint
-          : l.composerFullScreenBookmarkHint,
-    );
+    if (rich && quillCtrl != null) {
+      await FullScreenTextEditor.show(
+        context,
+        controller: quillCtrl!,
+        title: isNote
+            ? l.composerFullScreenNoteTitle
+            : l.composerFullScreenBookmarkTitle,
+        hintText: isNote
+            ? l.composerFullScreenNoteHint
+            : l.composerFullScreenBookmarkHint,
+      );
+    } else {
+      await FullScreenPlainTextEditor.show(
+        context,
+        controller: bodyCtrl,
+        title: isNote
+            ? l.composerFullScreenNoteTitle
+            : l.composerFullScreenBookmarkTitle,
+        hintText: isNote
+            ? l.composerFullScreenNoteHint
+            : l.composerFullScreenBookmarkHint,
+      );
+    }
   }
 
   Widget _buildResetButton(BuildContext context) {
-    return ValueListenableBuilder<TextEditingValue>(
-      valueListenable: bodyCtrl,
-      builder: (_, __, ___) => ValueListenableBuilder<TextEditingValue>(
-        valueListenable: urlCtrl,
-        builder: (_, __, ___) {
-          // Matches `ComposerDraft.isEmpty` — reset is enabled only when
-          // there's something worth discarding.
-          final hasContent = bodyCtrl.text.isNotEmpty ||
-              urlCtrl.text.isNotEmpty ||
-              pendingFileIds.isNotEmpty ||
-              postDateTime != null ||
-              skipHooks ||
-              kind != PostKind.note;
-              return IconButton(
-                icon: const Icon(Icons.restart_alt, size: 20),
-                tooltip: hasContent ? context.l10n.composerDiscardDraft : null,
-                visualDensity: VisualDensity.compact,
-                onPressed: hasContent ? onReset : null,
-              );
-        },
-      ),
+    final listenables = <Listenable>[bodyCtrl, urlCtrl];
+    if (rich && quillCtrl != null) listenables.add(quillCtrl!);
+    return ListenableBuilder(
+      listenable: Listenable.merge(listenables),
+      builder: (_, __) {
+        final hasContent =
+            (rich && quillCtrl != null
+                ? quillToPlaintext(quillCtrl!).isNotEmpty
+                : bodyCtrl.text.isNotEmpty) ||
+            urlCtrl.text.isNotEmpty ||
+            pendingFileIds.isNotEmpty ||
+            postDateTime != null ||
+            skipHooks ||
+            kind != PostKind.note;
+        return IconButton(
+          icon: const Icon(Icons.restart_alt, size: 20),
+          tooltip: hasContent ? context.l10n.composerDiscardDraft : null,
+          visualDensity: VisualDensity.compact,
+          onPressed: hasContent ? onReset : null,
+        );
+      },
     );
   }
 
@@ -398,9 +411,6 @@ class InlineComposer extends StatelessWidget {
         ),
       ),
     );
-    // Any of the pending files may have been deleted while the viewer
-    // was open (not just the initially-tapped one). Sweep them all so
-    // no chip lingers on a nonexistent file.
     for (final id in List.of(pendingFileIds)) {
       if (store.fileById(space.id, id) == null) {
         onRemoveFile(id);

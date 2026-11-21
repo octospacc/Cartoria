@@ -71,8 +71,6 @@ class _DateTimeChip extends StatelessWidget {
   }
 }
 
-// ── Datetime row (composer sheet) ─────────────────────────────────────────
-
 class _DateTimeRow extends StatelessWidget {
   final DateTime? value;
   final ValueChanged<DateTime?> onChanged;
@@ -82,6 +80,7 @@ class _DateTimeRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l = context.l10n;
     final v = value;
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
@@ -99,13 +98,15 @@ class _DateTimeRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  context.l10n.composerPostedAt,
+                  l.composerPostedAt,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
                 Text(
-                  v == null ? context.l10n.composerPostedNow : _formatPostDateTime(context, v),
+                  v == null
+                      ? l.composerPostedNow
+                      : _formatPostDateTime(context, v),
                   style: theme.textTheme.bodySmall,
                 ),
               ],
@@ -114,7 +115,7 @@ class _DateTimeRow extends StatelessWidget {
           if (v != null)
             IconButton(
               icon: const Icon(Icons.close, size: 18),
-              tooltip: context.l10n.composerResetTime,
+              tooltip: l.composerResetTime,
               onPressed: () => onChanged(null),
             ),
           TextButton(
@@ -123,7 +124,7 @@ class _DateTimeRow extends StatelessWidget {
               if (picked != null) onChanged(picked);
             },
             child: Text(
-              v == null ? context.l10n.composerSetTime : context.l10n.composerChangeTime,
+              v == null ? l.composerSetTime : l.composerChangeTime,
             ),
           ),
         ],

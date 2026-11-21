@@ -3091,6 +3091,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Could not read files: {error}'**
   String importFilesReadFailed(String error);
+
+  /// No description provided for @settingsRichEditorSection.
+  ///
+  /// In en, this message translates to:
+  /// **'EDITOR'**
+  String get settingsRichEditorSection;
+
+  /// No description provided for @settingsRichEditorTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Rich text editor'**
+  String get settingsRichEditorTitle;
+
+  /// No description provided for @settingsRichEditorDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Show formatting toolbar in the composer. When off, the composer uses plain text only.'**
+  String get settingsRichEditorDescription;
+
+  /// No description provided for @richEditorBold.
+  ///
+  /// In en, this message translates to:
+  /// **'Bold'**
+  String get richEditorBold;
+
+  /// No description provided for @richEditorItalic.
+  ///
+  /// In en, this message translates to:
+  /// **'Italic'**
+  String get richEditorItalic;
+
+  /// No description provided for @richEditorUnderline.
+  ///
+  /// In en, this message translates to:
+  /// **'Underline'**
+  String get richEditorUnderline;
+
+  /// No description provided for @richEditorStrikethrough.
+  ///
+  /// In en, this message translates to:
+  /// **'Strikethrough'**
+  String get richEditorStrikethrough;
+
+  /// No description provided for @richEditorInlineCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Inline code'**
+  String get richEditorInlineCode;
+
+  /// No description provided for @richEditorClearFormatting.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear formatting'**
+  String get richEditorClearFormatting;
 }
 
 class _AppLocalizationsDelegate
