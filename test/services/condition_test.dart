@@ -31,12 +31,28 @@ Hook _hook() => const Hook(
       rules: [],
     );
 
-TemplateContext _ctx({Post? post}) => TemplateContext(
-      post: post ?? _post(),
-      space: _space(),
-      hook: _hook(),
-      trigger: HookTrigger.create,
+DriveFile _file(String id) => DriveFile(
+      id: id,
+      name: '$id.bin',
+      sizeBytes: 0,
+      createdAt: DateTime.utc(2024),
     );
+
+/// Builds a context whose `files` list is derived from the post's
+/// `fileIds`, mirroring what a real hook execution does: only
+/// successfully-resolved `DriveFile`s land in `files`. A `fileIds`
+/// entry with no matching `DriveFile` is a "missing" attachment and
+/// contributes 0 to `post.files.length`.
+TemplateContext _ctx({Post? post}) {
+  final p = post ?? _post();
+  return TemplateContext(
+    post: p,
+    space: _space(),
+    hook: _hook(),
+    trigger: HookTrigger.create,
+    files: p.fileIds.map(_file).toList(),
+  );
+}
 
 void main() {
   group('ConditionEvaluator.evaluate', () {
@@ -89,6 +105,31 @@ void main() {
       expect(
         ConditionEvaluator.evaluate(
             'post.files.length >= 2', _ctx(post: _post(fileIds: const ['f1']))),
+        isFalse,
+      );
+    });
+
+    test('post.files.length counts resolved files, not fileIds', () {
+      // A post that references f1 and f2, but only f1 resolves
+      // (f2's DriveFile is missing/deleted). The hook executor sees 1
+      // file — the attachments that would actually upload — not 2.
+      // This test locks that semantic in: a change to `TemplateContext`
+      // that switched `post.files.length` to `post.fileIds.length`
+      // would break it.
+      final post = _post(fileIds: const ['f1', 'f2']);
+      final partialCtx = TemplateContext(
+        post: post,
+        space: _space(),
+        hook: _hook(),
+        trigger: HookTrigger.create,
+        files: [_file('f1')],
+      );
+      expect(
+        ConditionEvaluator.evaluate('post.files.length == 1', partialCtx),
+        isTrue,
+      );
+      expect(
+        ConditionEvaluator.evaluate('post.files.length == 2', partialCtx),
         isFalse,
       );
     });
