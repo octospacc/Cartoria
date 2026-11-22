@@ -90,4 +90,66 @@ void main() {
       expect(s2.localeCode, isNull);
     });
   });
+
+  group('richEditorEnabled', () {
+    test('defaults to true', () {
+      const s = AppSettings();
+      expect(s.richEditorEnabled, isTrue);
+    });
+
+    test('round-trips false', () {
+      const s = AppSettings(richEditorEnabled: false);
+      final r = AppSettings.fromJson(s.toJson());
+      expect(r.richEditorEnabled, isFalse);
+    });
+
+    test('round-trips true', () {
+      const s = AppSettings(richEditorEnabled: true);
+      final r = AppSettings.fromJson(s.toJson());
+      expect(r.richEditorEnabled, isTrue);
+    });
+
+    test('missing field on legacy settings → defaults to true', () {
+      final r = AppSettings.fromJson({
+        'version': 1,
+        'onboarded': true,
+      });
+      expect(r.richEditorEnabled, isTrue);
+    });
+
+    test('explicit false in JSON → false', () {
+      final r = AppSettings.fromJson({
+        'version': 1,
+        'onboarded': true,
+        'richEditorEnabled': false,
+      });
+      expect(r.richEditorEnabled, isFalse);
+    });
+
+    test('copyWith preserves richEditorEnabled when unspecified', () {
+      const s = AppSettings(richEditorEnabled: false);
+      final s2 = s.copyWith(onboarded: true);
+      expect(s2.richEditorEnabled, isFalse);
+    });
+
+    test('copyWith overrides richEditorEnabled', () {
+      const s = AppSettings(richEditorEnabled: true);
+      final s2 = s.copyWith(richEditorEnabled: false);
+      expect(s2.richEditorEnabled, isFalse);
+    });
+
+    test('independent of other fields', () {
+      const s = AppSettings(
+        onboarded: true,
+        backupRetentionCount: 5,
+        localeCode: 'it',
+        richEditorEnabled: false,
+      );
+      final r = AppSettings.fromJson(s.toJson());
+      expect(r.onboarded, isTrue);
+      expect(r.backupRetentionCount, 5);
+      expect(r.localeCode, 'it');
+      expect(r.richEditorEnabled, isFalse);
+    });
+  });
 }

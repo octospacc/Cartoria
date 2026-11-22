@@ -160,7 +160,7 @@ class InlineComposer extends StatelessWidget {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    l.composerRichDraftInPlainWarning,
+                    l.composerRichFormattingLossWarning,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Theme.of(context).colorScheme.onErrorContainer,
                         ),

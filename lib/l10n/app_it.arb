@@ -546,6 +546,5 @@
   "richEditorInlineCode": "Codice in linea",
   "richEditorClearFormatting": "Rimuovi formattazione",
 
-  "composerRichInPlainWarning": "Questo post ha formattazione avanzata. Modificarlo in modalità testo semplice rimuoverà grassetto, corsivo, sottolineato, barrato e codice in linea.",
-  "composerRichDraftInPlainWarning": "Questa bozza è stata salvata con l'editor formattato. Modificarla qui rimuoverà la sua formattazione."
+  "composerRichFormattingLossWarning": "Questo contenuto usa formattazione avanzata. Modificarlo qui rimuoverà grassetto, corsivo, sottolineato, barrato e codice in linea."
 }

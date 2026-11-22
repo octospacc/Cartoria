@@ -40,6 +40,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
   bool _loadingDraft = false;
   bool _submitting = false;
   String? _preservedBodyDelta;
+  String _lastPlainText = '';
 
   bool get _rich => widget.store.richEditorEnabled;
 
@@ -235,8 +236,11 @@ class _ComposerSheetState extends State<ComposerSheet> {
 
   void _onAnyFieldChanged() {
     if (_loadingDraft) return;
-    if (!_rich && _preservedBodyDelta != null) {
-      setState(() => _preservedBodyDelta = null);
+    if (!_rich && _plainBody.text != _lastPlainText) {
+      _lastPlainText = _plainBody.text;
+      if (_preservedBodyDelta != null) {
+        setState(() => _preservedBodyDelta = null);
+      }
     }
     _draftCtrl.scheduleSave(_buildDraft());
   }
@@ -320,6 +324,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
         ));
       } else {
         _plainBody.text = draft.body;
+        _lastPlainText = draft.body;
         if (!_rich && draft.bodyDelta != null) {
           _preservedBodyDelta = draft.bodyDelta;
         }
@@ -354,6 +359,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
             _replaceQuill(quillFromHtml(post.body));
           } else {
             _plainBody.text = bodyFromHtml(post.body);
+            _lastPlainText = bodyFromHtml(post.body);
           }
           _url.text = post.url ?? '';
           _title.text = post.title ?? '';
@@ -373,6 +379,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
             ));
           } else {
             _plainBody.clear();
+            _lastPlainText = '';
           }
           _url.clear();
           _title.clear();
@@ -514,6 +521,14 @@ class _ComposerSheetState extends State<ComposerSheet> {
         const PasteTextIntent(SelectionChangedCause.keyboard),
       );
     }
+  }
+
+  bool get _hasRichContentToLose {
+    if (widget.editing != null &&
+        htmlHasInlineFormatting(widget.editing!.body)) {
+      return true;
+    }
+    return _preservedBodyDelta != null;
   }
 
   @override
@@ -749,8 +764,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
                   ],
                 ),
               ),
-              if (!_rich && widget.editing != null &&
-                  htmlHasInlineFormatting(widget.editing!.body)) ...[
+              if (!_rich && _hasRichContentToLose) ...[
                 Container(
                   margin: const EdgeInsets.only(bottom: 8),
                   padding: const EdgeInsets.all(8),
@@ -766,7 +780,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                          l.composerRichInPlainWarning,
+                          l.composerRichFormattingLossWarning,
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onErrorContainer,
                           ),
@@ -774,12 +788,6 @@ class _ComposerSheetState extends State<ComposerSheet> {
                       ),
                     ],
                   ),
-                ),
-              ],
-              if (!_rich && _preservedBodyDelta != null) ...[
-                Container(
-                  // same styling as above, but with the draft warning
-                  child: Text(l.composerRichDraftInPlainWarning),
                 ),
               ],
               if (_rich && _quillCtrl != null)

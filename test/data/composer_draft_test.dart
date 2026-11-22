@@ -216,5 +216,28 @@ void main() {
       );
       expect(d.isEmpty, isFalse);
     });
+
+    test('non-empty delta with no body is not empty', () {
+      final d = ComposerDraft(
+        fieldKey: 'x',
+        kind: PostKind.note,
+        body: '',
+        bodyDelta: '[{"insert":"bold","attributes":{"bold":true}},'
+            '{"insert":"\\n"}]',
+        savedAt: DateTime.utc(2025),
+      );
+      expect(d.isEmpty, isFalse);
+    });
+
+    test('empty delta with non-empty body is not empty', () {
+      final d = ComposerDraft(
+        fieldKey: 'x',
+        kind: PostKind.note,
+        body: 'text',
+        bodyDelta: '[{"insert":"\\n"}]',
+        savedAt: DateTime.utc(2025),
+      );
+      expect(d.isEmpty, isFalse);
+    });
   });
 }

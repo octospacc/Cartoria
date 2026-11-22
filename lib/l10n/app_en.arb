@@ -962,6 +962,5 @@
   "richEditorInlineCode": "Inline code",
   "richEditorClearFormatting": "Clear formatting",
 
-  "composerRichInPlainWarning": "This post has rich formatting. Editing in plain text mode will remove bold, italic, underline, strikethrough, and inline code.",
-  "composerRichDraftInPlainWarning": "This draft was saved with the rich editor. Editing here will remove its formatting."
+  "composerRichFormattingLossWarning": "This content uses rich formatting. Editing here will remove bold, italic, underline, strikethrough, and inline code."
 }

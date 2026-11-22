@@ -68,6 +68,12 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   bool _searchActive = false;
   bool _skipHooks = false;
 
+  /// The plaintext value last written into `_bodyCtrl` by the app (on
+  /// draft load, reset, or after send). Used to distinguish a real
+  /// content edit from a cursor/selection change, so focusing the plain
+  /// field doesn't destroy a preserved rich delta.
+  String _lastPlainText = '';
+
   String? _highlightedPostId;
   Timer? _highlightTimer;
 

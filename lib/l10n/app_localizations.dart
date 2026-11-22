@@ -3146,17 +3146,11 @@ abstract class AppLocalizations {
   /// **'Clear formatting'**
   String get richEditorClearFormatting;
 
-  /// No description provided for @composerRichInPlainWarning.
+  /// No description provided for @composerRichFormattingLossWarning.
   ///
   /// In en, this message translates to:
-  /// **'This post has rich formatting. Editing in plain text mode will remove bold, italic, underline, strikethrough, and inline code.'**
-  String get composerRichInPlainWarning;
-
-  /// No description provided for @composerRichDraftInPlainWarning.
-  ///
-  /// In en, this message translates to:
-  /// **'This draft was saved with the rich editor. Editing here will remove its formatting.'**
-  String get composerRichDraftInPlainWarning;
+  /// **'This content uses rich formatting. Editing here will remove bold, italic, underline, strikethrough, and inline code.'**
+  String get composerRichFormattingLossWarning;
 }
 
 class _AppLocalizationsDelegate
