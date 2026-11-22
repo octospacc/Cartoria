@@ -113,6 +113,7 @@ class InlineComposer extends StatelessWidget {
   final bool skipHooks;
   final ValueChanged<bool> onSkipHooksChanged;
   final VoidCallback onReset;
+  final bool warnDraftLoss;
 
   const InlineComposer({
     super.key,
@@ -133,6 +134,7 @@ class InlineComposer extends StatelessWidget {
     this.skipHooks = false,
     required this.onSkipHooksChanged,
     required this.onReset,
+    this.warnDraftLoss = false,
   });
 
   @override
@@ -142,6 +144,32 @@ class InlineComposer extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (warnDraftLoss) ...[
+          Container(
+            margin: const EdgeInsets.only(bottom: 6),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.errorContainer,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.warning_amber_rounded,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.onErrorContainer),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    l.composerRichDraftInPlainWarning,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onErrorContainer,
+                        ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
         if (pendingFileIds.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 6),

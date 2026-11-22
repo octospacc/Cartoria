@@ -39,6 +39,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
   late final ComposerDraftController _draftCtrl;
   bool _loadingDraft = false;
   bool _submitting = false;
+  String? _preservedBodyDelta;
 
   bool get _rich => widget.store.richEditorEnabled;
 
@@ -211,6 +212,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
     }
     _submitting = true;
     _draftCtrl.discardPending();
+    _preservedBodyDelta = null;
     Navigator.pop(
       context,
       ComposerResult(
@@ -233,6 +235,9 @@ class _ComposerSheetState extends State<ComposerSheet> {
 
   void _onAnyFieldChanged() {
     if (_loadingDraft) return;
+    if (!_rich && _preservedBodyDelta != null) {
+      setState(() => _preservedBodyDelta = null);
+    }
     _draftCtrl.scheduleSave(_buildDraft());
   }
 
@@ -250,7 +255,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
       body: _bodyText(),
       bodyDelta: _rich && _quillCtrl != null
           ? quillToDeltaJson(_quillCtrl!)
-          : null,
+          : _preservedBodyDelta,
       url: _url.text.isEmpty ? null : _url.text,
       title: _title.text.isEmpty ? null : _title.text,
       description: _description.text.isEmpty ? null : _description.text,
@@ -315,6 +320,9 @@ class _ComposerSheetState extends State<ComposerSheet> {
         ));
       } else {
         _plainBody.text = draft.body;
+        if (!_rich && draft.bodyDelta != null) {
+          _preservedBodyDelta = draft.bodyDelta;
+        }
       }
       setState(() {
         _kind = draft.kind;
@@ -741,6 +749,39 @@ class _ComposerSheetState extends State<ComposerSheet> {
                   ],
                 ),
               ),
+              if (!_rich && widget.editing != null &&
+                  htmlHasInlineFormatting(widget.editing!.body)) ...[
+                Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.errorContainer,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.warning_amber_rounded,
+                          size: 16,
+                          color: theme.colorScheme.onErrorContainer),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          l.composerRichInPlainWarning,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onErrorContainer,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              if (!_rich && _preservedBodyDelta != null) ...[
+                Container(
+                  // same styling as above, but with the draft warning
+                  child: Text(l.composerRichDraftInPlainWarning),
+                ),
+              ],
               if (_rich && _quillCtrl != null)
                 Container(
                   constraints:

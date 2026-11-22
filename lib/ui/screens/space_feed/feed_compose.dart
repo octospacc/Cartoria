@@ -113,6 +113,11 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
           ..addAll(draft.fileIds);
         _postDateTime = draft.postDateTime;
         _skipHooks = draft.skipHooks;
+        // If rich mode is off but the draft has a delta, preserve it.
+        // Switching back to rich without editing restores the
+        // formatting; editing in plain mode clears it.
+        _preservedBodyDelta =
+            (!_inlineRich && draft.bodyDelta != null) ? draft.bodyDelta : null;
       });
       _bodyCtrl.text = draft.body;
       if (_inlineQuillCtrl != null) {
@@ -129,6 +134,10 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
 
   void _onInlineFieldChanged() {
     if (_loadingInlineDraft) return;
+    // Any edit in plain mode invalidates the preserved rich delta.
+    if (!_inlineRich && _preservedBodyDelta != null) {
+      _setStateSafe(() => _preservedBodyDelta = null);
+    }
     _inlineDraftCtrl.scheduleSave(_buildInlineDraft());
   }
 
@@ -146,7 +155,7 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
       body: _inlineText(),
       bodyDelta: _inlineRich
           ? quillToDeltaJson(_inlineQuillCtrl!)
-          : null,
+          : _preservedBodyDelta,
       url: _urlCtrl.text.isEmpty ? null : _urlCtrl.text,
       fileIds: List.of(_pendingFileIds),
       postDateTime: _postDateTime,
@@ -165,6 +174,7 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
         _pendingFileIds.clear();
         _postDateTime = null;
         _skipHooks = false;
+        _preservedBodyDelta = null;
       });
       _bodyCtrl.clear();
       _resetQuillToEmpty();

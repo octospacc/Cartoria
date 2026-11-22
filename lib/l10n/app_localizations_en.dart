@@ -2106,4 +2106,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get richEditorClearFormatting => 'Clear formatting';
+
+  @override
+  String get composerRichInPlainWarning =>
+      'This post has rich formatting. Editing in plain text mode will remove bold, italic, underline, strikethrough, and inline code.';
+
+  @override
+  String get composerRichDraftInPlainWarning =>
+      'This draft was saved with the rich editor. Editing here will remove its formatting.';
 }

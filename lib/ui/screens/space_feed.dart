@@ -6,8 +6,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import '../../data/bookmarks.dart';
 import '../../data/composer_draft.dart';
@@ -19,8 +19,8 @@ import '../bookmark_import_helpers.dart';
 import '../space_actions.dart';
 import '../space_dialogs.dart';
 import '../widgets/escape_back.dart';
-import '../widgets/space_stats_dialog.dart';
 import '../widgets/quill_bridge.dart';
+import '../widgets/space_stats_dialog.dart';
 import 'drive.dart';
 import 'space_feed/attachment_picker.dart';
 import 'space_feed/composer.dart';
@@ -38,7 +38,6 @@ part 'space_feed/feed_selection.dart';
 part 'space_feed/feed_tree.dart';
 part 'space_feed/feed_widgets.dart';
 
-/// Number of direct replies shown under a top-level post by default.
 const int kPreviewReplyCount = 2;
 
 class SpaceFeedScreen extends StatefulWidget {
@@ -54,9 +53,10 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   Space get _space => widget.store.spaceById(widget.space.id) ?? widget.space;
 
   final _bodyCtrl = TextEditingController();
-  quill.QuillController? _inlineQuillCtrl;
   final _urlCtrl = TextEditingController();
   final _searchCtrl = TextEditingController();
+  quill.QuillController? _inlineQuillCtrl;
+  String? _preservedBodyDelta;
   PostKind _kind = PostKind.note;
   final List<String> _pendingFileIds = [];
   DateTime? _postDateTime;
@@ -83,10 +83,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   bool _selectionMode = false;
   final Set<String> _selectedPostIds = {};
 
-  /// Proxy for `setState` that extensions can call. `State.setState` is
-  /// `@protected` and therefore inaccessible from extensions on
-  /// `_SpaceFeedScreenState`, even within the same library — same
-  /// restriction that applies to `notifyListeners` on `ChangeNotifier`.
   void _setStateSafe(VoidCallback fn) => setState(fn);
 
   GlobalKey _keyFor(String postId) =>
@@ -99,6 +95,8 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
       store: widget.store,
       fieldKey: 'space:${widget.space.id}:inline',
     );
+    _bodyCtrl.addListener(_onInlineFieldChanged);
+    _urlCtrl.addListener(_onInlineFieldChanged);
     _inlineQuillCtrl = widget.store.richEditorEnabled
         ? quill.QuillController(
             document: quill.Document(),
@@ -106,8 +104,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
           )
         : null;
     _inlineQuillCtrl?.addListener(_onInlineFieldChanged);
-    _bodyCtrl.addListener(_onInlineFieldChanged);
-    _urlCtrl.addListener(_onInlineFieldChanged);
     _loadInlineDraft();
   }
 
@@ -125,6 +121,21 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     _postKeys.clear();
     _highlightTimer?.cancel();
     super.dispose();
+  }
+
+  void _resetQuillToEmpty() {
+    if (_inlineQuillCtrl == null) return;
+    _replaceInlineQuill(quill.QuillController(
+      document: quill.Document(),
+      selection: const TextSelection.collapsed(offset: 0),
+    ));
+  }
+
+  void _replaceInlineQuill(quill.QuillController next) {
+    _inlineQuillCtrl?.removeListener(_onInlineFieldChanged);
+    _inlineQuillCtrl?.dispose();
+    _inlineQuillCtrl = next;
+    _inlineQuillCtrl?.addListener(_onInlineFieldChanged);
   }
 
   @override
@@ -184,6 +195,8 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                               onSkipHooksChanged: (v) =>
                                   _updateInlineState(() => _skipHooks = v),
                               onReset: _resetInlineComposer,
+                              warnDraftLoss: !widget.store.richEditorEnabled &&
+                                  _preservedBodyDelta != null,
                             ),
                           ),
                         )
@@ -192,20 +205,5 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                 );
               },
             )));
-  }
-
-  void _resetQuillToEmpty() {
-    if (_inlineQuillCtrl == null) return;
-    _replaceInlineQuill(quill.QuillController(
-      document: quill.Document(),
-      selection: const TextSelection.collapsed(offset: 0),
-    ));
-  }
-
-  void _replaceInlineQuill(quill.QuillController next) {
-    _inlineQuillCtrl?.removeListener(_onInlineFieldChanged);
-    _inlineQuillCtrl?.dispose();
-    _inlineQuillCtrl = next;
-    _inlineQuillCtrl?.addListener(_onInlineFieldChanged);
   }
 }

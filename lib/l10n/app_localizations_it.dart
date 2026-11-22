@@ -2096,4 +2096,12 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get richEditorClearFormatting => 'Rimuovi formattazione';
+
+  @override
+  String get composerRichInPlainWarning =>
+      'Questo post ha formattazione avanzata. Modificarlo in modalità testo semplice rimuoverà grassetto, corsivo, sottolineato, barrato e codice in linea.';
+
+  @override
+  String get composerRichDraftInPlainWarning =>
+      'Questa bozza è stata salvata con l\'editor formattato. Modificarla qui rimuoverà la sua formattazione.';
 }
