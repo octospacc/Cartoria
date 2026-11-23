@@ -2100,4 +2100,21 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get composerRichFormattingLossWarning =>
       'Questo contenuto usa formattazione avanzata. Modificarlo qui rimuoverà grassetto, corsivo, sottolineato, barrato e codice in linea.';
+
+  @override
+  String get feedCopySelected => 'Copia';
+
+  @override
+  String feedCopiedToClipboard(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Copiati $count post negli appunti',
+      one: 'Copiato 1 post negli appunti',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get feedGoToPost => 'Apri nel feed';
 }

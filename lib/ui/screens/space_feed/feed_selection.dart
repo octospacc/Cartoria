@@ -61,4 +61,28 @@ extension _FeedSelectionExt on _SpaceFeedScreenState {
     await widget.store.deletePosts(widget.space.id, selected);
     if (mounted) _exitSelectionMode();
   }
+
+  Future<void> _copySelectedPosts() async {
+    final selected = Set<String>.from(_selectedPostIds);
+    if (selected.isEmpty) return;
+
+    final all = widget.store.postsForSpace(widget.space.id);
+    final selectedPosts =
+        all.where((p) => selected.contains(p.id)).toList();
+    if (selectedPosts.isEmpty) return;
+
+    final plaintext = postsToPlaintext(selectedPosts);
+    final html = selectedPosts.any((p) => htmlHasFormatting(p.body))
+        ? postsToHtml(selectedPosts)
+        : null;
+
+    await copyToClipboard(plaintext: plaintext, html: html);
+
+    if (!mounted) return;
+    final l = context.l10n;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(l.feedCopiedToClipboard(selectedPosts.length))),
+    );
+    _exitSelectionMode();
+  }
 }

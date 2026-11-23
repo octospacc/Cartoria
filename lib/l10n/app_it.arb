@@ -546,5 +546,9 @@
   "richEditorInlineCode": "Codice in linea",
   "richEditorClearFormatting": "Rimuovi formattazione",
 
-  "composerRichFormattingLossWarning": "Questo contenuto usa formattazione avanzata. Modificarlo qui rimuoverà grassetto, corsivo, sottolineato, barrato e codice in linea."
+  "composerRichFormattingLossWarning": "Questo contenuto usa formattazione avanzata. Modificarlo qui rimuoverà grassetto, corsivo, sottolineato, barrato e codice in linea.",
+
+  "feedCopySelected": "Copia",
+  "feedCopiedToClipboard": "{count, plural, =1{Copiato 1 post negli appunti} other{Copiati {count} post negli appunti}}",
+  "feedGoToPost": "Apri nel feed"
 }

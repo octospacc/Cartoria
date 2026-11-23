@@ -303,3 +303,32 @@ bool htmlHasInlineFormatting(String html) {
       lower.contains('<code') ||
       lower.contains('font-family: monospace');
 }
+
+/// True when [html] contains any formatting that plain text can't
+/// represent — inline (bold, italic, etc.) or block-level (headings,
+/// lists, blockquotes, code blocks). Used to decide whether a copied
+/// post should be written to the clipboard as rich HTML instead of
+/// plaintext, and to decide whether editing in plain mode would lose
+/// visible content.
+///
+/// Also includes `<a href>` links: pasting a post with a link into a
+/// plaintext destination would lose the destination URL, so links
+/// count as "formatting worth preserving."
+bool htmlHasFormatting(String html) {
+  if (html.isEmpty) return false;
+  if (htmlHasInlineFormatting(html)) return true;
+  final lower = html.toLowerCase();
+  return lower.contains('<h1') ||
+      lower.contains('<h2') ||
+      lower.contains('<h3') ||
+      lower.contains('<h4') ||
+      lower.contains('<h5') ||
+      lower.contains('<h6') ||
+      lower.contains('<ul') ||
+      lower.contains('<ol') ||
+      lower.contains('<li') ||
+      lower.contains('<blockquote') ||
+      lower.contains('<pre') ||
+      lower.contains('<hr') ||
+      lower.contains('<a ');
+}

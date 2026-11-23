@@ -3151,6 +3151,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This content uses rich formatting. Editing here will remove bold, italic, underline, strikethrough, and inline code.'**
   String get composerRichFormattingLossWarning;
+
+  /// No description provided for @feedCopySelected.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get feedCopySelected;
+
+  /// No description provided for @feedCopiedToClipboard.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Copied 1 post to clipboard} other{Copied {count} posts to clipboard}}'**
+  String feedCopiedToClipboard(int count);
+
+  /// No description provided for @feedGoToPost.
+  ///
+  /// In en, this message translates to:
+  /// **'Open in feed'**
+  String get feedGoToPost;
 }
 
 class _AppLocalizationsDelegate

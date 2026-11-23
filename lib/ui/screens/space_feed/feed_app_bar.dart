@@ -17,6 +17,12 @@ extension _FeedAppBarExt on _SpaceFeedScreenState {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.copy_all_outlined),
+            tooltip: l.feedCopySelected,
+            onPressed:
+                _selectedPostIds.isEmpty ? null : _copySelectedPosts,
+          ),
+          IconButton(
             icon: const Icon(Icons.delete_outline),
             tooltip: l.feedDeleteSelected,
             onPressed: _selectedPostIds.isEmpty ? null : _deleteSelectedPosts,

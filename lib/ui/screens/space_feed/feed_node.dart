@@ -83,7 +83,9 @@ extension _FeedNodeExt on _SpaceFeedScreenState {
       isHighlighted: _highlightedPostId == post.id,
       selectionMode: _selectionMode,
       isSelected: _selectedPostIds.contains(post.id),
-      onCardTap: _selectionMode ? () => _toggleSelection(post.id) : null,
+      onCardTap: _selectionMode
+          ? () => _toggleSelection(post.id)
+          : (searchMode ? () => _scrollToPost(post.id) : null),
       onCardLongPress: (_selectionMode || searchMode)
           ? null
           : () => _enterSelectionMode(post.id),

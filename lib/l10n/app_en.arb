@@ -962,5 +962,12 @@
   "richEditorInlineCode": "Inline code",
   "richEditorClearFormatting": "Clear formatting",
 
-  "composerRichFormattingLossWarning": "This content uses rich formatting. Editing here will remove bold, italic, underline, strikethrough, and inline code."
+  "composerRichFormattingLossWarning": "This content uses rich formatting. Editing here will remove bold, italic, underline, strikethrough, and inline code.",
+
+  "feedCopySelected": "Copy",
+  "feedCopiedToClipboard": "{count, plural, =1{Copied 1 post to clipboard} other{Copied {count} posts to clipboard}}",
+  "@feedCopiedToClipboard": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "feedGoToPost": "Open in feed"
 }

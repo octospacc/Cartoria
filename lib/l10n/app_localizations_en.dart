@@ -2110,4 +2110,21 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get composerRichFormattingLossWarning =>
       'This content uses rich formatting. Editing here will remove bold, italic, underline, strikethrough, and inline code.';
+
+  @override
+  String get feedCopySelected => 'Copy';
+
+  @override
+  String feedCopiedToClipboard(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Copied $count posts to clipboard',
+      one: 'Copied 1 post to clipboard',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get feedGoToPost => 'Open in feed';
 }

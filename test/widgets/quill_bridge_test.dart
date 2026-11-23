@@ -257,4 +257,71 @@ void main() {
       expect(quillToPlaintext(ctrl), 'a\nb\nc');
     });
   });
+
+  group('htmlHasFormatting', () {
+    test('empty → false', () {
+      expect(htmlHasFormatting(''), isFalse);
+    });
+
+    test('plain paragraph → false', () {
+      expect(htmlHasFormatting('<p>plain</p>'), isFalse);
+    });
+
+    test('inline strong → true', () {
+      expect(htmlHasFormatting('<p><strong>x</strong></p>'), isTrue);
+    });
+
+    test('inline code → true', () {
+      expect(htmlHasFormatting('<p><code>x</code></p>'), isTrue);
+    });
+
+    test('h1 → true', () {
+      expect(htmlHasFormatting('<h1>Title</h1>'), isTrue);
+    });
+
+    test('h3 → true', () {
+      expect(htmlHasFormatting('<h3>Sub</h3>'), isTrue);
+    });
+
+    test('ul → true', () {
+      expect(htmlHasFormatting('<ul><li>x</li></ul>'), isTrue);
+    });
+
+    test('ol → true', () {
+      expect(htmlHasFormatting('<ol><li>x</li></ol>'), isTrue);
+    });
+
+    test('blockquote → true', () {
+      expect(htmlHasFormatting('<blockquote>q</blockquote>'), isTrue);
+    });
+
+    test('pre → true', () {
+      expect(htmlHasFormatting('<pre>x</pre>'), isTrue);
+    });
+
+    test('hr → true', () {
+      expect(htmlHasFormatting('<hr>'), isTrue);
+    });
+
+    test('link with href → true', () {
+      expect(
+        htmlHasFormatting('<p><a href="https://x.com">x</a></p>'),
+        isTrue,
+      );
+    });
+
+    test('bare <br> → false (line break, not formatting)', () {
+      expect(htmlHasFormatting('<p>a<br>b</p>'), isFalse);
+    });
+
+    test('inline formatting caught too (delegates to htmlHasInlineFormatting)', () {
+      for (final tag in ['strong', 'b', 'em', 'i', 'u', 's', 'del', 'code']) {
+        expect(
+          htmlHasFormatting('<p><$tag>x</$tag></p>'),
+          isTrue,
+          reason: 'tag: $tag',
+        );
+      }
+    });
+  });
 }

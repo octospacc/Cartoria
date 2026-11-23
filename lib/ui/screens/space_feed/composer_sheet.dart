@@ -525,7 +525,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
 
   bool get _hasRichContentToLose {
     if (widget.editing != null &&
-        htmlHasInlineFormatting(widget.editing!.body)) {
+        htmlHasFormatting(widget.editing!.body)) {
       return true;
     }
     return _preservedBodyDelta != null;
