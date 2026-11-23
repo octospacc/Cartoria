@@ -39,6 +39,17 @@ void main() {
     test('HTML in input is escaped', () {
       expect(bodyToHtml('<b>x</b>'), '<p>&lt;b&gt;x&lt;/b&gt;</p>');
     });
+
+    test('escapes < > & " \'', () {
+      expect(
+        bodyToHtml('<a href="x">&\'</a>'),
+        '<p>&lt;a href=&quot;x&quot;&gt;&amp;&#39;&lt;/a&gt;</p>',
+      );
+    });
+
+    test('paragraph break becomes two <p> tags joined by newline', () {
+      expect(bodyToHtml('one\n\ntwo'), '<p>one</p>\n<p>two</p>');
+    });
   });
 
   group('bodyFromHtml', () {
@@ -64,6 +75,28 @@ void main() {
 
     test('<hr> becomes em-dash line', () {
       expect(bodyFromHtml('<p>a</p><hr><p>b</p>'), 'a\n\n—\n\nb');
+    });
+
+    test('multiple paragraphs joined by blank line', () {
+      expect(bodyFromHtml('<p>a</p><p>b</p><p>c</p>'), 'a\n\nb\n\nc');
+    });
+
+    test('strips <strong>/<em>/<u> to plain text', () {
+      expect(
+        bodyFromHtml('<p><strong>a</strong> <em>b</em> <u>c</u></p>'),
+        'a b c',
+      );
+    });
+
+    test('collapses >2 consecutive newlines', () {
+      expect(
+        bodyFromHtml('<p>a</p>\n\n\n\n<p>b</p>'),
+        'a\n\nb',
+      );
+    });
+
+    test('trims leading and trailing whitespace', () {
+      expect(bodyFromHtml('   <p>a</p>   '), 'a');
     });
   });
 

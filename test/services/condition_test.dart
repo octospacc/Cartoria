@@ -167,5 +167,69 @@ void main() {
         isTrue,
       );
     });
+
+    test('string equality with double quotes', () {
+      expect(
+        ConditionEvaluator.evaluate('post.kind == "note"', _ctx()),
+        isTrue,
+      );
+    });
+
+    test('string equality with single quotes', () {
+      expect(
+        ConditionEvaluator.evaluate("post.kind == 'note'", _ctx()),
+        isTrue,
+      );
+    });
+
+    test('string inequality', () {
+      expect(
+        ConditionEvaluator.evaluate('post.kind != "bookmark"', _ctx()),
+        isTrue,
+      );
+    });
+
+    test('nested parentheses', () {
+      expect(
+        ConditionEvaluator.evaluate(
+            '((1 == 1) && (2 == 2)) || false', _ctx()),
+        isTrue,
+      );
+    });
+
+    test('mixed && and || precedence', () {
+      // && binds tighter than || in the parser; verify with a
+      // case that would differ if precedence were reversed.
+      expect(
+        ConditionEvaluator.evaluate(
+            'false && true || true', _ctx()),
+        isTrue,
+      );
+    });
+
+    test('non-numeric comparison falls back to string equality', () {
+      expect(
+        ConditionEvaluator.evaluate('"abc" == "abc"', _ctx()),
+        isTrue,
+      );
+      expect(
+        ConditionEvaluator.evaluate('"abc" == "xyz"', _ctx()),
+        isFalse,
+      );
+    });
+
+    test('malformed comparison → fail-open (true)', () {
+      expect(
+        ConditionEvaluator.evaluate('a === b', _ctx()),
+        isTrue,
+      );
+    });
+
+    test('empty parentheses → fail-open', () {
+      expect(
+        ConditionEvaluator.evaluate('()', _ctx()),
+        isTrue,
+      );
+    });
   });
 }

@@ -336,4 +336,65 @@ void main() {
       expect(h.enabled, isTrue); // original unchanged
     });
   });
+
+  group('HookRule legacy format', () {
+    test('legacy single-rule JSON produces one rule', () {
+      final legacy = {
+        'id': 'h1',
+        'key': 'k',
+        'name': 'n',
+        'urlTemplate': 'https://example.com',
+        'method': 'POST',
+        'headers': {'X-Custom': 'v'},
+      };
+      final h = Hook.fromJson(legacy);
+      expect(h.rules, hasLength(1));
+      expect(h.rules.first.urlTemplate, 'https://example.com');
+      expect(h.rules.first.headers, {'X-Custom': 'v'});
+    });
+
+    test('legacy without headers defaults to empty map', () {
+      final legacy = {
+        'id': 'h1',
+        'key': 'k',
+        'name': 'n',
+        'urlTemplate': 'https://example.com',
+      };
+      final h = Hook.fromJson(legacy);
+      expect(h.rules.first.headers, isEmpty);
+    });
+
+    test('legacy missing method defaults to POST', () {
+      final legacy = {
+        'id': 'h1',
+        'key': 'k',
+        'name': 'n',
+        'urlTemplate': 'https://example.com',
+      };
+      expect(Hook.fromJson(legacy).rules.first.method, 'POST');
+    });
+  });
+
+  group('Hook triggers default', () {
+    test('missing triggers field defaults to {create, edit}', () {
+      final h = Hook.fromJson({
+        'id': 'h1',
+        'key': 'k',
+        'name': 'n',
+        'rules': [],
+      });
+      expect(h.triggers, {HookTrigger.create, HookTrigger.edit});
+    });
+
+    test('explicit triggers respected', () {
+      final h = Hook.fromJson({
+        'id': 'h1',
+        'key': 'k',
+        'name': 'n',
+        'triggers': ['edit'],
+        'rules': [],
+      });
+      expect(h.triggers, {HookTrigger.edit});
+    });
+  });
 }

@@ -132,4 +132,85 @@ void main() {
       );
     });
   });
+
+  group('TemplateRenderer.render — pipeline edge cases', () {
+    test('multiple pipeline stages compose', () {
+      expect(
+        TemplateRenderer.render(
+          '{{post.title | upper | wrap(prefix="[", suffix="]")}}',
+          _ctx(title: 'hi'),
+        ),
+        '[HI]',
+      );
+    });
+
+    test('default with non-empty value keeps value', () {
+      expect(
+        TemplateRenderer.render(
+          '{{post.title | default(value="x")}}',
+          _ctx(title: 'real'),
+        ),
+        'real',
+      );
+    });
+
+    test('quoted arg with comma', () {
+      expect(
+        TemplateRenderer.render(
+          '{{post.title | default(value="a,b")}}',
+          _ctx(),
+        ),
+        'a,b',
+      );
+    });
+
+    test('unknown function leaves value unchanged', () {
+      expect(
+        TemplateRenderer.render(
+          '{{post.title | nonexistent}}',
+          _ctx(title: 'hi'),
+        ),
+        'hi',
+      );
+    });
+
+    test('multiple substitutions in one template', () {
+      expect(
+        TemplateRenderer.render(
+          '{{post.id}} - {{post.title}}',
+          _ctx(id: 'p1', title: 'hi'),
+        ),
+        'p1 - hi',
+      );
+    });
+
+    test('empty output for missing path', () {
+      expect(
+        TemplateRenderer.render('{{post.missing}}', _ctx()),
+        '',
+      );
+    });
+
+    test('URL escape percent-encodes space and slash', () {
+      expect(
+        TemplateRenderer.render(
+          '{{post.title}}',
+          _ctx(title: 'a b/c'),
+          escape: TemplateEscape.url,
+        ),
+        'a%20b%2Fc',
+      );
+    });
+
+    test('triple braces bypass URL escaping', () {
+      expect(
+        TemplateRenderer.render(
+          '{{{post.title}}}',
+          _ctx(title: 'a b/c'),
+          escape: TemplateEscape.url,
+        ),
+        'a b/c',
+      );
+    });
+  });
 }

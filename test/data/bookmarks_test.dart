@@ -144,5 +144,44 @@ void main() {
 '''));
       expect(f.bookmarks, isEmpty);
     });
+
+    test('two flat bookmarks both kept', () {
+      final f = BookmarkFileParser.parse(_wrap('''
+<DT><A HREF="https://a.com">A</A>
+<DT><A HREF="https://b.com">B</A>
+'''));
+      expect(f.bookmarks, hasLength(2));
+      expect(f.bookmarks.map((b) => b.url), ['https://a.com', 'https://b.com']);
+    });
+
+    test('anchor with only whitespace text uses href as title', () {
+      final f = BookmarkFileParser.parse(_wrap(
+        '<DT><A HREF="https://example.com">   </A>',
+      ));
+      expect(f.bookmarks.first.title, 'https://example.com');
+    });
+
+    test('ADD_DATE 0 falls back to now', () {
+      final before = DateTime.now().toUtc();
+      final f = BookmarkFileParser.parse(_wrap(
+        '<DT><A HREF="https://x.com" ADD_DATE="0">X</A>',
+      ));
+      final after = DateTime.now().toUtc();
+      final b = f.bookmarks.first;
+      expect(b.createdAt.isBefore(before), isFalse);
+      expect(b.createdAt.isAfter(after), isFalse);
+    });
+
+    test('TAGS attribute with mixed case lowercased', () {
+      final f = BookmarkFileParser.parse(_wrap(
+        '<DT><A HREF="https://x.com" TAGS="News,Tech">X</A>',
+      ));
+      expect(f.bookmarks.first.tags, ['news', 'tech']);
+    });
+
+    test('no <DL> → no bookmarks', () {
+      final f = BookmarkFileParser.parse('<p>not a bookmarks file</p>');
+      expect(f.bookmarks, isEmpty);
+    });
   });
 }
