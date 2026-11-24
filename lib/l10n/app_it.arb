@@ -550,5 +550,9 @@
 
   "feedCopySelected": "Copia",
   "feedCopiedToClipboard": "{count, plural, =1{Copiato 1 post negli appunti} other{Copiati {count} post negli appunti}}",
-  "feedGoToPost": "Apri nel feed"
+  "feedGoToPost": "Apri nel feed",
+  "feedCopySelectedWithDates": "Copia con date",
+  "fileViewerCopyImage": "Copia immagine",
+  "fileViewerCopiedToClipboard": "Immagine copiata negli appunti",
+  "fileViewerCopyFailed": "Copia non riuscita: {error}"
 }

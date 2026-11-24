@@ -162,6 +162,6 @@ extension _FeedTreeExt on _SpaceFeedScreenState {
         );
       },
     );
-    return _selectionMode ? list : SelectionArea(child: list);
+    return SelectionArea(child: list);
   }
 }

@@ -2117,4 +2117,18 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get feedGoToPost => 'Apri nel feed';
+
+  @override
+  String get feedCopySelectedWithDates => 'Copia con date';
+
+  @override
+  String get fileViewerCopyImage => 'Copia immagine';
+
+  @override
+  String get fileViewerCopiedToClipboard => 'Immagine copiata negli appunti';
+
+  @override
+  String fileViewerCopyFailed(String error) {
+    return 'Copia non riuscita: $error';
+  }
 }

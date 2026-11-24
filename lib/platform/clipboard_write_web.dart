@@ -1,6 +1,5 @@
 import 'dart:js_interop';
-// ignore: avoid_web_libraries_in_flutter
-import 'dart:js_util' as js_util;
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:web/web.dart' as web;
@@ -8,7 +7,7 @@ import 'package:web/web.dart' as web;
 /// Writes [plaintext] and, when [html] is non-null, rich HTML to the
 /// browser clipboard. Uses `navigator.clipboard.write` with a
 /// `ClipboardItem` carrying both `text/html` and `text/plain`; falls
-/// back to `writeText` for plaintext-only paths and to Flutter's
+/// back to `writeText` for the plaintext-only path and to Flutter's
 /// `Clipboard.setData` if the JS interop path fails (Safari without
 /// permission, older browsers, etc.).
 Future<void> copyToClipboard({
@@ -33,9 +32,10 @@ Future<void> copyToClipboard({
       [plaintext.toJS].toJS,
       web.BlobPropertyBag(type: 'text/plain'),
     );
-    final data = js_util.jsify({}) as JSObject;
-    js_util.setProperty(data, 'text/html', htmlBlob);
-    js_util.setProperty(data, 'text/plain', plainBlob);
+    final data = <String, JSAny>{
+      'text/html': htmlBlob,
+      'text/plain': plainBlob,
+    }.jsify() as JSObject;
     final item = web.ClipboardItem(data);
     await web.window.navigator.clipboard.write([item].toJS).toDart;
   } catch (_) {
@@ -45,4 +45,17 @@ Future<void> copyToClipboard({
       await Clipboard.setData(ClipboardData(text: plaintext));
     }
   }
+}
+
+/// Writes PNG-encoded image bytes to the browser clipboard.
+Future<void> copyImageToClipboard(Uint8List pngBytes) async {
+  final blob = web.Blob(
+    [pngBytes.toJS].toJS,
+    web.BlobPropertyBag(type: 'image/png'),
+  );
+  final data = <String, JSAny>{
+    'image/png': blob,
+  }.jsify() as JSObject;
+  final item = web.ClipboardItem(data);
+  await web.window.navigator.clipboard.write([item].toJS).toDart;
 }

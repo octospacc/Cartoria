@@ -43,7 +43,7 @@ extension _FeedNodeExt on _SpaceFeedScreenState {
       childCount: totalChildren,
       previewCount: previewCount,
       expanded: isExpanded,
-      hideReplyToggle: searchMode || _selectionMode,
+      hideReplyToggle: searchMode,
       onToggleReplies: () => _setStateSafe(() {
         final exp = _expanded.contains(post.id);
         if (exp) {

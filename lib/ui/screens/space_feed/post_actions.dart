@@ -11,6 +11,7 @@ class _PostActions extends StatelessWidget {
   final int quoteCount;
   final bool quotesExpanded;
   final VoidCallback? onToggleQuotes;
+  final bool selectionMode;
 
   const _PostActions({
     required this.childCount,
@@ -23,6 +24,7 @@ class _PostActions extends StatelessWidget {
     required this.quoteCount,
     required this.quotesExpanded,
     required this.onToggleQuotes,
+    this.selectionMode = false,
   });
 
   @override
@@ -40,18 +42,24 @@ class _PostActions extends StatelessWidget {
     final leftActions = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        TextButton.icon(
-          onPressed: onReply,
-          icon: const Icon(Icons.reply, size: 15),
-          label: Text(l.postReply),
-          style: actionStyle,
+        IgnorePointer(
+          ignoring: selectionMode,
+          child: TextButton.icon(
+            onPressed: onReply,
+            icon: const Icon(Icons.reply, size: 15),
+            label: Text(l.postReply),
+            style: actionStyle,
+          ),
         ),
         const SizedBox(width: 2),
-        TextButton.icon(
-          onPressed: onQuote,
-          icon: const Icon(Icons.format_quote, size: 15),
-          label: Text(l.postQuote),
-          style: actionStyle,
+        IgnorePointer(
+          ignoring: selectionMode,
+          child: TextButton.icon(
+            onPressed: onQuote,
+            icon: const Icon(Icons.format_quote, size: 15),
+            label: Text(l.postQuote),
+            style: actionStyle,
+          ),
         ),
       ],
     );

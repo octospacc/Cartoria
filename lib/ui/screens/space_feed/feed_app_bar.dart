@@ -19,8 +19,16 @@ extension _FeedAppBarExt on _SpaceFeedScreenState {
           IconButton(
             icon: const Icon(Icons.copy_all_outlined),
             tooltip: l.feedCopySelected,
-            onPressed:
-                _selectedPostIds.isEmpty ? null : _copySelectedPosts,
+            onPressed: _selectedPostIds.isEmpty
+                ? null
+                : () => _copySelectedPosts(includeDate: false),
+          ),
+          IconButton(
+            icon: const Icon(Icons.calendar_month_outlined),
+            tooltip: l.feedCopySelectedWithDates,
+            onPressed: _selectedPostIds.isEmpty
+                ? null
+                : () => _copySelectedPosts(includeDate: true),
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),

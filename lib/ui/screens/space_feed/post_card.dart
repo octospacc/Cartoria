@@ -44,6 +44,14 @@ class PostCard extends StatelessWidget {
   final bool quotesExpanded;
   final VoidCallback? onToggleQuotes;
 
+  /// Whether the overflow menu offers an "Open in feed" entry. Only
+  /// true in search mode, where tapping the card body also navigates.
+  final bool showGoToPost;
+
+  /// Called when the user picks "Open in feed" from the overflow menu.
+  /// Null hides the entry even when `showGoToPost` is true.
+  final VoidCallback? onGoToPost;
+
   /// True while the post is the target of a just-completed scroll-to.
   /// Renders a brief accent that fades in/out via an animated container.
   /// Independent of [isSelected], which is the multi-select state.
@@ -71,6 +79,8 @@ class PostCard extends StatelessWidget {
     this.quoteCount = 0,
     this.quotesExpanded = false,
     this.onToggleQuotes,
+    this.showGoToPost = false,
+    this.onGoToPost,
     this.isHighlighted = false,
   });
 
@@ -128,135 +138,143 @@ class PostCard extends StatelessWidget {
         onTap: onCardTap,
         onLongPress: onCardLongPress,
         borderRadius: BorderRadius.circular(12),
-        child: IgnorePointer(
-          ignoring: selectionMode,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInOut,
-            decoration: BoxDecoration(
-              color: backgroundColor,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: borderColor,
-                width: borderWidth,
-              ),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _PostAvatar(isBookmark: isBookmark, theme: theme),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _PostHeader(
-                          post: post,
-                          selectionMode: selectionMode,
-                          isSelected: isSelected,
-                          hookOutcome: _hookOutcome(store, post),
-                          onEdit: onEdit,
-                          onDelete: () => _confirmDelete(context),
-                          onShowSource: () =>
-                              showPostSourceDialog(context, store, space, post),
-                          onHookStatus: () => showHookStatusDialog(
-                              context, post, store, space.id),
-                        ),
-                        if (plaintext.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          PostBodyText(
-                            html: post.body,
-                            style: theme.textTheme.bodyMedium
-                                ?.copyWith(height: 1.4),
-                            imageCache: store.htmlImageCache,
-                          ),
-                        ],
-                        if (isBookmark && post.url != null) ...[
-                          const SizedBox(height: 8),
-                          LinkPreviewCard(post: post),
-                        ],
-                        if (visualFiles.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: visualFiles
-                                  .map((f) => Padding(
-                                        padding:
-                                            const EdgeInsets.only(bottom: 6),
-                                        child: InlineMedia(
-                                          key: ValueKey('${post.id}-${f.id}'),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: borderColor, width: borderWidth),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _PostAvatar(isBookmark: isBookmark, theme: theme),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      IgnorePointer(
+                        ignoring: selectionMode,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _PostHeader(
+                              post: post,
+                              selectionMode: selectionMode,
+                              isSelected: isSelected,
+                              hookOutcome: _hookOutcome(store, post),
+                              onEdit: onEdit,
+                              onDelete: () => _confirmDelete(context),
+                              onShowSource: () => showPostSourceDialog(
+                                  context, store, space, post),
+                              onHookStatus: () => showHookStatusDialog(
+                                  context, post, store, space.id),
+                              showGoToPost: showGoToPost,
+                              onGoToPost: onGoToPost,
+                            ),
+                            if (plaintext.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              PostBodyText(
+                                html: post.body,
+                                style: theme.textTheme.bodyMedium
+                                    ?.copyWith(height: 1.4),
+                                imageCache: store.htmlImageCache,
+                              ),
+                            ],
+                            if (isBookmark && post.url != null) ...[
+                              const SizedBox(height: 8),
+                              LinkPreviewCard(post: post),
+                            ],
+                            if (visualFiles.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: visualFiles
+                                      .map((f) => Padding(
+                                            padding: const EdgeInsets.only(
+                                                bottom: 6),
+                                            child: InlineMedia(
+                                              key: ValueKey(
+                                                  '${post.id}-${f.id}'),
+                                              store: store,
+                                              spaceId: space.id,
+                                              file: f,
+                                              siblings: files,
+                                            ),
+                                          ))
+                                      .toList(),
+                                ),
+                              ),
+                            if (attachmentFiles.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: Column(
+                                  children: attachmentFiles
+                                      .map((f) => FileRow(
                                           store: store,
                                           spaceId: space.id,
-                                          file: f,
-                                          siblings: files,
-                                        ),
+                                          file: f))
+                                      .toList(),
+                                ),
+                              ),
+                            if (post.tags.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 4,
+                                runSpacing: 4,
+                                children: post.tags
+                                    .map((t) => _TagChip(tag: t))
+                                    .toList(),
+                              ),
+                            ],
+                            if (post.quotedPostId != null) ...[
+                              const SizedBox(height: 8),
+                              _QuotedOwnCard(
+                                store: store,
+                                space: space,
+                                quotedPostId: post.quotedPostId!,
+                                onTap: onQuoteTap == null
+                                    ? null
+                                    : () => onQuoteTap!(post.quotedPostId!),
+                              ),
+                            ],
+                            if (post.quotedExternals.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              ...post.quotedExternals
+                                  .map((q) => Padding(
+                                        padding: const EdgeInsets.only(
+                                            bottom: 6),
+                                        child: _QuotedExternalCard(quote: q),
                                       ))
                                   .toList(),
-                            ),
-                          ),
-                        if (attachmentFiles.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Column(
-                              children: attachmentFiles
-                                  .map((f) => FileRow(
-                                      store: store,
-                                      spaceId: space.id,
-                                      file: f))
-                                  .toList(),
-                            ),
-                          ),
-                        if (post.tags.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          Wrap(
-                            spacing: 4,
-                            runSpacing: 4,
-                            children: post.tags
-                                .map((t) => _TagChip(tag: t))
-                                .toList(),
-                          ),
-                        ],
-                        if (post.quotedPostId != null) ...[
-                          const SizedBox(height: 8),
-                          _QuotedOwnCard(
-                            store: store,
-                            space: space,
-                            quotedPostId: post.quotedPostId!,
-                            onTap: onQuoteTap == null
-                                ? null
-                                : () => onQuoteTap!(post.quotedPostId!),
-                          ),
-                        ],
-                        if (post.quotedExternals.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          ...post.quotedExternals
-                              .map((q) => Padding(
-                                    padding: const EdgeInsets.only(bottom: 6),
-                                    child: _QuotedExternalCard(quote: q),
-                                  ))
-                              .toList(),
-                        ],
-                        const SizedBox(height: 2),
-                        _PostActions(
-                          childCount: childCount,
-                          previewCount: previewCount,
-                          expanded: expanded,
-                          hideReplyToggle: hideReplyToggle,
-                          onToggleReplies: onToggleReplies,
-                          onReply: onReply,
-                          onQuote: onQuote,
-                          quoteCount: quoteCount,
-                          quotesExpanded: quotesExpanded,
-                          onToggleQuotes: onToggleQuotes,
+                            ],
+                          ],
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 2),
+                      _PostActions(
+                        childCount: childCount,
+                        previewCount: previewCount,
+                        expanded: expanded,
+                        hideReplyToggle: hideReplyToggle,
+                        onToggleReplies: onToggleReplies,
+                        onReply: onReply,
+                        onQuote: onQuote,
+                        quoteCount: quoteCount,
+                        quotesExpanded: quotesExpanded,
+                        onToggleQuotes: onToggleQuotes,
+                        selectionMode: selectionMode,
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),

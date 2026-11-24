@@ -18,6 +18,23 @@ Post _post({
       createdAt: DateTime.utc(2025),
     );
 
+Post _postWithDate({
+  String id = 'p1',
+  PostKind kind = PostKind.note,
+  String body = '',
+  String? url,
+  String? title,
+  required DateTime createdAt,
+}) =>
+    Post(
+      id: id,
+      kind: kind,
+      body: body,
+      url: url,
+      title: title,
+      createdAt: createdAt,
+    );
+
 void main() {
   group('postToPlaintext', () {
     test('empty post → empty string', () {
@@ -208,6 +225,99 @@ void main() {
         ]),
         '<p>a</p>\n<hr>\n<p>c</p>',
       );
+    });
+  });
+
+  group('formatPostDate', () {
+    test('formats local time as YYYY-MM-DD HH:MM', () {
+      expect(
+        formatPostDate(DateTime(2025, 3, 15, 14, 30)),
+        '2025-03-15 14:30',
+      );
+    });
+
+    test('pads single digits', () {
+      expect(
+        formatPostDate(DateTime(2025, 1, 5, 9, 5)),
+        '2025-01-05 09:05',
+      );
+    });
+  });
+
+  group('postToPlaintextDated', () {
+    test('prefixes body with [date]', () {
+      final post = _postWithDate(
+        body: '<p>hello</p>',
+        createdAt: DateTime(2025, 3, 15, 14, 30),
+      );
+      expect(
+        postToPlaintextDated(post),
+        '[2025-03-15 14:30]\nhello',
+      );
+    });
+
+    test('empty post → empty string', () {
+      final post = _postWithDate(createdAt: DateTime(2025, 3, 15));
+      expect(postToPlaintextDated(post), '');
+    });
+  });
+
+  group('postsToPlaintextDated', () {
+    test('multiple posts separated by ---', () {
+      final posts = [
+        _postWithDate(
+          id: 'p1',
+          body: '<p>a</p>',
+          createdAt: DateTime(2025, 1, 1, 10),
+        ),
+        _postWithDate(
+          id: 'p2',
+          body: '<p>b</p>',
+          createdAt: DateTime(2025, 2, 2, 11),
+        ),
+      ];
+      final out = postsToPlaintextDated(posts);
+      expect(out, contains('[2025-01-01 10:00]'));
+      expect(out, contains('[2025-02-02 11:00]'));
+      expect(out, contains('---'));
+    });
+  });
+
+  group('postToHtmlDated', () {
+    test('prefixes body with <small>[date]</small>', () {
+      final post = _postWithDate(
+        body: '<p>hello</p>',
+        createdAt: DateTime(2025, 3, 15, 14, 30),
+      );
+      final html = postToHtmlDated(post);
+      expect(html, contains('<small>[2025-03-15 14:30]</small>'));
+      expect(html, contains('<p>hello</p>'));
+    });
+
+    test('empty post → empty string', () {
+      final post = _postWithDate(createdAt: DateTime(2025));
+      expect(postToHtmlDated(post), '');
+    });
+  });
+
+  group('postsToHtmlDated', () {
+    test('multiple posts separated by <hr>', () {
+      final posts = [
+        _postWithDate(
+          id: 'p1',
+          body: '<p>a</p>',
+          createdAt: DateTime(2025, 1, 1, 10),
+        ),
+        _postWithDate(
+          id: 'p2',
+          body: '<p>b</p>',
+          createdAt: DateTime(2025, 2, 2, 11),
+        ),
+      ];
+      final out = postsToHtmlDated(posts);
+      expect('<hr>'.allMatches(out).length, 1);
+      expect(out, contains('[2025-01-01 10:00]'));
+      expect(out, contains('[2025-02-02 11:00]'));
     });
   });
 }

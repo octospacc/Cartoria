@@ -35,6 +35,8 @@ class _PostHeader extends StatelessWidget {
   final VoidCallback onDelete;
   final VoidCallback onShowSource;
   final VoidCallback? onHookStatus;
+  final bool showGoToPost;
+  final VoidCallback? onGoToPost;
 
   const _PostHeader({
     required this.post,
@@ -45,6 +47,8 @@ class _PostHeader extends StatelessWidget {
     required this.onDelete,
     required this.onShowSource,
     this.onHookStatus,
+    this.showGoToPost = false,
+    this.onGoToPost,
   });
 
   @override
@@ -104,18 +108,21 @@ class _PostHeader extends StatelessWidget {
               iconSize: 18,
               tooltip: 'More',
               onSelected: (v) {
+                if (v == 'go-to-post') onGoToPost?.call();
                 if (v == 'edit') onEdit();
                 if (v == 'source') onShowSource();
                 if (v == 'delete') onDelete();
                 if (v == 'hook-status') onHookStatus?.call();
               },
               itemBuilder: (_) => [
+                if (showGoToPost && onGoToPost != null)
+                  PopupMenuItem(
+                      value: 'go-to-post', child: Text(l.feedGoToPost)),
                 PopupMenuItem(value: 'edit', child: Text(l.postEdit)),
                 PopupMenuItem(value: 'source', child: Text(l.postSource)),
                 if (onHookStatus != null)
                   PopupMenuItem(
-                      value: 'hook-status',
-                      child: Text(l.postHookStatus)),
+                      value: 'hook-status', child: Text(l.postHookStatus)),
                 PopupMenuItem(value: 'delete', child: Text(l.postDelete)),
               ],
             ),

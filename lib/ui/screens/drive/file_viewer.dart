@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +12,7 @@ import '../../../data/store.dart';
 import '../../../l10n/l10n.dart';
 import '../../../platform/file_save.dart';
 import '../../../platform/media.dart';
+import '../../../platform/clipboard_write.dart';
 import '../../../util/file_category.dart';
 import '../../widgets/video_aspect.dart';
 
@@ -149,6 +151,12 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
             ],
           ),
           actions: [
+            if (categoryFor(file.name) == FileCategory.image)
+              IconButton(
+                icon: const Icon(Icons.copy_all_outlined),
+                tooltip: l.fileViewerCopyImage,
+                onPressed: () => _copyImageToClipboard(context, file),
+              ),
             IconButton(
               icon: const Icon(Icons.ios_share),
               tooltip: l.driveShareAction,
@@ -294,6 +302,35 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
     if (ok == true) {
       await widget.store.deleteFile(widget.space.id, file.id);
       if (mounted) Navigator.pop(context);
+    }
+  }
+
+  Future<void> _copyImageToClipboard(
+    BuildContext context,
+    DriveFile file,
+  ) async {
+    final l = context.l10n;
+    try {
+      final bytes = await widget.store.readFileBytes(widget.space.id, file.id);
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final pngData =
+          await frame.image.toByteData(format: ui.ImageByteFormat.png);
+      frame.image.dispose();
+      codec.dispose();
+      if (pngData == null) throw StateError('encode failed');
+      await copyImageToClipboard(pngData.buffer.asUint8List());
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l.fileViewerCopiedToClipboard)),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l.fileViewerCopyFailed(e.toString()))),
+        );
+      }
     }
   }
 }

@@ -29,3 +29,12 @@ Future<void> copyToClipboard({
     await Clipboard.setData(ClipboardData(text: plaintext));
   }
 }
+
+/// Writes PNG-encoded image bytes to the system clipboard.
+Future<void> copyImageToClipboard(Uint8List pngBytes) async {
+  final clipboard = SystemClipboard.instance;
+  if (clipboard == null) throw StateError('Clipboard unavailable');
+  final item = DataWriterItem();
+  item.add(Formats.png(pngBytes));
+  await clipboard.write([item]);
+}

@@ -70,3 +70,42 @@ String postsToPlaintext(List<Post> posts) {
 String postsToHtml(List<Post> posts) {
   return posts.map(postToHtml).where((s) => s.isNotEmpty).join('\n<hr>\n');
 }
+
+/// Formats [dt] as `YYYY-MM-DD HH:MM` in the user's local time.
+String formatPostDate(DateTime dt) {
+  final local = dt.toLocal();
+  final y = local.year;
+  final mo = local.month.toString().padLeft(2, '0');
+  final d = local.day.toString().padLeft(2, '0');
+  final h = local.hour.toString().padLeft(2, '0');
+  final mi = local.minute.toString().padLeft(2, '0');
+  return '$y-$mo-$d $h:$mi';
+}
+
+String postToPlaintextDated(Post post) {
+  final date = formatPostDate(post.createdAt);
+  final body = postToPlaintext(post);
+  if (body.isEmpty) return '';
+  return '[$date]\n$body';
+}
+
+String postsToPlaintextDated(List<Post> posts) {
+  return posts
+      .map(postToPlaintextDated)
+      .where((s) => s.isNotEmpty)
+      .join('\n\n---\n\n');
+}
+
+String postToHtmlDated(Post post) {
+  final date = formatPostDate(post.createdAt);
+  final body = postToHtml(post);
+  if (body.isEmpty) return '';
+  return '<p><small>[$date]</small></p>\n$body';
+}
+
+String postsToHtmlDated(List<Post> posts) {
+  return posts
+      .map(postToHtmlDated)
+      .where((s) => s.isNotEmpty)
+      .join('\n<hr>\n');
+}

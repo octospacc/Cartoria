@@ -969,5 +969,12 @@
   "@feedCopiedToClipboard": {
     "placeholders": { "count": { "type": "int" } }
   },
-  "feedGoToPost": "Open in feed"
+  "feedGoToPost": "Open in feed",
+  "feedCopySelectedWithDates": "Copy with dates",
+  "fileViewerCopyImage": "Copy image",
+  "fileViewerCopiedToClipboard": "Image copied to clipboard",
+  "fileViewerCopyFailed": "Copy failed: {error}",
+  "@fileViewerCopyFailed": {
+    "placeholders": { "error": { "type": "String" } }
+  }
 }

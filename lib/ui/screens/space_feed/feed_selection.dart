@@ -19,6 +19,9 @@ extension _FeedSelectionExt on _SpaceFeedScreenState {
     _setStateSafe(() {
       if (_selectedPostIds.contains(postId)) {
         _selectedPostIds.remove(postId);
+        if (_selectedPostIds.isEmpty) {
+          _selectionMode = false;
+        }
       } else {
         _selectedPostIds.add(postId);
       }
@@ -62,7 +65,7 @@ extension _FeedSelectionExt on _SpaceFeedScreenState {
     if (mounted) _exitSelectionMode();
   }
 
-  Future<void> _copySelectedPosts() async {
+  Future<void> _copySelectedPosts({bool includeDate = false}) async {
     final selected = Set<String>.from(_selectedPostIds);
     if (selected.isEmpty) return;
 
@@ -71,10 +74,10 @@ extension _FeedSelectionExt on _SpaceFeedScreenState {
         all.where((p) => selected.contains(p.id)).toList();
     if (selectedPosts.isEmpty) return;
 
-    final plaintext = postsToPlaintext(selectedPosts);
-    final html = selectedPosts.any((p) => htmlHasFormatting(p.body))
-        ? postsToHtml(selectedPosts)
-        : null;
+    final plaintext = includeDate
+        ? postsToPlaintextDated(selectedPosts)
+        : postsToPlaintext(selectedPosts);
+    final html = await _buildCopyHtml(selectedPosts, includeDate);
 
     await copyToClipboard(plaintext: plaintext, html: html);
 
@@ -84,5 +87,85 @@ extension _FeedSelectionExt on _SpaceFeedScreenState {
       SnackBar(content: Text(l.feedCopiedToClipboard(selectedPosts.length))),
     );
     _exitSelectionMode();
+  }
+
+  /// Builds the clipboard HTML for [posts], embedding image attachments
+  /// as base64 data URIs so they survive paste into rich destinations
+  /// (email, notes, docs). A per-post and total size cap prevents one
+  /// huge image from blowing past browser clipboard limits or making
+  /// the copy take minutes on slow disks.
+  ///
+  /// Returns null when no post has any text, formatting, URL, or image
+  /// — nothing worth pasting as rich.
+  Future<String?> _buildCopyHtml(
+    List<Post> posts,
+    bool includeDate,
+  ) async {
+    const perImageMax = 5 * 1024 * 1024; // 5 MB
+    const totalBudget = 20 * 1024 * 1024; // 20 MB
+    var totalBytes = 0;
+
+    final buf = StringBuffer();
+    var hasContent = false;
+
+    for (var i = 0; i < posts.length; i++) {
+      final post = posts[i];
+      final postBuf = StringBuffer();
+
+      if (includeDate) {
+        postBuf.write(
+          '<p><small>[${formatPostDate(post.createdAt)}]</small></p>\n',
+        );
+      }
+      if (post.title != null && post.title!.isNotEmpty) {
+        postBuf.write(
+          '<p><strong>${escapeHtml(post.title!)}</strong></p>\n',
+        );
+      }
+      if (post.body.isNotEmpty) {
+        postBuf.write(post.body);
+        postBuf.write('\n');
+      }
+
+      // Embed images.
+      for (final fileId in post.fileIds) {
+        final file = widget.store.fileById(widget.space.id, fileId);
+        if (file == null) continue;
+        if (categoryFor(file.name) != FileCategory.image) continue;
+        try {
+          final bytes = await widget.store.readFileBytes(
+            widget.space.id,
+            fileId,
+          );
+          if (bytes.length > perImageMax) continue;
+          if (totalBytes + bytes.length > totalBudget) continue;
+          totalBytes += bytes.length;
+          final mime = mimeTypeForName(file.name);
+          final b64 = base64Encode(bytes);
+          postBuf.write(
+            '<p><img src="data:$mime;base64,$b64" '
+            'alt="${escapeHtml(file.name)}" /></p>\n',
+          );
+        } catch (_) {
+          // Skip images we can't load — text still goes through.
+        }
+      }
+
+      if (post.url != null &&
+          post.url!.isNotEmpty &&
+          !post.body.contains(post.url!)) {
+        final escUrl = escapeHtml(post.url!);
+        postBuf.write('<p><a href="$escUrl">$escUrl</a></p>\n');
+      }
+
+      final postHtml = postBuf.toString().trim();
+      if (postHtml.isEmpty) continue;
+      if (hasContent) buf.write('<hr>\n');
+      buf.write(postHtml);
+      hasContent = true;
+    }
+
+    if (!hasContent) return null;
+    return buf.toString();
   }
 }

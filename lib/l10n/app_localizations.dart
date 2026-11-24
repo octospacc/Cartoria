@@ -3169,6 +3169,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Open in feed'**
   String get feedGoToPost;
+
+  /// No description provided for @feedCopySelectedWithDates.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy with dates'**
+  String get feedCopySelectedWithDates;
+
+  /// No description provided for @fileViewerCopyImage.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy image'**
+  String get fileViewerCopyImage;
+
+  /// No description provided for @fileViewerCopiedToClipboard.
+  ///
+  /// In en, this message translates to:
+  /// **'Image copied to clipboard'**
+  String get fileViewerCopiedToClipboard;
+
+  /// No description provided for @fileViewerCopyFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy failed: {error}'**
+  String fileViewerCopyFailed(String error);
 }
 
 class _AppLocalizationsDelegate
