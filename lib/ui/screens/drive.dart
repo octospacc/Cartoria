@@ -9,6 +9,7 @@ import '../../l10n/l10n.dart';
 import '../../platform/clipboard_files.dart';
 import '../../platform/file_save.dart';
 import '../../util/file_category.dart';
+import '../../util/search_filter.dart';
 import '../widgets/escape_back.dart';
 import '../widgets/file_thumbnail.dart';
 import '../widgets/file_usage_sheet.dart';
@@ -41,11 +42,15 @@ class _DriveScreenState extends State<DriveScreen> {
   final Set<String> _selectedFileIds = {};
 
   bool _searchActive = false;
+  DateTimeRange? _searchDateRange;
   final TextEditingController _searchCtrl = TextEditingController();
+
+  final _searchFocusNode = FocusNode();
 
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -155,6 +160,7 @@ class _DriveScreenState extends State<DriveScreen> {
                   setState(() {
                     _searchCtrl.clear();
                     _searchActive = false;
+                    _searchDateRange = null;
                   });
                 }
               }
@@ -167,12 +173,23 @@ class _DriveScreenState extends State<DriveScreen> {
             final used = widget.store.usedFileIds(widget.space.id);
 
             final query = _searchActive ? _searchCtrl.text.trim() : '';
-            final files = query.isEmpty
+            var files = query.isEmpty
                 ? allFiles
                 : allFiles
                     .where((f) =>
                         f.name.toLowerCase().contains(query.toLowerCase()))
                     .toList();
+            if (_searchDateRange != null) {
+              files = files.where((f) {
+                final created = f.createdAt.toLocal();
+                final start = DateTime(_searchDateRange!.start.year,
+                    _searchDateRange!.start.month, _searchDateRange!.start.day);
+                final end = DateTime(_searchDateRange!.end.year,
+                    _searchDateRange!.end.month, _searchDateRange!.end.day,
+                    23, 59, 59, 999);
+                return !created.isBefore(start) && !created.isAfter(end);
+              }).toList();
+            }
 
             final offloadedCount =
                 files.where((f) => offloadedIds.contains(f.id)).length;
@@ -224,6 +241,26 @@ class _DriveScreenState extends State<DriveScreen> {
                                       _driveSummary(
                                           l, files.length, offloadedCount, unusedCount),
                                       style: theme.textTheme.bodySmall,
+                                    ),
+                                  ),
+                                if (_searchDateRange != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 8),
+                                    child: Chip(
+                                      avatar: const Icon(
+                                          Icons.date_range, size: 14),
+                                      label: Text(
+                                        '${_fmtDate(_searchDateRange!.start)}'
+                                        ' – '
+                                        '${_fmtDate(_searchDateRange!.end)}',
+                                        style: theme.textTheme.labelSmall,
+                                      ),
+                                      onDeleted: () => setState(
+                                          () => _searchDateRange = null),
+                                      visualDensity:
+                                          VisualDensity.compact,
+                                      materialTapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
                                     ),
                                   ),
                                 ],
@@ -598,10 +635,12 @@ class _DriveScreenState extends State<DriveScreen> {
           onPressed: () => setState(() {
             _searchCtrl.clear();
             _searchActive = false;
+            _searchDateRange = null;
           }),
         ),
         title: TextField(
           controller: _searchCtrl,
+          focusNode: _searchFocusNode,
           autofocus: true,
           textInputAction: TextInputAction.search,
           decoration: InputDecoration(
@@ -619,6 +658,13 @@ class _DriveScreenState extends State<DriveScreen> {
               tooltip: l.driveClear,
               onPressed: () => setState(_searchCtrl.clear),
             ),
+          IconButton(
+            icon: Icon(_searchDateRange != null
+                ? Icons.date_range
+                : Icons.date_range_outlined),
+            tooltip: l.searchDateRange,
+            onPressed: () => _pickSearchDateRange(context),
+          ),
         ],
       );
     }
@@ -631,7 +677,12 @@ class _DriveScreenState extends State<DriveScreen> {
           tooltip: l.driveSearchTooltip,
           onPressed: allFiles.isEmpty
               ? null
-              : () => setState(() => _searchActive = true),
+              : () {
+                      setState(() => _searchActive = true);
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) _searchFocusNode.requestFocus();
+                      });
+                    },
         ),
         IconButton(
           icon: const Icon(Icons.content_paste),
@@ -664,4 +715,20 @@ class _DriveScreenState extends State<DriveScreen> {
       onViewPostInFeed: widget.onViewPostInFeed,
     );
   }
+
+  Future<void> _pickSearchDateRange(BuildContext context) async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now().add(const Duration(days: 365 * 100)),
+      initialDateRange: _searchDateRange,
+      helpText: context.l10n.searchDateRange,
+    );
+    if (picked == null) return;
+    if (!mounted) return;
+    setState(() => _searchDateRange = picked);
+  }
+
+  String _fmtDate(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 }

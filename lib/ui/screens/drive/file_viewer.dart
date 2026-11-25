@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,6 +13,7 @@ import '../../../platform/file_save.dart';
 import '../../../platform/media.dart';
 import '../../../platform/clipboard_write.dart';
 import '../../../util/file_category.dart';
+import '../../../util/mime.dart';
 import '../../widgets/video_aspect.dart';
 
 class FileViewerScreen extends StatefulWidget {
@@ -312,14 +312,8 @@ class _FileViewerScreenState extends State<FileViewerScreen> {
     final l = context.l10n;
     try {
       final bytes = await widget.store.readFileBytes(widget.space.id, file.id);
-      final codec = await ui.instantiateImageCodec(bytes);
-      final frame = await codec.getNextFrame();
-      final pngData =
-          await frame.image.toByteData(format: ui.ImageByteFormat.png);
-      frame.image.dispose();
-      codec.dispose();
-      if (pngData == null) throw StateError('encode failed');
-      await copyImageToClipboard(pngData.buffer.asUint8List());
+      final mime = mimeTypeForName(file.name);
+      await copyImageBytesToClipboard(bytes, mime);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(l.fileViewerCopiedToClipboard)),

@@ -38,7 +38,14 @@ class _ComposerFooter extends StatelessWidget {
 
 class _SearchBanner extends StatelessWidget {
   final int count;
-  const _SearchBanner({required this.count});
+  final DateTimeRange? dateRange;
+  final VoidCallback? onClearDateRange;
+
+  const _SearchBanner({
+    required this.count,
+    this.dateRange,
+    this.onClearDateRange,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -54,10 +61,46 @@ class _SearchBanner extends StatelessWidget {
               size: 14, color: theme.colorScheme.onSurfaceVariant),
           const SizedBox(width: 6),
           Text(l.feedSearchMatches(count), style: theme.textTheme.bodySmall),
+          if (dateRange != null) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.secondaryContainer,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    l.searchDateRangeLabel(
+                      _fmt(dateRange!.start),
+                      _fmt(dateRange!.end),
+                    ),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSecondaryContainer,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  InkWell(
+                    onTap: onClearDateRange,
+                    child: Icon(
+                      Icons.close,
+                      size: 12,
+                      color: theme.colorScheme.onSecondaryContainer,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
+
+  String _fmt(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 }
 
 class _QuoteBackPreview extends StatelessWidget {

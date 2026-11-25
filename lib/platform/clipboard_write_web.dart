@@ -47,15 +47,15 @@ Future<void> copyToClipboard({
   }
 }
 
-/// Writes PNG-encoded image bytes to the browser clipboard.
-Future<void> copyImageToClipboard(Uint8List pngBytes) async {
+Future<void> copyImageBytesToClipboard(
+  Uint8List bytes,
+  String mimeType,
+) async {
   final blob = web.Blob(
-    [pngBytes.toJS].toJS,
-    web.BlobPropertyBag(type: 'image/png'),
+    [bytes.toJS].toJS,
+    web.BlobPropertyBag(type: mimeType),
   );
-  final data = <String, JSAny>{
-    'image/png': blob,
-  }.jsify() as JSObject;
+  final data = <String, JSAny>{mimeType: blob}.jsify() as JSObject;
   final item = web.ClipboardItem(data);
   await web.window.navigator.clipboard.write([item].toJS).toDart;
 }

@@ -269,8 +269,11 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
       }
     }
 
+    final targetSpaceId = result.targetSpaceId ?? widget.space.id;
+    final quotedSpaceId = widget.space.id;
+
     await widget.store.createPost(
-      spaceId: widget.space.id,
+      spaceId: targetSpaceId,
       kind: result.kind,
       plaintextBody: result.body,
       bodyHtml: result.bodyHtml,
@@ -282,9 +285,27 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
       fileIds: result.fileIds,
       createdAt: result.createdAt,
       quotedPostId: result.quotedPostId,
+      quotedSpaceId:
+          result.quotedPostId != null ? quotedSpaceId : null,
       skipHooks: result.skipHooks,
     );
     await widget.store.deleteComposerDraft(result.draftFieldKey);
+
+    if (!mounted) return;
+    if (targetSpaceId != widget.space.id) {
+      final target = widget.store.spaceById(targetSpaceId);
+      if (target != null) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => SpaceFeedScreen(
+              store: widget.store,
+              space: target,
+            ),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _edit(Post post) async {

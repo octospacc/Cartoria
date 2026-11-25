@@ -33,7 +33,7 @@ class PostCard extends StatelessWidget {
   final VoidCallback onQuote;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
-  final void Function(String quotedPostId)? onQuoteTap;
+  final void Function(String postId, String spaceId)? onQuoteTap;
 
   final bool selectionMode;
   final bool isSelected;
@@ -56,6 +56,10 @@ class PostCard extends StatelessWidget {
   /// Renders a brief accent that fades in/out via an animated container.
   /// Independent of [isSelected], which is the multi-select state.
   final bool isHighlighted;
+
+  final bool hasNestedReplies;
+  final bool allThreadExpanded;
+  final VoidCallback? onToggleThread;
 
   const PostCard({
     super.key,
@@ -82,6 +86,9 @@ class PostCard extends StatelessWidget {
     this.showGoToPost = false,
     this.onGoToPost,
     this.isHighlighted = false,
+    this.hasNestedReplies = false,
+    this.allThreadExpanded = false,
+    this.onToggleThread,
   });
 
   @override
@@ -239,9 +246,8 @@ class PostCard extends StatelessWidget {
                                 store: store,
                                 space: space,
                                 quotedPostId: post.quotedPostId!,
-                                onTap: onQuoteTap == null
-                                    ? null
-                                    : () => onQuoteTap!(post.quotedPostId!),
+                                quotedSpaceId: post.quotedSpaceId,
+                                onTap: onQuoteTap,
                               ),
                             ],
                             if (post.quotedExternals.isNotEmpty) ...[
@@ -270,6 +276,9 @@ class PostCard extends StatelessWidget {
                         quotesExpanded: quotesExpanded,
                         onToggleQuotes: onToggleQuotes,
                         selectionMode: selectionMode,
+                        onToggleThread: onToggleThread,
+                        hasNestedReplies: hasNestedReplies,
+                        allThreadExpanded: allThreadExpanded,
                       ),
                     ],
                   ),

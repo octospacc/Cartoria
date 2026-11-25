@@ -554,5 +554,12 @@
   "feedCopySelectedWithDates": "Copia con date",
   "fileViewerCopyImage": "Copia immagine",
   "fileViewerCopiedToClipboard": "Immagine copiata negli appunti",
-  "fileViewerCopyFailed": "Copia non riuscita: {error}"
+  "fileViewerCopyFailed": "Copia non riuscita: {error}",
+
+  "feedExpandThread": "Espandi thread",
+  "feedCollapseThread": "Comprimi thread",
+  "composerPostIn": "Pubblica in",
+  "searchDateRange": "Intervallo di date",
+  "searchClearDateRange": "Rimuovi filtro date",
+  "searchDateRangeLabel": "{from} – {to}"
 }

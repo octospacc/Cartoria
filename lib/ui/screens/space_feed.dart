@@ -20,6 +20,7 @@ import '../../util/post_serialization.dart';
 import '../../util/file_category.dart';
 import '../../util/html_utils.dart';
 import '../../util/mime.dart';
+import '../../util/search_filter.dart';
 import '../bookmark_import_helpers.dart';
 import '../space_actions.dart';
 import '../space_dialogs.dart';
@@ -48,7 +49,14 @@ const int kPreviewReplyCount = 2;
 class SpaceFeedScreen extends StatefulWidget {
   final VaultStore store;
   final Space space;
-  const SpaceFeedScreen({super.key, required this.store, required this.space});
+  final String? initialPostId;
+
+  const SpaceFeedScreen({
+    super.key,
+    required this.store,
+    required this.space,
+    this.initialPostId,
+  });
 
   @override
   State<SpaceFeedScreen> createState() => _SpaceFeedScreenState();
@@ -72,6 +80,8 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   bool _sending = false;
   bool _searchActive = false;
   bool _skipHooks = false;
+  final _searchFocusNode = FocusNode();
+  DateTimeRange? _searchDateRange;
 
   /// The plaintext value last written into `_bodyCtrl` by the app (on
   /// draft load, reset, or after send). Used to distinguish a real
@@ -116,6 +126,11 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         : null;
     _inlineQuillCtrl?.addListener(_onInlineFieldChanged);
     _loadInlineDraft();
+    if (widget.initialPostId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _scrollToPost(widget.initialPostId!);
+      });
+    }
   }
 
   @override
@@ -131,6 +146,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     _searchCtrl.dispose();
     _postKeys.clear();
     _highlightTimer?.cancel();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -160,6 +176,7 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                   _setStateSafe(() {
                     _searchCtrl.clear();
                     _searchActive = false;
+                    _searchDateRange = null;
                   });
                 }
               }

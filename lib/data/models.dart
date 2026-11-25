@@ -98,6 +98,11 @@ class Post {
   String? _editedCache;
   DateTime? _editedForDay;
 
+  /// The space id of the post referenced by [quotedPostId] when that
+  /// post lives in a different space. Null means "same space as this
+  /// post" — the pre-cross-space default.
+  final String? quotedSpaceId;
+
   Post({
     required this.id,
     this.parentId,
@@ -114,6 +119,7 @@ class Post {
     this.quotedPostId,
     this.quotedExternals = const [],
     this.hookState = const {},
+    this.quotedSpaceId,
   });
 
   String get plaintext => _plaintextCache ??= bodyFromHtml(body);
@@ -184,6 +190,7 @@ class Post {
         quotedPostId: quotedPostId,
         quotedExternals: quotedExternals,
         hookState: newState,
+        quotedSpaceId: quotedSpaceId,
       );
 }
 

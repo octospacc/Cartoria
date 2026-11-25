@@ -47,12 +47,14 @@ extension _FeedAppBarExt on _SpaceFeedScreenState {
               onPressed: () => _setStateSafe(() {
                 _searchCtrl.clear();
                 _searchActive = false;
+                _searchDateRange = null;
               }),
             )
           : null,
       title: _searchActive
           ? TextField(
               controller: _searchCtrl,
+              focusNode: _searchFocusNode,
               autofocus: true,
               textInputAction: TextInputAction.search,
               decoration: InputDecoration(
@@ -70,6 +72,13 @@ extension _FeedAppBarExt on _SpaceFeedScreenState {
                   tooltip: l.feedSearchClear,
                   onPressed: () => _setStateSafe(_searchCtrl.clear),
                 ),
+              IconButton(
+                icon: Icon(_searchDateRange != null
+                    ? Icons.date_range
+                    : Icons.date_range_outlined),
+                tooltip: l.searchDateRange,
+                onPressed: _pickSearchDateRange,
+              ),
             ]
           : [
               IconButton(
@@ -80,7 +89,7 @@ extension _FeedAppBarExt on _SpaceFeedScreenState {
               IconButton(
                 icon: const Icon(Icons.search),
                 tooltip: l.feedSearchHint,
-                onPressed: () => _setStateSafe(() => _searchActive = true),
+                onPressed: () => _openSearch(),
               ),
               IconButton(
                 icon: const Icon(Icons.folder),
@@ -128,5 +137,24 @@ extension _FeedAppBarExt on _SpaceFeedScreenState {
               ),
             ],
     );
+  }
+
+  void _openSearch() {
+    _setStateSafe(() => _searchActive = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _searchFocusNode.requestFocus();
+    });
+  }
+
+  Future<void> _pickSearchDateRange() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now().add(const Duration(days: 365 * 100)),
+      initialDateRange: _searchDateRange,
+      helpText: context.l10n.searchDateRange,
+    );
+    if (picked == null) return;
+    _setStateSafe(() => _searchDateRange = picked);
   }
 }

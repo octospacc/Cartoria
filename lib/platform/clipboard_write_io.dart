@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:flutter/services.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 
@@ -30,11 +33,44 @@ Future<void> copyToClipboard({
   }
 }
 
-/// Writes PNG-encoded image bytes to the system clipboard.
-Future<void> copyImageToClipboard(Uint8List pngBytes) async {
+Future<void> copyImageBytesToClipboard(
+  Uint8List bytes,
+  String mimeType,
+) async {
   final clipboard = SystemClipboard.instance;
   if (clipboard == null) throw StateError('Clipboard unavailable');
+
   final item = DataWriterItem();
-  item.add(Formats.png(pngBytes));
+  try {
+    final format = _formatForMime(mimeType);
+    item.add(format(bytes));
+  } catch (_) {
+    // Fallback: re-encode to PNG for formats the clipboard can't carry
+    // natively (HEIC, BMP, etc.). Rare; slow path only for those.
+    final codec = await ui.instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    final pngData =
+        await frame.image.toByteData(format: ui.ImageByteFormat.png);
+    frame.image.dispose();
+    codec.dispose();
+    if (pngData == null) throw StateError('encode failed');
+    item.add(Formats.png(pngData.buffer.asUint8List()));
+  }
   await clipboard.write([item]);
+}
+
+FileFormat _formatForMime(String mime) {
+  switch (mime) {
+    case 'image/png':
+      return Formats.png;
+    case 'image/jpeg':
+    case 'image/jpg':
+      return Formats.jpeg;
+    case 'image/gif':
+      return Formats.gif;
+    case 'image/webp':
+      return Formats.webp;
+    default:
+      throw UnsupportedError('mime: $mime');
+  }
 }

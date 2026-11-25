@@ -3193,6 +3193,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Copy failed: {error}'**
   String fileViewerCopyFailed(String error);
+
+  /// No description provided for @feedExpandThread.
+  ///
+  /// In en, this message translates to:
+  /// **'Expand thread'**
+  String get feedExpandThread;
+
+  /// No description provided for @feedCollapseThread.
+  ///
+  /// In en, this message translates to:
+  /// **'Collapse thread'**
+  String get feedCollapseThread;
+
+  /// No description provided for @composerPostIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Post in'**
+  String get composerPostIn;
+
+  /// No description provided for @searchDateRange.
+  ///
+  /// In en, this message translates to:
+  /// **'Date range'**
+  String get searchDateRange;
+
+  /// No description provided for @searchClearDateRange.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear date filter'**
+  String get searchClearDateRange;
+
+  /// No description provided for @searchDateRangeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'{from} – {to}'**
+  String searchDateRangeLabel(String from, String to);
 }
 
 class _AppLocalizationsDelegate

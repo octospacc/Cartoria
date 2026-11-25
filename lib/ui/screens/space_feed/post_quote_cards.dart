@@ -4,14 +4,21 @@ class _QuotedOwnCard extends StatelessWidget {
   final VaultStore store;
   final Space space;
   final String quotedPostId;
-  final VoidCallback? onTap;
+  final String? quotedSpaceId;
+  final void Function(String postId, String spaceId)? onTap;
 
   const _QuotedOwnCard({
     required this.store,
     required this.space,
     required this.quotedPostId,
+    this.quotedSpaceId,
     this.onTap,
   });
+
+  String get _effectiveSpaceId => quotedSpaceId ?? space.id;
+  // ...build stays the same except:
+  // onTap!(quotedPostId, _effectiveSpaceId)
+  // Post? _find() uses _effectiveSpaceId
 
   @override
   Widget build(BuildContext context) {
@@ -54,7 +61,7 @@ class _QuotedOwnCard extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: onTap,
+        onTap: () => onTap!(quotedPostId, _effectiveSpaceId),
         borderRadius: BorderRadius.circular(8),
         child: decorated,
       ),
@@ -193,7 +200,7 @@ class _QuotedOwnCard extends StatelessWidget {
   }
 
   Post? _find() {
-    for (final p in store.postsForSpace(space.id)) {
+    for (final p in store.postsForSpace(_effectiveSpaceId)) {
       if (p.id == quotedPostId) return p;
     }
     return null;

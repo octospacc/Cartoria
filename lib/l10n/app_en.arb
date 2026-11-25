@@ -976,5 +976,18 @@
   "fileViewerCopyFailed": "Copy failed: {error}",
   "@fileViewerCopyFailed": {
     "placeholders": { "error": { "type": "String" } }
+  },
+
+  "feedExpandThread": "Expand thread",
+  "feedCollapseThread": "Collapse thread",
+  "composerPostIn": "Post in",
+  "searchDateRange": "Date range",
+  "searchClearDateRange": "Clear date filter",
+  "searchDateRangeLabel": "{from} – {to}",
+  "@searchDateRangeLabel": {
+    "placeholders": {
+      "from": { "type": "String" },
+      "to": { "type": "String" }
+    }
   }
 }

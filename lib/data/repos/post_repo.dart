@@ -83,6 +83,7 @@ class PostRepository {
     List<String> fileIds = const [],
     DateTime? createdAt,
     String? quotedPostId,
+    String? quotedSpaceId,
     List<QuotedExternal> quotedExternals = const [],
     Map<String, PostHookState> hookState = const {},
   }) async {
@@ -106,6 +107,7 @@ class PostRepository {
         'description': description,
       if (thumbnail != null && thumbnail.isNotEmpty) 'thumbnail': thumbnail,
       if (quotedPostId != null) 'quotedPostId': quotedPostId,
+      if (quotedSpaceId != null) 'quotedSpaceId': quotedSpaceId,
       if (hookState.isNotEmpty)
         'hooks': hookState.map((k, v) => MapEntry(k, v.toJson())),
     };
@@ -126,6 +128,7 @@ class PostRepository {
       fileIds: fileIds,
       createdAt: now,
       quotedPostId: quotedPostId,
+      quotedSpaceId: quotedSpaceId,
       quotedExternals: quotedExternals,
       hookState: hookState,
     );
@@ -300,6 +303,7 @@ class PostRepository {
           ? DateTime.parse(meta['edited'] as String)
           : null,
       quotedPostId: meta['quotedPostId'] as String?,
+      quotedSpaceId: meta['quotedSpaceId'] as String?,
       quotedExternals: externals,
       hookState: hookState,
     );
@@ -388,6 +392,7 @@ class PostRepository {
       if (post.thumbnail != null && post.thumbnail!.isNotEmpty)
         'thumbnail': post.thumbnail,
       if (post.quotedPostId != null) 'quotedPostId': post.quotedPostId,
+      if (post.quotedSpaceId != null) 'quotedSpaceId': post.quotedSpaceId,
       if (post.editedAt != null) 'edited': post.editedAt!.toIso8601String(),
       if (post.hookState.isNotEmpty)
         'hooks': post.hookState.map((k, v) => MapEntry(k, v.toJson())),

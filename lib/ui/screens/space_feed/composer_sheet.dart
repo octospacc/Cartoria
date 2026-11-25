@@ -32,6 +32,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
   bool _fetching = false;
   DateTime? _postDateTime;
   bool _skipHooks = false;
+  String? _targetSpaceId;
 
   /// Delta of the editor at open time. Null when rich is off.
   String? _initialDelta;
@@ -109,6 +110,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
     _fileIds = existing != null ? List.of(existing.fileIds) : [];
     _thumbnail = existing?.thumbnail;
     _postDateTime = null;
+    _targetSpaceId = widget.quoting != null ? widget.space.id : null;
 
     _draftCtrl = ComposerDraftController(
       store: widget.store,
@@ -230,6 +232,8 @@ class _ComposerSheetState extends State<ComposerSheet> {
         quotedPostId: widget.editing == null ? widget.quoting?.id : null,
         skipHooks: _skipHooks,
         draftFieldKey: _draftFieldKey,
+        targetSpaceId:
+            widget.quoting != null ? (_targetSpaceId ?? widget.space.id) : null,
       ),
     );
   }
@@ -627,6 +631,43 @@ class _ComposerSheetState extends State<ComposerSheet> {
                     _updateSheetState(() => _kind = s.first),
                 showSelectedIcon: false,
               ),
+              if (widget.quoting != null) ...[
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Text(l.composerPostIn,
+                        style: theme.textTheme.labelLarge),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: _targetSpaceId ?? widget.space.id,
+                        isDense: true,
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                        ),
+                        items: widget.store.spaces
+                            .map((s) => DropdownMenuItem(
+                                  value: s.id,
+                                  child: Text('${s.icon} ${s.name}',
+                                      overflow: TextOverflow.ellipsis),
+                                ))
+                            .toList(),
+                        onChanged: _submitting
+                            ? null
+                            : (v) {
+                                if (v != null) {
+                                  _updateSheetState(
+                                      () => _targetSpaceId = v);
+                                }
+                              },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               if (_kind == PostKind.bookmark) ...[
                 const SizedBox(height: 12),
                 Row(
@@ -804,6 +845,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
                     controller: _quillCtrl!,
                     hintText: l.composerBodyHint,
                     expands: true,
+                    onEscape: () => Navigator.pop(context),
                   ),
                 )
               else

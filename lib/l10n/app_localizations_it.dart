@@ -2131,4 +2131,24 @@ class AppLocalizationsIt extends AppLocalizations {
   String fileViewerCopyFailed(String error) {
     return 'Copia non riuscita: $error';
   }
+
+  @override
+  String get feedExpandThread => 'Espandi thread';
+
+  @override
+  String get feedCollapseThread => 'Comprimi thread';
+
+  @override
+  String get composerPostIn => 'Pubblica in';
+
+  @override
+  String get searchDateRange => 'Intervallo di date';
+
+  @override
+  String get searchClearDateRange => 'Rimuovi filtro date';
+
+  @override
+  String searchDateRangeLabel(String from, String to) {
+    return '$from – $to';
+  }
 }

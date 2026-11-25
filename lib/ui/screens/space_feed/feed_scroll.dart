@@ -8,6 +8,7 @@ extension _FeedScrollExt on _SpaceFeedScreenState {
       _setStateSafe(() {
         _searchCtrl.clear();
         _searchActive = false;
+        _searchDateRange = null;
       });
       await WidgetsBinding.instance.endOfFrame;
       if (token != _scrollToken) return;

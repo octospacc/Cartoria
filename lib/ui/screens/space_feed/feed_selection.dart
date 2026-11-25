@@ -12,6 +12,7 @@ extension _FeedSelectionExt on _SpaceFeedScreenState {
     _setStateSafe(() {
       _selectionMode = false;
       _selectedPostIds.clear();
+      _searchDateRange = null;
     });
   }
 

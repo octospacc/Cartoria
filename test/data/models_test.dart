@@ -111,6 +111,25 @@ void main() {
     });
   });
 
+  group('Post.quotedSpaceId', () {
+    test('defaults null', () {
+      expect(_post().quotedSpaceId, isNull);
+    });
+
+    test('preserved through withHookState', () {
+      final original = Post(
+        id: 'p',
+        kind: PostKind.note,
+        body: '',
+        createdAt: DateTime.utc(2025),
+        quotedPostId: 'q',
+        quotedSpaceId: 's2',
+      );
+      final next = original.withHookState({});
+      expect(next.quotedSpaceId, 's2');
+    });
+  });
+
   group('Post.withHookState', () {
     test('preserves all other fields', () {
       final original = _post(

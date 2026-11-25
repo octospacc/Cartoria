@@ -12,6 +12,9 @@ class _PostActions extends StatelessWidget {
   final bool quotesExpanded;
   final VoidCallback? onToggleQuotes;
   final bool selectionMode;
+  final bool hasNestedReplies;
+  final bool allThreadExpanded;
+  final VoidCallback? onToggleThread;
 
   const _PostActions({
     required this.childCount,
@@ -25,7 +28,10 @@ class _PostActions extends StatelessWidget {
     required this.quotesExpanded,
     required this.onToggleQuotes,
     this.selectionMode = false,
-  });
+    this.hasNestedReplies = false,
+    this.allThreadExpanded = false,
+    this.onToggleThread,
+});
 
   @override
   Widget build(BuildContext context) {
@@ -67,13 +73,35 @@ class _PostActions extends StatelessWidget {
     final replyToggle = _replyToggle(theme, l);
     final quotesToggle = _quotesToggle(theme, l);
 
-    final rightToggles = Row(
-      mainAxisSize: MainAxisSize.min,
+    final threadToggle = (hasNestedReplies && onToggleThread != null)
+        ? TextButton.icon(
+            onPressed: onToggleThread,
+            icon: Icon(
+              allThreadExpanded ? Icons.unfold_less : Icons.unfold_more,
+              size: 15,
+            ),
+            label: Text(
+              allThreadExpanded
+                  ? l.feedCollapseThread
+                  : l.feedExpandThread,
+            ),
+            style: TextButton.styleFrom(
+              foregroundColor: theme.colorScheme.primary,
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+            ),
+          )
+        : null;
+
+    final rightToggles = Wrap(
+      spacing: 2,
+      runSpacing: 2,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         if (replyToggle != null) replyToggle,
-        if (replyToggle != null && quotesToggle != null)
-          const SizedBox(width: 2),
         if (quotesToggle != null) quotesToggle,
+        if (threadToggle != null) threadToggle,
       ],
     );
 

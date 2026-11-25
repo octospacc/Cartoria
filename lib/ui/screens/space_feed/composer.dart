@@ -76,6 +76,7 @@ class ComposerResult {
   final String? quotedPostId;
   final bool skipHooks;
   final String draftFieldKey;
+  final String? targetSpaceId;
 
   const ComposerResult({
     required this.kind,
@@ -90,6 +91,7 @@ class ComposerResult {
     this.quotedPostId,
     this.skipHooks = false,
     required this.draftFieldKey,
+    this.targetSpaceId,
   });
 }
 
@@ -217,6 +219,7 @@ class InlineComposer extends StatelessWidget {
                   : l.composerBodyHintBookmark,
               minHeight: 40,
               maxHeight: 180,
+              onEscape: () => FocusScope.of(context).unfocus(),
             ),
           )
         else

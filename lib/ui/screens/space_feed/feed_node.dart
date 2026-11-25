@@ -13,6 +13,22 @@ extension _FeedNodeExt on _SpaceFeedScreenState {
     final hasChildren = totalChildren > 0;
     final isExpanded = searchMode || _expanded.contains(post.id);
 
+    // Thread-level expansion: a shorthand for manually expanding every
+    // reply under a top-level post that itself has nested replies.
+    final descendantIds = <String>{};
+    void collectDescendants(_PostNode n) {
+      for (final c in n.children) {
+        descendantIds.add(c.post.id);
+        collectDescendants(c);
+      }
+    }
+    collectDescendants(node);
+    final hasNestedReplies =
+        depth == 0 && node.children.any((c) => c.children.isNotEmpty);
+    final allThreadExpanded = descendantIds.isNotEmpty &&
+        _expanded.contains(post.id) &&
+        descendantIds.every(_expanded.contains);
+
     final int previewCount;
     if (isExpanded || depth > 0) {
       previewCount = 0;
@@ -79,7 +95,7 @@ extension _FeedNodeExt on _SpaceFeedScreenState {
       onQuote: () => _quote(post),
       onEdit: () => _edit(post),
       onDelete: () => widget.store.deletePost(widget.space.id, post.id),
-      onQuoteTap: (searchMode || _selectionMode) ? null : _scrollToPost,
+      onQuoteTap: (searchMode || _selectionMode) ? null : _handleQuoteTap,
       isHighlighted: _highlightedPostId == post.id,
       selectionMode: _selectionMode,
       isSelected: _selectedPostIds.contains(post.id),
@@ -89,6 +105,22 @@ extension _FeedNodeExt on _SpaceFeedScreenState {
       onCardLongPress: (_selectionMode || searchMode)
           ? null
           : () => _enterSelectionMode(post.id),
+      hasNestedReplies: hasNestedReplies,
+      allThreadExpanded: allThreadExpanded,
+      onToggleThread: () => _setStateSafe(() {
+        if (allThreadExpanded) {
+          _expanded.remove(post.id);
+          for (final id in descendantIds) {
+            _expanded.remove(id);
+          }
+        } else {
+          _expanded.add(post.id);
+          _collapsedReplies.remove(post.id);
+          for (final id in descendantIds) {
+            _expanded.add(id);
+          }
+        }
+      }),
     );
 
     final parts = <Widget>[card];
@@ -170,6 +202,29 @@ extension _FeedNodeExt on _SpaceFeedScreenState {
                   onTap: interactive ? () => _scrollToPost(q.id) : null,
                 )),
           ],
+        ),
+      ),
+    );
+  }
+
+  void _handleQuoteTap(String postId, String spaceId) {
+    if (spaceId == widget.space.id) {
+      _scrollToPost(postId);
+    } else {
+      _navigateToPostInSpace(spaceId, postId);
+    }
+  }
+
+  void _navigateToPostInSpace(String spaceId, String postId) {
+    final target = widget.store.spaceById(spaceId);
+    if (target == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SpaceFeedScreen(
+          store: widget.store,
+          space: target,
+          initialPostId: postId,
         ),
       ),
     );

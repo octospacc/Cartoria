@@ -112,6 +112,7 @@ class FullScreenTextEditor extends StatelessWidget {
               controller: controller,
               hintText: hintText,
               expands: true,
+              onEscape: close,
             ),
           ),
         ),

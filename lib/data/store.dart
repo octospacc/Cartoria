@@ -406,6 +406,7 @@ class VaultStore extends ChangeNotifier {
     List<String> fileIds = const [],
     DateTime? createdAt,
     String? quotedPostId,
+    String? quotedSpaceId,
     bool skipHooks = false,
   }) async {
     final post = await _posts.create(
@@ -422,6 +423,7 @@ class VaultStore extends ChangeNotifier {
       fileIds: fileIds,
       createdAt: createdAt,
       quotedPostId: quotedPostId,
+      quotedSpaceId: quotedSpaceId,
     );
     _postCache.putIfAbsent(spaceId, () => []).add(post);
     _postCache[spaceId]!.sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -454,6 +456,7 @@ class VaultStore extends ChangeNotifier {
     String? thumbnail,
     List<String> tags = const [],
     List<String> fileIds = const [],
+    String? quotedSpaceId,
     bool skipHooks = false,
   }) async {
     final list = _postCache[spaceId];
@@ -897,5 +900,23 @@ class VaultStore extends ChangeNotifier {
         debugPrint('Migration posts/→entries/ failed for ${oldDir.path}: $err');
       }
     }
+  }
+
+  Post? findPost(String postId) {
+    for (final list in _postCache.values) {
+      for (final p in list) {
+        if (p.id == postId) return p;
+      }
+    }
+    return null;
+  }
+
+  String? spaceIdForPost(String postId) {
+    for (final e in _postCache.entries) {
+      for (final p in e.value) {
+        if (p.id == postId) return e.key;
+      }
+    }
+    return null;
   }
 }

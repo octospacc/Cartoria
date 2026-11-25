@@ -8,11 +8,18 @@ extension _FeedTreeExt on _SpaceFeedScreenState {
         .split(RegExp(r'\s+'))
         .where((t) => t.isNotEmpty)
         .toList();
-    if (terms.isEmpty) return {};
+    // Date filter alone (no text query) still produces a result set.
+    if (terms.isEmpty && _searchDateRange == null) return {};
     final spaceId = widget.space.id;
     final posts = widget.store.postsForSpace(spaceId);
     final matches = <String>{};
     for (final p in posts) {
+      if (!postMatchesDateRange(p, _searchDateRange)) continue;
+      if (terms.isEmpty) {
+        // Date-only filter: match every post in range.
+        matches.add(p.id);
+        continue;
+      }
       final buf = StringBuffer();
       buf.write(p.plaintext);
       buf.write(' ');
@@ -125,7 +132,12 @@ extension _FeedTreeExt on _SpaceFeedScreenState {
   Widget _buildContent() {
     _refreshQuotesMap();
     final query = _searchActive ? _searchCtrl.text.trim() : '';
-    if (query.isEmpty) {
+    final hasDateFilter = _searchDateRange != null;
+    if (query.isEmpty && !hasDateFilter) {
+      return _buildFeed(_buildTree(), searchMode: false);
+    }
+    if (query.isEmpty && hasDateFilter && !_searchActive) {
+      // Date filter set but search UI closed — treat as plain feed.
       return _buildFeed(_buildTree(), searchMode: false);
     }
     final matches = _computeMatches(query);
@@ -136,7 +148,11 @@ extension _FeedTreeExt on _SpaceFeedScreenState {
     final roots = _buildTree(visible: visible);
     return Column(
       children: [
-        _SearchBanner(count: matches.length),
+        _SearchBanner(
+          count: matches.length,
+          dateRange: _searchDateRange,
+          onClearDateRange: () => _setStateSafe(() => _searchDateRange = null),
+        ),
         Expanded(child: _buildFeed(roots, searchMode: true)),
       ],
     );
