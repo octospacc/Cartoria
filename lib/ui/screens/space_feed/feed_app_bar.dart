@@ -155,6 +155,7 @@ extension _FeedAppBarExt on _SpaceFeedScreenState {
       helpText: context.l10n.searchDateRange,
     );
     if (picked == null) return;
+    if (!mounted) return;
     _setStateSafe(() => _searchDateRange = picked);
   }
 }

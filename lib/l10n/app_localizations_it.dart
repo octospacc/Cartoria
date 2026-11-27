@@ -749,6 +749,9 @@ class AppLocalizationsIt extends AppLocalizations {
   String get postQuotedFromSpace => 'Citato da questo spazio';
 
   @override
+  String get postQuotedFromAnotherSpace => 'Citato da un altro spazio';
+
+  @override
   String get postQuotedIncludesAnother => '↪ include un\'altra citazione';
 
   @override

@@ -1196,6 +1196,12 @@ abstract class AppLocalizations {
   /// **'Quoted from this space'**
   String get postQuotedFromSpace;
 
+  /// No description provided for @postQuotedFromAnotherSpace.
+  ///
+  /// In en, this message translates to:
+  /// **'Quoted from another space'**
+  String get postQuotedFromAnotherSpace;
+
   /// No description provided for @postQuotedIncludesAnother.
   ///
   /// In en, this message translates to:

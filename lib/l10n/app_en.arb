@@ -337,6 +337,7 @@
   "postDeleteBody": "Attached files stay in the drive. Replies will become top-level. Cannot be undone.",
   "postQuotedUnavailable": "Quoted post unavailable",
   "postQuotedFromSpace": "Quoted from this space",
+  "postQuotedFromAnotherSpace": "Quoted from another space",
   "postQuotedIncludesAnother": "↪ includes another quote",
   "postQuotedExternal": "External quote",
   "postQuotedOpenHint": "Tap to view the quoted post",

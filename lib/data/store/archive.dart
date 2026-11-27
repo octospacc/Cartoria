@@ -95,10 +95,15 @@ extension ArchiveOps on VaultStore {
     }
 
     if (importedPosts.isNotEmpty) {
-      final merged = [
+      final seen = <String>{};
+      final merged = <Post>[];
+      for (final p in [
         ...(_postCache[targetSpaceId] ?? const <Post>[]),
         ...importedPosts,
-      ]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      ]) {
+        if (seen.add(p.id)) merged.add(p);
+      }
+      merged.sort((a, b) => a.createdAt.compareTo(b.createdAt));
       _postCache[targetSpaceId] = merged;
     }
     if (importedFiles.isNotEmpty) {
@@ -147,8 +152,10 @@ extension ArchiveOps on VaultStore {
     final imported =
         await _posts.importExisting(spaceId: spaceId, post: post);
     final list = _postCache.putIfAbsent(spaceId, () => []);
-    list.add(imported);
-    list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    if (!list.any((p) => p.id == imported.id)) {
+      list.add(imported);
+      list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    }
     _resortSpacesByUsage();
     notifyInternal();
     return imported;
@@ -168,8 +175,12 @@ extension ArchiveOps on VaultStore {
         bookmarks: file.bookmarks,
         existingUrls: existingUrls);
     if (r.created.isNotEmpty) {
-      final merged = [...existing, ...r.created]
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      final seen = <String>{};
+      final merged = <Post>[];
+      for (final p in [...existing, ...r.created]) {
+        if (seen.add(p.id)) merged.add(p);
+      }
+      merged.sort((a, b) => a.createdAt.compareTo(b.createdAt));
       _postCache[spaceId] = merged;
       _resortSpacesByUsage();
       notifyInternal();

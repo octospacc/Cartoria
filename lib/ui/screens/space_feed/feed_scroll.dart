@@ -2,6 +2,7 @@ part of '../space_feed.dart';
 
 extension _FeedScrollExt on _SpaceFeedScreenState {
   Future<void> _scrollToPost(String postId) async {
+    if (!mounted) return;
     final token = ++_scrollToken;
 
     if (_searchActive) {
@@ -11,6 +12,7 @@ extension _FeedScrollExt on _SpaceFeedScreenState {
         _searchDateRange = null;
       });
       await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
       if (token != _scrollToken) return;
     }
 
@@ -49,6 +51,7 @@ extension _FeedScrollExt on _SpaceFeedScreenState {
     });
     if (changed) {
       await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
       if (token != _scrollToken) return;
     }
 
@@ -63,26 +66,14 @@ extension _FeedScrollExt on _SpaceFeedScreenState {
     } catch (_) {
       return;
     }
-    if (token != _scrollToken) return;
-
-    if (postId != chain.first) {
-      await WidgetsBinding.instance.endOfFrame;
-      if (token != _scrollToken) return;
-      final ctx = _postKeys[postId]?.currentContext;
-      if (ctx != null) {
-        try {
-          await Scrollable.ensureVisible(
-            ctx,
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.easeInOutCubic,
-            alignment: 0.05,
-          );
-        } catch (_) {}
-      }
-    }
+    // No ensureVisible afterwards — GlobalKeys are gone, and the flash
+    // highlight already makes the target visible for the ~1.4s it stays
+    // on. scrollTo lands within one card-height of the target which is
+    // close enough for the user to spot the highlight.
   }
 
   void _flashHighlight(String postId) {
+    if (!mounted) return;
     _highlightTimer?.cancel();
     _setStateSafe(() => _highlightedPostId = postId);
     _highlightTimer = Timer(const Duration(milliseconds: 1400), () {

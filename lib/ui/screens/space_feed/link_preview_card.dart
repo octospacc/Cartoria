@@ -155,6 +155,7 @@ class LinkPreviewCard extends StatelessWidget {
   }
 
   Future<void> _openUrl(BuildContext context) async {
+    if (!context.mounted) return;
     final l = context.l10n;
     final url = post.url;
     if (url == null || url.isEmpty) return;

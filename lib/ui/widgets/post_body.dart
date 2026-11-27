@@ -826,6 +826,7 @@ class _PostBodyTextState extends State<PostBodyText> {
   }
 
   Future<void> _openUrl(String url) async {
+    if (!context.mounted) return;
     final uri = Uri.tryParse(url);
     if (uri == null) return;
     try {

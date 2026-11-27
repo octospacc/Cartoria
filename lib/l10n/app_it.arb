@@ -195,6 +195,7 @@
   "postDeleteBody": "I file allegati restano nel drive. Le risposte diventeranno di primo livello. Impossibile annullare.",
   "postQuotedUnavailable": "Post citato non disponibile",
   "postQuotedFromSpace": "Citato da questo spazio",
+  "postQuotedFromAnotherSpace": "Citato da un altro spazio",
   "postQuotedIncludesAnother": "↪ include un'altra citazione",
   "postQuotedExternal": "Citazione esterna",
   "postQuotedOpenHint": "Tocca per aprire il post citato",

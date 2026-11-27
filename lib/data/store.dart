@@ -157,13 +157,24 @@ class VaultStore extends ChangeNotifier {
   bool get isOnboarded => _settings.onboarded;
 
   List<Space> get spaces => List.unmodifiable(_spaceCache);
-  List<Post> postsForSpace(String spaceId) =>
-      List.unmodifiable(_postCache[spaceId] ?? const <Post>[]);
+
+  List<Post> postsForSpace(String spaceId) {
+    final posts = _postCache[spaceId] ?? const <Post>[];
+    final seen = <String>{};
+    final unique = <Post>[];
+    for (final p in posts) {
+      if (seen.add(p.id)) unique.add(p);
+    }
+    return List.unmodifiable(unique);
+  }
+
   List<DriveFile> filesForSpace(String spaceId) =>
       List.unmodifiable(_fileCache[spaceId] ?? const <DriveFile>[]);
+
   List<Hook> get hooks => _hooks.all;
 
   List<SyncConfig> get syncConfigs => List.unmodifiable(_syncConfigs);
+
   SyncConfig? get primarySyncConfig {
     for (final c in _syncConfigs) {
       if (c.isPrimary) return c;
@@ -425,8 +436,11 @@ class VaultStore extends ChangeNotifier {
       quotedPostId: quotedPostId,
       quotedSpaceId: quotedSpaceId,
     );
-    _postCache.putIfAbsent(spaceId, () => []).add(post);
-    _postCache[spaceId]!.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final list = _postCache.putIfAbsent(spaceId, () => []);
+    if (!list.any((p) => p.id == post.id)) {
+      list.add(post);
+      list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    }
     _resortSpacesByUsage();
     notifyListeners();
 

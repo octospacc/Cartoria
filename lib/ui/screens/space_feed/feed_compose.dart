@@ -285,8 +285,7 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
       fileIds: result.fileIds,
       createdAt: result.createdAt,
       quotedPostId: result.quotedPostId,
-      quotedSpaceId:
-          result.quotedPostId != null ? quotedSpaceId : null,
+      quotedSpaceId: result.quotedPostId != null ? quotedSpaceId : null,
       skipHooks: result.skipHooks,
     );
     await widget.store.deleteComposerDraft(result.draftFieldKey);
@@ -294,17 +293,23 @@ extension _FeedComposeExt on _SpaceFeedScreenState {
     if (!mounted) return;
     if (targetSpaceId != widget.space.id) {
       final target = widget.store.spaceById(targetSpaceId);
-      if (target != null) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => SpaceFeedScreen(
-              store: widget.store,
-              space: target,
-            ),
+      if (target == null || target.id == widget.space.id) return;
+      final navigator = Navigator.of(context);
+      // Capture the navigator before the async boundary so we don't
+      // touch `context` from a possibly-disposed state. Use push (not
+      // pushReplacement) so the source feed stays on the stack — the
+      // user came from there and expects Back to return them.
+      // pushReplacement tears the source down WHILE the target builds,
+      // which is what caused the "Tried to build dirty widget in the
+      // wrong build scope" cascade.
+      navigator.push(
+        MaterialPageRoute(
+          builder: (_) => SpaceFeedScreen(
+            store: widget.store,
+            space: target,
           ),
-        );
-      }
+        ),
+      );
     }
   }
 

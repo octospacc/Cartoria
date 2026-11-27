@@ -159,13 +159,12 @@ extension _FeedNodeExt on _SpaceFeedScreenState {
       );
     }
 
-    final Widget result = parts.length == 1
+    return parts.length == 1
         ? parts.first
         : Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: parts,
           );
-    return KeyedSubtree(key: _keyFor(post.id), child: result);
   }
 
   Widget _buildQuotesSection(List<Post> quotes) {
@@ -208,6 +207,7 @@ extension _FeedNodeExt on _SpaceFeedScreenState {
   }
 
   void _handleQuoteTap(String postId, String spaceId) {
+    if (!mounted) return;
     if (spaceId == widget.space.id) {
       _scrollToPost(postId);
     } else {
@@ -216,6 +216,11 @@ extension _FeedNodeExt on _SpaceFeedScreenState {
   }
 
   void _navigateToPostInSpace(String spaceId, String postId) {
+    if (!mounted) return;
+    if (spaceId == widget.space.id) {
+      _scrollToPost(postId);
+      return;
+    }
     final target = widget.store.spaceById(spaceId);
     if (target == null) return;
     Navigator.push(

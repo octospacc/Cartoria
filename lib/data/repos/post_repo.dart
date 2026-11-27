@@ -298,7 +298,7 @@ class PostRepository {
       thumbnail: meta['thumbnail'] as String?,
       tags: ((meta['tags'] as List?) ?? const []).cast<String>(),
       fileIds: ((meta['files'] as List?) ?? const []).cast<String>(),
-      createdAt: DateTime.parse(meta['created'] as String),
+      createdAt: _parseCreated(meta['created'], meta['id'] as String? ?? path),
       editedAt: meta['edited'] != null
           ? DateTime.parse(meta['edited'] as String)
           : null,
@@ -307,6 +307,15 @@ class PostRepository {
       quotedExternals: externals,
       hookState: hookState,
     );
+  }
+
+  static DateTime _parseCreated(dynamic raw, String postId) {
+    if (raw is String) {
+      final parsed = DateTime.tryParse(raw);
+      if (parsed != null) return parsed;
+    }
+    debugPrint('Post $postId: missing or invalid "created", using now()');
+    return DateTime.now().toUtc();
   }
 
   /// Parses a single post from an in-memory string in the same format as

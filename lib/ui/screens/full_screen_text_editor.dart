@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
 
 import '../../l10n/l10n.dart';
@@ -59,61 +58,55 @@ class FullScreenTextEditor extends StatelessWidget {
       if (route?.isCurrent == true) Navigator.of(context).maybePop();
     }
 
-    return Focus(
-      autofocus: true,
-      onKeyEvent: (node, event) {
-        if (event is KeyDownEvent &&
-            event.logicalKey == LogicalKeyboardKey.escape) {
-          close();
-          return KeyEventResult.handled;
-        }
-        return KeyEventResult.ignored;
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          leading: const CloseButton(),
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(title ?? l.fullScreenEditorDefaultTitle,
-                  style: theme.textTheme.titleMedium),
-              ListenableBuilder(
-                listenable: controller,
-                builder: (context, _) {
-                  final text = controller.document.toPlainText();
-                  final trimmed = text.trim();
-                  final words = trimmed.isEmpty
-                      ? 0
-                      : trimmed.split(RegExp(r'\s+')).length;
-                  final chars = text.runes.length;
-                  return Text(
-                    l.fullScreenEditorWordCount(words, chars),
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.emoji_emotions_outlined),
-              tooltip: l.composerEmojiTooltip,
-              onPressed: () => _insertEmoji(context),
+    return Scaffold(
+      appBar: AppBar(
+        leading: const CloseButton(),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(title ?? l.fullScreenEditorDefaultTitle,
+                style: theme.textTheme.titleMedium),
+            ListenableBuilder(
+              listenable: controller,
+              builder: (context, _) {
+                final text = controller.document.toPlainText();
+                final trimmed = text.trim();
+                final words = trimmed.isEmpty
+                    ? 0
+                    : trimmed.split(RegExp(r'\s+')).length;
+                final chars = text.runes.length;
+                return Text(
+                  l.fullScreenEditorWordCount(words, chars),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                );
+              },
             ),
           ],
         ),
-        body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-            child: RichTextEditor(
-              controller: controller,
-              hintText: hintText,
-              expands: true,
-              onEscape: close,
-            ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.emoji_emotions_outlined),
+            tooltip: l.composerEmojiTooltip,
+            onPressed: () => _insertEmoji(context),
+          ),
+          IconButton(
+            icon: const Icon(Icons.check),
+            tooltip: l.commonClose,
+            onPressed: close,
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: RichTextEditor(
+            controller: controller,
+            hintText: hintText,
+            expands: true,
+            onEscape: close,
           ),
         ),
       ),

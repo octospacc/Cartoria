@@ -109,6 +109,8 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   GlobalKey _keyFor(String postId) =>
       _postKeys.putIfAbsent(postId, () => GlobalKey());
 
+  final FocusNode _composerFocusNode = FocusNode();
+
   @override
   void initState() {
     super.initState();
@@ -131,10 +133,13 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         if (mounted) _scrollToPost(widget.initialPostId!);
       });
     }
+    HardwareKeyboard.instance.addHandler(_handleFeedEsc);
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleFeedEsc);
+    _composerFocusNode.dispose();
     if (!_loadingInlineDraft) {
       _inlineDraftCtrl.saveNow(_buildInlineDraft());
     }
@@ -148,6 +153,21 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     _highlightTimer?.cancel();
     _searchFocusNode.dispose();
     super.dispose();
+  }
+
+  bool _handleFeedEsc(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.escape) return false;
+    if (!mounted) return false;
+    final route = ModalRoute.of(context);
+    if (route?.isCurrent != true) return false;
+    // Focus is somewhere in the composer (inline editor or URL field).
+    // Unfocus without popping the feed.
+    if (_composerFocusNode.hasFocus) {
+      FocusScope.of(context).unfocus();
+      return true;
+    }
+    return false;
   }
 
   void _resetQuillToEmpty() {
@@ -199,35 +219,39 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                         ),
                       ),
                       if (!_searchActive && !_selectionMode)
-                        _withPasteShortcut(
-                          _ComposerFooter(
-                            child: InlineComposer(
-                              kind: _kind,
-                              onKindChanged: (k) =>
-                                  _updateInlineState(() => _kind = k),
-                              bodyCtrl: _bodyCtrl,
-                              quillCtrl: _inlineQuillCtrl,
-                              rich: widget.store.richEditorEnabled,
-                              urlCtrl: _urlCtrl,
-                              pendingFileIds: _pendingFileIds,
-                              store: widget.store,
-                              space: widget.space,
-                              onAttach: _attach,
-                              onSend: _sending ? null : _send,
-                              onRemoveFile: (id) => _updateInlineState(
-                                  () => _pendingFileIds.remove(id)),
-                              postDateTime: _postDateTime,
-                              onPostDateTimeChanged: (v) =>
-                                  _updateInlineState(() => _postDateTime = v),
-                              skipHooks: _skipHooks,
-                              onSkipHooksChanged: (v) =>
-                                  _updateInlineState(() => _skipHooks = v),
-                              onReset: _resetInlineComposer,
-                              warnDraftLoss: !widget.store.richEditorEnabled &&
-                                  _preservedBodyDelta != null,
-                            ),
-                          ),
-                        )
+                        Focus(
+                            focusNode: _composerFocusNode,
+                            child: _withPasteShortcut(
+                              _ComposerFooter(
+                                child: InlineComposer(
+                                  kind: _kind,
+                                  onKindChanged: (k) =>
+                                      _updateInlineState(() => _kind = k),
+                                  bodyCtrl: _bodyCtrl,
+                                  quillCtrl: _inlineQuillCtrl,
+                                  rich: widget.store.richEditorEnabled,
+                                  urlCtrl: _urlCtrl,
+                                  pendingFileIds: _pendingFileIds,
+                                  store: widget.store,
+                                  space: widget.space,
+                                  onAttach: _attach,
+                                  onSend: _sending ? null : _send,
+                                  onRemoveFile: (id) => _updateInlineState(
+                                      () => _pendingFileIds.remove(id)),
+                                  postDateTime: _postDateTime,
+                                  onPostDateTimeChanged: (v) =>
+                                      _updateInlineState(
+                                          () => _postDateTime = v),
+                                  skipHooks: _skipHooks,
+                                  onSkipHooksChanged: (v) =>
+                                      _updateInlineState(() => _skipHooks = v),
+                                  onReset: _resetInlineComposer,
+                                  warnDraftLoss:
+                                      !widget.store.richEditorEnabled &&
+                                          _preservedBodyDelta != null,
+                                ),
+                              ),
+                            ))
                     ],
                   ),
                 );

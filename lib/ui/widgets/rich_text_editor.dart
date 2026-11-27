@@ -12,6 +12,12 @@ class RichTextEditor extends StatefulWidget {
   final double minHeight;
   final double? maxHeight;
   final FocusNode? focusNode;
+
+  /// Invoked when ESC is pressed while the editor is focused.
+  /// Wired through `QuillEditorConfig.onKeyPressed`, which runs at
+  /// `Focus.onKeyEvent` priority — higher than the internal `Shortcuts`
+  /// that flutter_quill installs for `HideSelectionToolbarIntent`. Without
+  /// this hook, ESC never reaches any ancestor: Quill consumes it first.
   final VoidCallback? onEscape;
 
   const RichTextEditor({
@@ -43,9 +49,6 @@ class _RichTextEditorState extends State<RichTextEditor> {
 
   @override
   Widget build(BuildContext context) {
-    // Only compute l10n when the toolbar is shown — that's the only
-    // place it's used. Keeps the widget testable without localizations
-    // installed when showToolbar is false.
     final children = <Widget>[];
     if (widget.showToolbar) {
       children.add(_buildToolbar(context));
@@ -62,31 +65,21 @@ class _RichTextEditorState extends State<RichTextEditor> {
               child: _buildEditor(),
             ),
     );
-
-    // Focus wraps the whole Column — NOT the Expanded. Expanded must
-    // remain a direct child of the Column flex, otherwise Flutter throws
-    // "Incorrect use of ParentDataWidget".
-    Widget column = Column(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: widget.expands ? MainAxisSize.max : MainAxisSize.min,
       children: children,
     );
+  }
 
-    if (widget.onEscape != null) {
-      column = Focus(
-        canRequestFocus: false,
-        onKeyEvent: (node, event) {
-          if (event is KeyDownEvent &&
-              event.logicalKey == LogicalKeyboardKey.escape) {
-            widget.onEscape!();
-            return KeyEventResult.handled;
-          }
-          return KeyEventResult.ignored;
-        },
-        child: column,
-      );
+  KeyEventResult _onKeyPressed(KeyEvent event, quill.Node? node) {
+    if (widget.onEscape != null &&
+        event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.escape) {
+      widget.onEscape!();
+      return KeyEventResult.handled;
     }
-    return column;
+    return KeyEventResult.ignored;
   }
 
   Widget _buildEditor() {
@@ -100,6 +93,7 @@ class _RichTextEditorState extends State<RichTextEditor> {
         scrollable: true,
         padding: EdgeInsets.zero,
         autoFocus: false,
+        onKeyPressed: _onKeyPressed,
       ),
     );
   }

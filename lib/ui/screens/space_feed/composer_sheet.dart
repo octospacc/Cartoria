@@ -122,10 +122,14 @@ class _ComposerSheetState extends State<ComposerSheet> {
     _description.addListener(_onAnyFieldChanged);
 
     _loadDraft();
+    
+    HardwareKeyboard.instance.addHandler(_handleEsc);
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleEsc);
+
     if (!_submitting && !_loadingDraft) {
       _draftCtrl.saveNow(_buildDraft());
     }
@@ -137,6 +141,18 @@ class _ComposerSheetState extends State<ComposerSheet> {
     _title.dispose();
     _description.dispose();
     super.dispose();
+  }
+
+  /// Any ESC while this sheet is the topmost route closes it.
+  /// `isCurrent` guards against firing while a dialog on top has focus.
+  bool _handleEsc(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.escape) return false;
+    if (!mounted) return false;
+    final route = ModalRoute.of(context);
+    if (route?.isCurrent != true) return false;
+    Navigator.of(context).pop();
+    return true;
   }
 
   String _previewOf(Post p) {

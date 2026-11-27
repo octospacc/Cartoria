@@ -74,11 +74,17 @@ class _QuotedOwnCard extends StatelessWidget {
     Post quoted,
     AppLocalizations l,
   ) {
-    final icon =
-        quoted.kind == PostKind.bookmark ? Icons.bookmark_outline : Icons.notes;
+    final icon = quoted.kind == PostKind.bookmark
+        ? Icons.bookmark_outline
+        : Icons.notes;
     final preview = _previewOf(quoted);
     final media = _mediaPreview(context, quoted);
     final mediaFiles = _mediaFiles(quoted);
+    final isCrossSpace =
+        quotedSpaceId != null && quotedSpaceId != space.id;
+    final label = isCrossSpace
+        ? l.postQuotedFromAnotherSpace
+        : l.postQuotedFromSpace;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -89,7 +95,7 @@ class _QuotedOwnCard extends StatelessWidget {
             const SizedBox(width: 6),
             Expanded(
               child: Text(
-                l.postQuotedFromSpace,
+                label,
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
@@ -283,6 +289,7 @@ class _QuotedExternalCard extends StatelessWidget {
   }
 
   Future<void> _open(BuildContext context, String atUri) async {
+    if (!context.mounted) return;
     final httpUrl = _atUriToHttp(atUri);
     if (httpUrl == null) return;
     final uri = Uri.tryParse(httpUrl);
