@@ -1,5 +1,3 @@
-library space_feed;
-
 import 'dart:async';
 import 'dart:convert';
 
@@ -16,10 +14,10 @@ import '../../data/store.dart';
 import '../../l10n/l10n.dart';
 import '../../platform/clipboard_files.dart';
 import '../../platform/clipboard_write.dart';
-import '../../util/post_serialization.dart';
 import '../../util/file_category.dart';
 import '../../util/html_utils.dart';
 import '../../util/mime.dart';
+import '../../util/post_serialization.dart';
 import '../../util/search_filter.dart';
 import '../bookmark_import_helpers.dart';
 import '../space_actions.dart';
@@ -50,7 +48,6 @@ class SpaceFeedScreen extends StatefulWidget {
   final VaultStore store;
   final Space space;
   final String? initialPostId;
-
   const SpaceFeedScreen({
     super.key,
     required this.store,
@@ -68,6 +65,12 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   final _bodyCtrl = TextEditingController();
   final _urlCtrl = TextEditingController();
   final _searchCtrl = TextEditingController();
+  final _searchFocusNode = FocusNode();
+  final FocusNode _composerFocusNode =
+      FocusNode(debugLabel: 'feed-composer');
+  final FocusNode _inlineQuillFocusNode =
+      FocusNode(debugLabel: 'feed-inline-quill');
+  bool _escHandledThisPress = false;
   quill.QuillController? _inlineQuillCtrl;
   String? _preservedBodyDelta;
   PostKind _kind = PostKind.note;
@@ -80,36 +83,24 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   bool _sending = false;
   bool _searchActive = false;
   bool _skipHooks = false;
-  final _searchFocusNode = FocusNode();
   DateTimeRange? _searchDateRange;
-
-  /// The plaintext value last written into `_bodyCtrl` by the app (on
-  /// draft load, reset, or after send). Used to distinguish a real
-  /// content edit from a cursor/selection change, so focusing the plain
-  /// field doesn't destroy a preserved rich delta.
-  String _lastPlainText = '';
 
   String? _highlightedPostId;
   Timer? _highlightTimer;
 
   late final ComposerDraftController _inlineDraftCtrl;
   bool _loadingInlineDraft = false;
+  String _lastPlainText = '';
 
   final ItemScrollController _feedScroll = ItemScrollController();
   final ItemScrollController _searchScroll = ItemScrollController();
 
-  final Map<String, GlobalKey> _postKeys = {};
   int _scrollToken = 0;
 
   bool _selectionMode = false;
   final Set<String> _selectedPostIds = {};
 
   void _setStateSafe(VoidCallback fn) => setState(fn);
-
-  GlobalKey _keyFor(String postId) =>
-      _postKeys.putIfAbsent(postId, () => GlobalKey());
-
-  final FocusNode _composerFocusNode = FocusNode();
 
   @override
   void initState() {
@@ -133,12 +124,14 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
         if (mounted) _scrollToPost(widget.initialPostId!);
       });
     }
-    HardwareKeyboard.instance.addHandler(_handleFeedEsc);
+    FocusManager.instance.addEarlyKeyEventHandler(_handleEarlyEsc);
+    // HardwareKeyboard.instance.addHandler(_handleHardwareEsc);
   }
 
   @override
   void dispose() {
-    HardwareKeyboard.instance.removeHandler(_handleFeedEsc);
+    FocusManager.instance.removeEarlyKeyEventHandler(_handleEarlyEsc);
+    // HardwareKeyboard.instance.removeHandler(_handleHardwareEsc);
     _composerFocusNode.dispose();
     if (!_loadingInlineDraft) {
       _inlineDraftCtrl.saveNow(_buildInlineDraft());
@@ -149,25 +142,9 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
     _bodyCtrl.dispose();
     _urlCtrl.dispose();
     _searchCtrl.dispose();
-    _postKeys.clear();
-    _highlightTimer?.cancel();
     _searchFocusNode.dispose();
+    _highlightTimer?.cancel();
     super.dispose();
-  }
-
-  bool _handleFeedEsc(KeyEvent event) {
-    if (event is! KeyDownEvent) return false;
-    if (event.logicalKey != LogicalKeyboardKey.escape) return false;
-    if (!mounted) return false;
-    final route = ModalRoute.of(context);
-    if (route?.isCurrent != true) return false;
-    // Focus is somewhere in the composer (inline editor or URL field).
-    // Unfocus without popping the feed.
-    if (_composerFocusNode.hasFocus) {
-      FocusScope.of(context).unfocus();
-      return true;
-    }
-    return false;
   }
 
   void _resetQuillToEmpty() {
@@ -188,19 +165,6 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
   @override
   Widget build(BuildContext context) {
     return EscapeBack(
-        onEscape: _selectionMode || _searchActive
-            ? () {
-                if (_selectionMode) {
-                  _exitSelectionMode();
-                } else {
-                  _setStateSafe(() {
-                    _searchCtrl.clear();
-                    _searchActive = false;
-                    _searchDateRange = null;
-                  });
-                }
-              }
-            : null,
         child: withClipboardPasteListener(
             onFiles: _onPastedFiles,
             child: AnimatedBuilder(
@@ -221,9 +185,11 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                       if (!_searchActive && !_selectionMode)
                         Focus(
                             focusNode: _composerFocusNode,
+                            canRequestFocus: false,
                             child: _withPasteShortcut(
                               _ComposerFooter(
                                 child: InlineComposer(
+                                  quillFocusNode: _inlineQuillFocusNode,
                                   kind: _kind,
                                   onKindChanged: (k) =>
                                       _updateInlineState(() => _kind = k),
@@ -257,5 +223,98 @@ class _SpaceFeedScreenState extends State<SpaceFeedScreen> {
                 );
               },
             )));
+  }
+
+  /// True if focus is anywhere inside the inline composer.
+  ///
+  /// Three checks, from cheapest/most reliable to more thorough:
+  ///  1. `hasFocus` on the composer's own `FocusNode` (returns true for
+  ///     ancestor nodes when any descendant holds primary focus).
+  ///  2. `primaryFocus.ancestors` — walks the FocusNode tree, catches
+  ///     cases where an intermediate Focus obscures `.hasFocus`.
+  ///  3. `visitAncestorElements` — walks the widget (element) tree,
+  ///     which is stable even when FocusNode parentage is broken by
+  ///     Quill's internal Focus/FocusScope layer.
+  bool _isComposerFocused() {
+    if (_composerFocusNode.hasFocus) return true;
+
+    final primary = FocusManager.instance.primaryFocus;
+    if (primary == null) return false;
+
+    for (final ancestor in primary.ancestors) {
+      if (identical(ancestor, _composerFocusNode)) return true;
+    }
+
+    final ctx = primary.context;
+    if (ctx != null) {
+      var inside = false;
+      ctx.visitAncestorElements((el) {
+        if (el.widget is InlineComposer) {
+          inside = true;
+          return false;
+        }
+        return true;
+      });
+      if (inside) return true;
+    }
+
+    return false;
+  }
+
+  /// Unfocus the composer. Runs twice (immediate + next frame) because
+  /// Quill re-requests focus in a post-frame callback after losing it
+  /// while its selection is active — a single unfocus appears to do
+  /// nothing.
+  void _doUnfocusComposer() {
+    _inlineQuillFocusNode.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _inlineQuillFocusNode.unfocus();
+      FocusManager.instance.primaryFocus?.unfocus();
+    });
+  }
+
+  /// Runs before the focus tree. Owns the entire ESC decision tree
+  /// for the feed:
+  ///
+  ///   1. Composer focused → unfocus the composer, feed stays.
+  ///   2. Selection mode active → exit selection mode.
+  ///   3. Search mode active → close search.
+  ///   4. Otherwise → pop the feed.
+  ///
+  /// Point 4 is what makes successive ESC presses work: after the
+  /// first ESC unfocuses, primary focus moves to `Navigator Scope`
+  /// (above EscapeBack's Focus node), so without this the second ESC
+  /// would be swallowed by nothing and vanish.
+  KeyEventResult _handleEarlyEsc(KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey != LogicalKeyboardKey.escape) {
+      return KeyEventResult.ignored;
+    }
+    if (!mounted) return KeyEventResult.ignored;
+
+    final route = ModalRoute.of(context);
+    if (route?.isCurrent != true) return KeyEventResult.ignored;
+
+    if (_isComposerFocused()) {
+      _doUnfocusComposer();
+      return KeyEventResult.handled;
+    }
+    if (_selectionMode) {
+      _exitSelectionMode();
+      return KeyEventResult.handled;
+    }
+    if (_searchActive) {
+      _setStateSafe(() {
+        _searchCtrl.clear();
+        _searchActive = false;
+        _searchDateRange = null;
+      });
+      return KeyEventResult.handled;
+    }
+
+    Navigator.of(context).maybePop();
+    return KeyEventResult.handled;
   }
 }

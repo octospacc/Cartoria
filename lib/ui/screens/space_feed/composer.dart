@@ -102,6 +102,7 @@ class InlineComposer extends StatelessWidget {
   final ValueChanged<PostKind> onKindChanged;
   final TextEditingController bodyCtrl;
   final quill.QuillController? quillCtrl;
+  final FocusNode? quillFocusNode;
   final bool rich;
   final TextEditingController urlCtrl;
   final List<String> pendingFileIds;
@@ -123,6 +124,7 @@ class InlineComposer extends StatelessWidget {
     required this.onKindChanged,
     required this.bodyCtrl,
     this.quillCtrl,
+    this.quillFocusNode,
     this.rich = false,
     required this.urlCtrl,
     required this.pendingFileIds,
@@ -214,12 +216,12 @@ class InlineComposer extends StatelessWidget {
             ),
             child: RichTextEditor(
               controller: quillCtrl!,
+              focusNode: quillFocusNode,
               hintText: kind == PostKind.note
                   ? l.composerBodyHintNote
                   : l.composerBodyHintBookmark,
               minHeight: 40,
               maxHeight: 180,
-              onEscape: () => FocusScope.of(context).unfocus(),
             ),
           )
         else
@@ -442,6 +444,7 @@ class InlineComposer extends StatelessWidget {
         ),
       ),
     );
+    if (!context.mounted) return;
     for (final id in List.of(pendingFileIds)) {
       if (store.fileById(space.id, id) == null) {
         onRemoveFile(id);

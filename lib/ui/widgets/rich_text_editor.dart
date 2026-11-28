@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
 
 import '../../l10n/l10n.dart';
 
+/// Pure rendering widget. **No keyboard handling.** ESC, save, navigation
+/// etc. are container concerns, not editor concerns — a rich editor that
+/// tries to intercept ESC conflicts with Quill's own internal Shortcuts
+/// (flutter_quill installs `SingleActivator(escape)` for
+/// HideSelectionToolbarIntent, and trying to beat it at the widget level
+/// is a losing battle). Each call site owns its own ESC handling via
+/// `CallbackShortcuts`.
 class RichTextEditor extends StatefulWidget {
   final quill.QuillController controller;
   final String? hintText;
@@ -12,13 +18,6 @@ class RichTextEditor extends StatefulWidget {
   final double minHeight;
   final double? maxHeight;
   final FocusNode? focusNode;
-
-  /// Invoked when ESC is pressed while the editor is focused.
-  /// Wired through `QuillEditorConfig.onKeyPressed`, which runs at
-  /// `Focus.onKeyEvent` priority — higher than the internal `Shortcuts`
-  /// that flutter_quill installs for `HideSelectionToolbarIntent`. Without
-  /// this hook, ESC never reaches any ancestor: Quill consumes it first.
-  final VoidCallback? onEscape;
 
   const RichTextEditor({
     super.key,
@@ -29,7 +28,6 @@ class RichTextEditor extends StatefulWidget {
     this.minHeight = 120,
     this.maxHeight,
     this.focusNode,
-    this.onEscape,
   });
 
   @override
@@ -72,16 +70,6 @@ class _RichTextEditorState extends State<RichTextEditor> {
     );
   }
 
-  KeyEventResult _onKeyPressed(KeyEvent event, quill.Node? node) {
-    if (widget.onEscape != null &&
-        event is KeyDownEvent &&
-        event.logicalKey == LogicalKeyboardKey.escape) {
-      widget.onEscape!();
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
-  }
-
   Widget _buildEditor() {
     return quill.QuillEditor.basic(
       controller: widget.controller,
@@ -93,7 +81,6 @@ class _RichTextEditorState extends State<RichTextEditor> {
         scrollable: true,
         padding: EdgeInsets.zero,
         autoFocus: false,
-        onKeyPressed: _onKeyPressed,
       ),
     );
   }

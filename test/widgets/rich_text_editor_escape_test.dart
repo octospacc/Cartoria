@@ -1,58 +1,51 @@
+import 'package:Cartoria/ui/screens/full_screen_text_editor.dart';
+import 'package:Cartoria/l10n/l10n.dart';
 import 'package:Cartoria/ui/widgets/quill_bridge.dart';
-import 'package:Cartoria/ui/widgets/rich_text_editor.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+Widget _localizedApp(Widget child) {
+  return MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: child,
+  );
+}
+
 void main() {
-  testWidgets('RichTextEditor onEscape fires when ESC pressed and editor focused',
-      (tester) async {
-    var escaped = false;
+  testWidgets('FullScreenTextEditor closes on ESC', (tester) async {
     final ctrl = quillFromHtml('<p>hello</p>');
 
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: SizedBox(
-          height: 300,
-          child: RichTextEditor(
-            controller: ctrl,
-            expands: true,
-            showToolbar: false,
-            onEscape: () => escaped = true,
+    await tester.pumpWidget(_localizedApp(
+      Builder(
+        builder: (context) => Scaffold(
+          body: Center(
+            child: ElevatedButton(
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => FullScreenTextEditor(controller: ctrl),
+                ),
+              ),
+              child: const Text('open'),
+            ),
           ),
         ),
       ),
     ));
 
-    await tester.tap(find.byType(RichTextEditor));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.byType(FullScreenTextEditor), findsOneWidget);
+
+    await tester.tap(find.byType(FullScreenTextEditor));
     await tester.pumpAndSettle();
 
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
 
-    expect(escaped, isTrue);
-    ctrl.dispose();
-  });
-
-  testWidgets('RichTextEditor without onEscape does not throw on ESC',
-      (tester) async {
-    final ctrl = quillFromHtml('<p>hello</p>');
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: SizedBox(
-          height: 300,
-          child: RichTextEditor(
-            controller: ctrl,
-            expands: true,
-            showToolbar: false,
-          ),
-        ),
-      ),
-    ));
-    await tester.tap(find.byType(RichTextEditor));
-    await tester.pumpAndSettle();
-    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-    await tester.pumpAndSettle();
+    expect(find.byType(FullScreenTextEditor), findsNothing);
     ctrl.dispose();
   });
 }

@@ -34,14 +34,13 @@ class _ComposerSheetState extends State<ComposerSheet> {
   bool _skipHooks = false;
   String? _targetSpaceId;
 
-  /// Delta of the editor at open time. Null when rich is off.
   String? _initialDelta;
+  String? _preservedBodyDelta;
+  String _lastPlainText = '';
 
   late final ComposerDraftController _draftCtrl;
   bool _loadingDraft = false;
   bool _submitting = false;
-  String? _preservedBodyDelta;
-  String _lastPlainText = '';
 
   bool get _rich => widget.store.richEditorEnabled;
 
@@ -66,6 +65,14 @@ class _ComposerSheetState extends State<ComposerSheet> {
     if (widget.replyTo != null) return 'post:${widget.replyTo!.id}:reply';
     if (widget.quoting != null) return 'post:${widget.quoting!.id}:quote';
     return 'post:new:${DateTime.now().millisecondsSinceEpoch}';
+  }
+
+  bool get _hasRichContentToLose {
+    if (widget.editing != null &&
+        htmlHasFormatting(widget.editing!.body)) {
+      return true;
+    }
+    return _preservedBodyDelta != null;
   }
 
   String _bodyText() {
@@ -101,6 +108,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
       _plainBody = TextEditingController(
         text: existing != null ? bodyFromHtml(existing.body) : '',
       );
+      _lastPlainText = _plainBody.text;
       _plainBody.addListener(_onAnyFieldChanged);
     }
 
@@ -122,14 +130,12 @@ class _ComposerSheetState extends State<ComposerSheet> {
     _description.addListener(_onAnyFieldChanged);
 
     _loadDraft();
-    
-    HardwareKeyboard.instance.addHandler(_handleEsc);
+    FocusManager.instance.addEarlyKeyEventHandler(_handleEarlyEsc);
   }
 
   @override
   void dispose() {
-    HardwareKeyboard.instance.removeHandler(_handleEsc);
-
+    FocusManager.instance.removeEarlyKeyEventHandler(_handleEarlyEsc);
     if (!_submitting && !_loadingDraft) {
       _draftCtrl.saveNow(_buildDraft());
     }
@@ -141,18 +147,6 @@ class _ComposerSheetState extends State<ComposerSheet> {
     _title.dispose();
     _description.dispose();
     super.dispose();
-  }
-
-  /// Any ESC while this sheet is the topmost route closes it.
-  /// `isCurrent` guards against firing while a dialog on top has focus.
-  bool _handleEsc(KeyEvent event) {
-    if (event is! KeyDownEvent) return false;
-    if (event.logicalKey != LogicalKeyboardKey.escape) return false;
-    if (!mounted) return false;
-    final route = ModalRoute.of(context);
-    if (route?.isCurrent != true) return false;
-    Navigator.of(context).pop();
-    return true;
   }
 
   String _previewOf(Post p) {
@@ -248,8 +242,9 @@ class _ComposerSheetState extends State<ComposerSheet> {
         quotedPostId: widget.editing == null ? widget.quoting?.id : null,
         skipHooks: _skipHooks,
         draftFieldKey: _draftFieldKey,
-        targetSpaceId:
-            widget.quoting != null ? (_targetSpaceId ?? widget.space.id) : null,
+        targetSpaceId: widget.quoting != null
+            ? (_targetSpaceId ?? widget.space.id)
+            : null,
       ),
     );
   }
@@ -379,7 +374,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
             _replaceQuill(quillFromHtml(post.body));
           } else {
             _plainBody.text = bodyFromHtml(post.body);
-            _lastPlainText = bodyFromHtml(post.body);
+            _lastPlainText = _plainBody.text;
           }
           _url.text = post.url ?? '';
           _title.text = post.title ?? '';
@@ -409,6 +404,7 @@ class _ComposerSheetState extends State<ComposerSheet> {
           _postDateTime = null;
           _skipHooks = false;
         }
+        _preservedBodyDelta = null;
       });
     } finally {
       _loadingDraft = false;
@@ -543,19 +539,12 @@ class _ComposerSheetState extends State<ComposerSheet> {
     }
   }
 
-  bool get _hasRichContentToLose {
-    if (widget.editing != null &&
-        htmlHasFormatting(widget.editing!.body)) {
-      return true;
-    }
-    return _preservedBodyDelta != null;
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l = context.l10n;
-    return _withPasteShortcut(Padding(
+
+    final sheetBody = _withPasteShortcut(Padding(
       padding:
           EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SafeArea(
@@ -793,6 +782,32 @@ class _ComposerSheetState extends State<ComposerSheet> {
                   );
                 },
               ),
+              if (!_rich && _hasRichContentToLose) ...[
+                Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.errorContainer,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.warning_amber_rounded,
+                          size: 16,
+                          color: theme.colorScheme.onErrorContainer),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          l.composerRichFormattingLossWarning,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onErrorContainer,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Row(
@@ -821,32 +836,6 @@ class _ComposerSheetState extends State<ComposerSheet> {
                   ],
                 ),
               ),
-              if (!_rich && _hasRichContentToLose) ...[
-                Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.errorContainer,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.warning_amber_rounded,
-                          size: 16,
-                          color: theme.colorScheme.onErrorContainer),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          l.composerRichFormattingLossWarning,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onErrorContainer,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
               if (_rich && _quillCtrl != null)
                 Container(
                   constraints:
@@ -861,7 +850,6 @@ class _ComposerSheetState extends State<ComposerSheet> {
                     controller: _quillCtrl!,
                     hintText: l.composerBodyHint,
                     expands: true,
-                    onEscape: () => Navigator.pop(context),
                   ),
                 )
               else
@@ -934,5 +922,21 @@ class _ComposerSheetState extends State<ComposerSheet> {
         ),
       ),
     ));
+
+    return sheetBody;
+  }
+
+  /// Runs before the focus tree so ESC works even when the URL, title,
+  /// description, or the rich body editor is focused.
+  KeyEventResult _handleEarlyEsc(KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey != LogicalKeyboardKey.escape) {
+      return KeyEventResult.ignored;
+    }
+    if (!mounted) return KeyEventResult.ignored;
+    final route = ModalRoute.of(context);
+    if (route?.isCurrent != true) return KeyEventResult.ignored;
+    Navigator.of(context).pop();
+    return KeyEventResult.handled;
   }
 }
